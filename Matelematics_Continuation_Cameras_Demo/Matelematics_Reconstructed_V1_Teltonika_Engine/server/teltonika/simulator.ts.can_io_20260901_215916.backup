@@ -1,0 +1,492 @@
+﻿import net from "node:net";
+import { crc16Ibm } from "./crc16";
+
+const host =
+  process.env.TELTONIKA_SIM_HOST ??
+  "127.0.0.1";
+
+const port = Number(
+  process.env.TELTONIKA_SIM_PORT ??
+  5000,
+);
+
+const imei =
+  process.env.TELTONIKA_SIM_IMEI ??
+  "356307042441234";
+
+const intervalMs = Number(
+  process.env.TELTONIKA_SIM_INTERVAL_MS ??
+  3000,
+);
+
+let latitude = 33.5731;
+let longitude = -7.5898;
+
+let speedKph = 48;
+let heading = 90;
+
+let packetNumber = 0;
+
+
+/* ============================================================
+   CODEC 8 PACKET
+   ============================================================ */
+
+function buildCodec8Packet() {
+  const timestamp = BigInt(Date.now());
+
+  const parts: Buffer[] = [];
+
+
+  const pushU8 = (value: number) => {
+    const b = Buffer.alloc(1);
+
+    b.writeUInt8(value);
+
+    parts.push(b);
+  };
+
+
+  const pushU16 = (value: number) => {
+    const b = Buffer.alloc(2);
+
+    b.writeUInt16BE(value);
+
+    parts.push(b);
+  };
+
+
+  const pushU32 = (value: number) => {
+    const b = Buffer.alloc(4);
+
+    b.writeUInt32BE(
+      value >>> 0,
+    );
+
+    parts.push(b);
+  };
+
+
+  const pushI32 = (value: number) => {
+    const b = Buffer.alloc(4);
+
+    b.writeInt32BE(value);
+
+    parts.push(b);
+  };
+
+
+  const pushU64 = (value: bigint) => {
+    const b = Buffer.alloc(8);
+
+    b.writeBigUInt64BE(value);
+
+    parts.push(b);
+  };
+
+
+  /* ----------------------------------------------------------
+     HEADER
+     ---------------------------------------------------------- */
+
+  pushU8(8); // Codec 8
+
+  pushU8(1); // Number of records
+
+
+  /* ----------------------------------------------------------
+     AVL RECORD
+     ---------------------------------------------------------- */
+
+  pushU64(timestamp);
+
+  pushU8(1); // Priority
+
+
+  /* ----------------------------------------------------------
+     GPS
+     Teltonika uses signed int32 coordinates * 10,000,000
+     ---------------------------------------------------------- */
+
+  pushI32(
+    Math.round(
+      longitude * 10_000_000,
+    ),
+  );
+
+  pushI32(
+    Math.round(
+      latitude * 10_000_000,
+    ),
+  );
+
+
+  pushU16(35); // altitude
+
+  pushU16(
+    Math.round(heading),
+  );
+
+  pushU8(9); // satellites
+
+  pushU16(
+    Math.round(speedKph),
+  );
+
+
+  /* ----------------------------------------------------------
+     IO
+     ---------------------------------------------------------- */
+
+  pushU8(1); // event ID
+
+  pushU8(3); // total IO count
+
+
+  // 1-byte IO
+  // ignition = ON
+
+  pushU8(1);
+
+  pushU8(239);
+
+  pushU8(1);
+
+
+  // 2-byte IO
+  // simulated battery voltage
+  // 12400 -> 12.4 V
+
+  pushU8(1);
+
+  pushU8(66);
+
+  pushU16(12400);
+
+
+  // 4-byte IO
+  // simulated odometer-like value
+
+  pushU8(1);
+
+  pushU8(16);
+
+  pushU32(
+    124560 + packetNumber * 10,
+  );
+
+
+  // 8-byte IO count
+
+  pushU8(0);
+
+
+  // number of records again
+
+  pushU8(1);
+
+
+  /* ----------------------------------------------------------
+     FINAL PACKET
+     ---------------------------------------------------------- */
+
+  const data = Buffer.concat(parts);
+
+  const packet = Buffer.alloc(
+    8 + data.length + 4,
+  );
+
+
+  packet.writeUInt32BE(
+    0,
+    0,
+  );
+
+
+  packet.writeUInt32BE(
+    data.length,
+    4,
+  );
+
+
+  data.copy(
+    packet,
+    8,
+  );
+
+
+  packet.writeUInt32BE(
+    crc16Ibm(data),
+    8 + data.length,
+  );
+
+
+  return packet;
+}
+
+
+/* ============================================================
+   MOVEMENT SIMULATION
+   ============================================================ */
+
+function advanceVehicle() {
+  /*
+   * Small movement east / north-east around Casablanca.
+   *
+   * This is intentionally simple:
+   * the dashboard receives changing GPS positions.
+   */
+
+  longitude += 0.00015;
+
+  latitude += 0.00005;
+
+
+  heading += 3;
+
+  if (heading >= 360) {
+    heading -= 360;
+  }
+
+
+  /*
+   * Small speed variation.
+   */
+
+  const variation =
+    Math.sin(
+      packetNumber / 4,
+    ) * 8;
+
+
+  speedKph = Math.max(
+    20,
+    Math.round(
+      48 + variation,
+    ),
+  );
+}
+
+
+/* ============================================================
+   TCP CONNECTION
+   ============================================================ */
+
+const socket =
+  net.createConnection(
+    {
+      host,
+      port,
+    },
+
+    () => {
+      console.log(
+        `[Teltonika simulator] Connected to ${host}:${port}`,
+      );
+
+
+      const imeiBuffer =
+        Buffer.from(
+          imei,
+          "ascii",
+        );
+
+
+      const handshake =
+        Buffer.alloc(
+          2 + imeiBuffer.length,
+        );
+
+
+      handshake.writeUInt16BE(
+        imeiBuffer.length,
+        0,
+      );
+
+
+      imeiBuffer.copy(
+        handshake,
+        2,
+      );
+
+
+      socket.write(
+        handshake,
+      );
+    },
+  );
+
+
+let authenticated = false;
+
+let waitingForPacketAck = false;
+
+
+/* ============================================================
+   SEND AVL RECORD
+   ============================================================ */
+
+function sendRecord() {
+  if (
+    !authenticated ||
+    waitingForPacketAck
+  ) {
+    return;
+  }
+
+
+  packetNumber += 1;
+
+
+  const packet =
+    buildCodec8Packet();
+
+
+  waitingForPacketAck = true;
+
+
+  socket.write(
+    packet,
+  );
+
+
+  console.log(
+    `[Teltonika simulator] #${packetNumber} ` +
+      `${latitude.toFixed(6)},${longitude.toFixed(6)} ` +
+      `${speedKph} km/h`,
+  );
+
+
+  advanceVehicle();
+}
+
+
+/* ============================================================
+   SERVER ACK HANDLING
+   ============================================================ */
+
+socket.on(
+  "data",
+
+  (data) => {
+    /*
+     * First ACK:
+     * 1 byte = IMEI accepted
+     */
+
+    if (!authenticated) {
+      if (
+        data.length !== 1 ||
+        data[0] !== 1
+      ) {
+        console.error(
+          `[Teltonika simulator] Server rejected IMEI ${imei}`,
+        );
+
+        socket.end();
+
+        return;
+      }
+
+
+      authenticated = true;
+
+
+      console.log(
+        `[Teltonika simulator] IMEI ${imei} accepted`,
+      );
+
+
+      sendRecord();
+
+
+      return;
+    }
+
+
+    /*
+     * AVL ACK:
+     * 4 byte integer = number of records accepted
+     */
+
+    if (data.length >= 4) {
+      const accepted =
+        data.readUInt32BE(0);
+
+
+      console.log(
+        `[Teltonika simulator] Server ACK = ${accepted}`,
+      );
+
+
+      waitingForPacketAck = false;
+    }
+  },
+);
+
+
+/* ============================================================
+   CONTINUOUS LOOP
+   ============================================================ */
+
+const timer =
+  setInterval(
+    () => {
+      sendRecord();
+    },
+    intervalMs,
+  );
+
+
+/* ============================================================
+   CLEAN SHUTDOWN
+   ============================================================ */
+
+function shutdown() {
+  console.log(
+    "\n[Teltonika simulator] Stopping...",
+  );
+
+
+  clearInterval(timer);
+
+
+  socket.end();
+}
+
+
+process.on(
+  "SIGINT",
+  shutdown,
+);
+
+
+process.on(
+  "SIGTERM",
+  shutdown,
+);
+
+
+socket.on(
+  "close",
+  () => {
+    console.log(
+      "[Teltonika simulator] TCP connection closed",
+    );
+  },
+);
+
+
+socket.on(
+  "error",
+
+  (error) => {
+    console.error(
+      "[Teltonika simulator]",
+      error.message,
+    );
+
+
+    process.exitCode = 1;
+  },
+);

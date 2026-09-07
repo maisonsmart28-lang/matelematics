@@ -1,0 +1,2237 @@
+﻿============================================================
+ MATELEMATICS - ALERT ENGINE V1 PREFLIGHT
+============================================================
+
+============================================================
+FILE : .\server\teltonika\server.ts
+EXISTS : True
+============================================================
+import net from "node:net";
+import http from "node:http";
+import fs from "node:fs";
+import path from "node:path";
+
+import {
+  attachTeltonikaProtocol,
+} from "./protocol";
+
+import {
+  buildCodec12Command,
+} from "./codec12";
+
+import {
+  registerDevice,
+} from "./registry";
+
+import {
+  loadDevicesFromSupabase,
+  persistTelemetry,
+} from "./storage";
+
+
+function loadLocalEnv() {
+  const envPath =
+    path.resolve(
+      process.cwd(),
+      ".env.local",
+    );
+
+  if (
+    !fs.existsSync(
+      envPath,
+    )
+  ) {
+    return;
+  }
+
+  const content =
+    fs.readFileSync(
+      envPath,
+      "utf8",
+    );
+
+  for (
+    const line of
+    content.split(
+      /\r?\n/,
+    )
+  ) {
+    const trimmed =
+      line.trim();
+
+    if (
+      !trimmed ||
+      trimmed.startsWith(
+        "#",
+      )
+    ) {
+      continue;
+    }
+
+    const separator =
+      trimmed.indexOf(
+        "=",
+      );
+
+    if (
+      separator ===
+      -1
+    ) {
+      continue;
+    }
+
+    const key =
+      trimmed
+        .slice(
+          0,
+          separator,
+        )
+        .trim();
+
+    let value =
+      trimmed
+        .slice(
+          separator +
+            1,
+        )
+        .trim();
+
+    if (
+      (
+        value.startsWith(
+          '"',
+        ) &&
+        value.endsWith(
+          '"',
+        )
+      ) ||
+      (
+        value.startsWith(
+          "'",
+        ) &&
+        value.endsWith(
+          "'",
+        )
+      )
+    ) {
+      value =
+        value.slice(
+          1,
+          -1,
+        );
+    }
+
+    if (
+      !process.env[
+        key
+      ]
+    ) {
+      process.env[
+        key
+      ] =
+        value;
+    }
+  }
+}
+
+
+loadLocalEnv();
+
+
+const host =
+  process.env
+    .TELTONIKA_HOST ??
+  "0.0.0.0";
+
+const port =
+  Number(
+    process.env
+      .TELTONIKA_PORT ??
+    5000,
+  );
+
+const controlHost =
+  "127.0.0.1";
+
+const controlPort =
+  Number(
+    process.env
+      .TELTONIKA_CONTROL_PORT ??
+    5001,
+  );
+
+
+if (
+  !Number.isInteger(
+    port,
+  ) ||
+  port < 1 ||
+  port > 65535
+) {
+  throw new Error(
+    "TELTONIKA_PORT must be a valid TCP port",
+  );
+}
+
+
+type SessionState = {
+  socket: net.Socket;
+  ready: boolean;
+  busy: boolean;
+};
+
+
+type PendingCommand = {
+  resolve:
+    (
+      response: string,
+    ) => void;
+
+  reject:
+    (
+      error: Error,
+    ) => void;
+
+  timer:
+    ReturnType<
+      typeof setTimeout
+    >;
+};
+
+
+const sessions =
+  new Map<
+    string,
+    SessionState
+  >();
+
+const pendingCommands =
+  new Map<
+    string,
+    PendingCommand
+  >();
+
+
+for (
+  const entry of (
+    process.env
+      .TELTONIKA_DEV_DEVICES ??
+    ""
+  ).split(",")
+) {
+  const [
+    imei,
+    clientId,
+    vehicleId,
+    label,
+  ] =
+    entry.split(
+      ":",
+    );
+
+  if (
+    imei &&
+    clientId &&
+    vehicleId
+  ) {
+    registerDevice({
+      imei,
+      clientId,
+      vehicleId,
+      label:
+        label ??
+        vehicleId,
+    });
+  }
+}
+
+
+function sleep(
+  ms: number,
+) {
+  return new Promise<void>(
+    (
+      resolve,
+    ) => {
+      setTimeout(
+        resolve,
+        ms,
+      );
+    },
+  );
+}
+
+
+async function waitForCommandWindow(
+  imei: string,
+) {
+  const deadline =
+    Date.now() +
+    10_000;
+
+  while (
+    Date.now() <
+    deadline
+  ) {
+    const state =
+      sessions.get(
+        imei,
+      );
+
+    if (
+      state &&
+      !state.busy &&
+      state.ready &&
+      !state.socket.destroyed
+    ) {
+      return state;
+    }
+
+    await sleep(
+      50,
+    );
+  }
+
+  throw new Error(
+    "TRACKER_NOT_READY",
+  );
+}
+
+
+async function sendCommand(
+  imei: string,
+  command: string,
+) {
+  if (
+    pendingCommands.has(
+      imei,
+    )
+  ) {
+    throw new Error(
+      "COMMAND_ALREADY_PENDING",
+    );
+  }
+
+
+  const state =
+    await waitForCommandWindow(
+      imei,
+    );
+
+
+  state.ready =
+    false;
+
+
+  return new Promise<string>(
+    (
+      resolve,
+      reject,
+    ) => {
+      const timer =
+        setTimeout(
+          () => {
+            pendingCommands.delete(
+              imei,
+            );
+
+            const current =
+              sessions.get(
+                imei,
+              );
+
+            if (
+              current
+            ) {
+              current.ready =
+                true;
+            }
+
+            reject(
+              new Error(
+                "COMMAND_TIMEOUT",
+              ),
+            );
+          },
+          12_000,
+        );
+
+
+      pendingCommands.set(
+        imei,
+        {
+          resolve,
+          reject,
+          timer,
+        },
+      );
+
+
+      state.socket.write(
+        buildCodec12Command(
+          command,
+        ),
+        (
+          error,
+        ) => {
+          if (
+            error
+          ) {
+            clearTimeout(
+              timer,
+            );
+
+            pendingCommands.delete(
+              imei,
+            );
+
+            state.ready =
+              true;
+
+            reject(
+              error,
+            );
+          }
+        },
+      );
+
+
+      console.log(
+        `[Teltonika] command sent imei=${imei} command=${command}`,
+      );
+    },
+  );
+}
+
+
+function resolveCommand(
+  imei: string,
+  response: string,
+) {
+  const pending =
+    pendingCommands.get(
+      imei,
+    );
+
+  const state =
+    sessions.get(
+      imei,
+    );
+
+  if (
+    state
+  ) {
+    state.ready =
+      true;
+  }
+
+  if (
+    !pending
+  ) {
+    console.warn(
+      `[Teltonika] unsolicited command response imei=${imei}: ${response}`,
+    );
+
+    return;
+  }
+
+  clearTimeout(
+    pending.timer,
+  );
+
+  pendingCommands.delete(
+    imei,
+  );
+
+  console.log(
+    `[Teltonika] command response imei=${imei}: ${response}`,
+  );
+
+  pending.resolve(
+    response,
+  );
+}
+
+
+function readJsonBody(
+  request:
+    http.IncomingMessage,
+) {
+  return new Promise<
+    Record<
+      string,
+      unknown
+    >
+  >(
+    (
+      resolve,
+      reject,
+    ) => {
+      let body =
+        "";
+
+      request.on(
+        "data",
+        (
+          chunk,
+        ) => {
+          body +=
+            chunk.toString(
+              "utf8",
+            );
+
+          if (
+            body.length >
+            64_000
+          ) {
+            reject(
+              new Error(
+                "REQUEST_TOO_LARGE",
+              ),
+            );
+          }
+        },
+      );
+
+      request.on(
+        "end",
+        () => {
+          try {
+            resolve(
+              body
+                ? JSON.parse(
+                    body,
+                  )
+                : {},
+            );
+          } catch {
+            reject(
+              new Error(
+                "INVALID_JSON",
+              ),
+            );
+          }
+        },
+      );
+
+      request.on(
+        "error",
+        reject,
+      );
+    },
+  );
+}
+
+
+function jsonResponse(
+  response:
+    http.ServerResponse,
+  status:
+    number,
+  body:
+    Record<
+      string,
+      unknown
+    >,
+) {
+  const data =
+    JSON.stringify(
+      body,
+    );
+
+  response.writeHead(
+    status,
+    {
+      "Content-Type":
+        "application/json; charset=utf-8",
+
+      "Content-Length":
+        Buffer.byteLength(
+          data,
+        ),
+    },
+  );
+
+  response.end(
+    data,
+  );
+}
+
+
+async function start() {
+  await loadDevicesFromSupabase();
+
+
+  const server =
+    net.createServer(
+      (
+        socket,
+      ) => {
+        socket.setKeepAlive(
+          true,
+          30_000,
+        );
+
+        socket.setNoDelay(
+          true,
+        );
+
+        console.log(
+          `[Teltonika] TCP connection from ${socket.remoteAddress}:${socket.remotePort}`,
+        );
+
+
+        attachTeltonikaProtocol(
+          socket,
+
+          async ({
+            imei,
+            normalized,
+          }) => {
+            for (
+              const telemetry of
+              normalized
+            ) {
+              console.log(
+                `[Teltonika] ${imei} ${telemetry.timestamp} ` +
+                `${telemetry.latitude.toFixed(6)},${telemetry.longitude.toFixed(6)} ` +
+                `${telemetry.speedKph} km/h`,
+              );
+
+              const saved =
+                await persistTelemetry(
+                  telemetry,
+                );
+
+              console.log(
+                `[Teltonika] persisted device=${saved.deviceId} ` +
+                `vehicle=${saved.vehicleId} ` +
+                `recorded_at=${saved.recordedAt}`,
+              );
+            }
+          },
+
+          {
+            onAuthenticated: ({
+              imei,
+              socket,
+            }) => {
+              sessions.set(
+                imei,
+                {
+                  socket,
+                  ready:
+                    false,
+                  busy:
+                    false,
+                },
+              );
+
+              console.log(
+                `[Teltonika] session authenticated imei=${imei}`,
+              );
+            },
+
+
+            onAvlStart: ({
+              imei,
+            }) => {
+              const state =
+                sessions.get(
+                  imei,
+                );
+
+              if (
+                state
+              ) {
+                state.busy =
+                  true;
+              }
+            },
+
+
+            onAvlAcked: ({
+              imei,
+            }) => {
+              const state =
+                sessions.get(
+                  imei,
+                );
+
+              if (
+                state
+              ) {
+                state.busy =
+                  false;
+
+                state.ready =
+                  true;
+              }
+            },
+
+
+            onCommandResponse: ({
+              imei,
+              response,
+            }) => {
+              resolveCommand(
+                imei,
+                response,
+              );
+            },
+
+
+            onDisconnected: ({
+              imei,
+            }) => {
+              const state =
+                sessions.get(
+                  imei,
+                );
+
+              if (
+                state?.socket ===
+                socket
+              ) {
+                sessions.delete(
+                  imei,
+                );
+              }
+
+              const pending =
+                pendingCommands.get(
+                  imei,
+                );
+
+              if (
+                pending
+              ) {
+                clearTimeout(
+                  pending.timer,
+                );
+
+                pendingCommands.delete(
+                  imei,
+                );
+
+                pending.reject(
+                  new Error(
+                    "TRACKER_DISCONNECTED",
+                  ),
+                );
+              }
+            },
+          },
+        );
+
+
+        socket.on(
+          "close",
+          () => {
+            console.log(
+              "[Teltonika] TCP connection closed",
+            );
+          },
+        );
+
+
+        socket.on(
+          "error",
+          (
+            error:
+              Error,
+          ) => {
+            console.error(
+              "[Teltonika] socket error:",
+              error.message,
+            );
+          },
+        );
+      },
+    );
+
+
+  const controlServer =
+    http.createServer(
+      async (
+        request,
+        response,
+      ) => {
+        if (
+          request.method !==
+            "POST" ||
+          request.url !==
+            "/command"
+        ) {
+          jsonResponse(
+            response,
+            404,
+            {
+              error:
+                "NOT_FOUND",
+            },
+          );
+
+          return;
+        }
+
+
+        try {
+          const body =
+            await readJsonBody(
+              request,
+            );
+
+          const imei =
+            typeof body.imei ===
+              "string"
+              ? body.imei
+              : "";
+
+          const command =
+            typeof body.command ===
+              "string"
+              ? body.command
+              : "";
+
+
+          if (
+            !imei ||
+            !command
+          ) {
+            jsonResponse(
+              response,
+              400,
+              {
+                error:
+                  "IMEI_AND_COMMAND_REQUIRED",
+              },
+            );
+
+            return;
+          }
+
+
+          /*
+           * Remote command safety whitelist.
+           *
+           * lvcandtcclear:
+           *   real LIGHT strategy when supported.
+           *
+           * matelematics_sim_j1939_dm11_dm3_clear:
+           *   SIMULATOR ONLY.
+           *   Never send this command to a real FMC650.
+           */
+          const j1939SimulatorCommand =
+            "matelematics_sim_j1939_dm11_dm3_clear";
+
+          const j1939SimulatorImei =
+            process.env
+              .TELTONIKA_J1939_SIM_IMEI ??
+            "356307042441650";
+
+          /*
+           * REAL J1939 HARD LOCK V1.
+           *
+           * Even if a caller bypasses the web UI/API,
+           * no command in the real-J1939 namespace
+           * may reach a tracker.
+           */
+          if (
+            command.startsWith(
+              "matelematics_real_j1939_",
+            )
+          ) {
+            jsonResponse(
+              response,
+              403,
+              {
+                error:
+                  "REAL_J1939_TRANSMISSION_HARD_LOCKED",
+              },
+            );
+
+            return;
+          }
+
+
+          const commandAllowed =
+            command ===
+              "lvcandtcclear" ||
+            command ===
+              j1939SimulatorCommand;
+
+          if (
+            !commandAllowed
+          ) {
+            jsonResponse(
+              response,
+              400,
+              {
+                error:
+                  "COMMAND_NOT_ALLOWED",
+              },
+            );
+
+            return;
+          }
+
+          /*
+           * Second safety barrier:
+           * simulation command is accepted only for
+           * the dedicated J1939 simulator IMEI.
+           */
+          if (
+            command ===
+              j1939SimulatorCommand &&
+            imei !==
+              j1939SimulatorImei
+          ) {
+            jsonResponse(
+              response,
+              403,
+              {
+                error:
+                  "J1939_SIMULATOR_COMMAND_FORBIDDEN",
+              },
+            );
+
+            return;
+          }
+
+
+          const commandResponse =
+            await sendCommand(
+              imei,
+              command,
+            );
+
+
+          jsonResponse(
+            response,
+            200,
+            {
+              ok:
+                true,
+
+              response:
+                commandResponse,
+            },
+          );
+        } catch (error) {
+          const message =
+            error instanceof Error
+              ? error.message
+              : String(error);
+
+          console.error(
+            "[Teltonika control]",
+            message,
+          );
+
+          jsonResponse(
+            response,
+            503,
+            {
+              ok:
+                false,
+
+              error:
+                message,
+            },
+          );
+        }
+      },
+    );
+
+
+  server.listen(
+    port,
+    host,
+    () => {
+      console.log(
+        `[Teltonika] Matelematics ingestion engine listening on ${host}:${port}`,
+      );
+    },
+  );
+
+
+  controlServer.listen(
+    controlPort,
+    controlHost,
+    () => {
+      console.log(
+        `[Teltonika] local command bridge listening on ${controlHost}:${controlPort}`,
+      );
+    },
+  );
+}
+
+
+start().catch(
+  (
+    error,
+  ) => {
+    console.error(
+      "[Teltonika] startup error:",
+      error,
+    );
+
+    process.exitCode =
+      1;
+  },
+);
+
+============================================================
+FILE : .\app\api\alerts\route.ts
+EXISTS : False
+============================================================
+
+============================================================
+FILE : .\app\dashboard\alerts\page.tsx
+EXISTS : True
+============================================================
+"use client";
+
+import {
+  AlertTriangle,
+  Bell,
+  CalendarDays,
+  CheckCircle2,
+  Clock3,
+  Fuel,
+  MapPin,
+  Search,
+  ShieldAlert,
+  Gauge,
+  XCircle,
+  Car,
+  ChevronDown,
+} from "lucide-react";
+import { useMemo, useState } from "react";
+import { buildDemoTelemetryAlerts } from "../../../lib/demo-fleet";
+
+type Alert = {
+  id: string;
+  vehicle: string;
+  registration: string;
+  type: "ExcÃ¨s de vitesse" | "GÃ©ozone" | "Carburant" | "Batterie";
+  severity: "Critique" | "Importante" | "Information";
+  message: string;
+  location: string;
+  date: string;
+  time: string;
+  status: "Active" | "RÃ©solue";
+};
+
+type Period =
+  | "today"
+  | "yesterday"
+  | "7days"
+  | "30days"
+  | "3months"
+  | "6months"
+  | "1year"
+  | "custom";
+
+const alerts: Alert[] = buildDemoTelemetryAlerts() as Alert[];
+
+function SeverityBadge({
+  severity,
+}: {
+  severity: Alert["severity"];
+}) {
+  if (severity === "Critique") {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-400">
+        <XCircle className="h-3.5 w-3.5" />
+        Critique
+      </span>
+    );
+  }
+
+  if (severity === "Importante") {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-400">
+        <AlertTriangle className="h-3.5 w-3.5" />
+        Importante
+      </span>
+    );
+  }
+
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-500/10 px-2.5 py-1 text-xs font-medium text-blue-400">
+      <Bell className="h-3.5 w-3.5" />
+      Information
+    </span>
+  );
+}
+
+function AlertTypeIcon({
+  type,
+}: {
+  type: Alert["type"];
+}) {
+  if (type === "ExcÃ¨s de vitesse") {
+    return (
+      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-red-500/10">
+        <Gauge className="h-5 w-5 text-red-400" />
+      </div>
+    );
+  }
+
+  if (type === "GÃ©ozone") {
+    return (
+      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-purple-500/10">
+        <MapPin className="h-5 w-5 text-purple-400" />
+      </div>
+    );
+  }
+
+  if (type === "Carburant") {
+    return (
+      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/10">
+        <Fuel className="h-5 w-5 text-amber-400" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-500/10">
+      <ShieldAlert className="h-5 w-5 text-blue-400" />
+    </div>
+  );
+}
+
+function parseFrenchDate(date: string) {
+  const months: Record<string, number> = {
+    janvier: 0,
+    fÃ©vrier: 1,
+    mars: 2,
+    avril: 3,
+    mai: 4,
+    juin: 5,
+    juillet: 6,
+    aoÃ»t: 7,
+    septembre: 8,
+    octobre: 9,
+    novembre: 10,
+    dÃ©cembre: 11,
+  };
+
+  const parts = date.toLowerCase().split(" ");
+
+  const day = Number(parts[0]);
+  const month = months[parts[1]];
+  const year = Number(parts[2]);
+
+  return new Date(year, month, day);
+}
+
+function formatDate(date: Date) {
+  return date.toLocaleDateString("fr-FR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+}
+
+function getPeriodLabel(
+  period: Period,
+  customStart: string,
+  customEnd: string
+) {
+  switch (period) {
+    case "today":
+      return "Aujourd'hui";
+
+    case "yesterday":
+      return "Hier";
+
+    case "7days":
+      return "7 derniers jours";
+
+    case "30days":
+      return "30 derniers jours";
+
+    case "3months":
+      return "3 derniers mois";
+
+    case "6months":
+      return "6 derniers mois";
+
+    case "1year":
+      return "1 an";
+
+    case "custom":
+      if (customStart && customEnd) {
+        return `${formatDate(
+          new Date(customStart)
+        )} â†’ ${formatDate(new Date(customEnd))}`;
+      }
+
+      return "PÃ©riode personnalisÃ©e";
+
+    default:
+      return "Aujourd'hui";
+  }
+}
+
+export default function AlertsPage() {
+  const [search, setSearch] = useState("");
+  const [selectedVehicle, setSelectedVehicle] =
+    useState("Tous les vÃ©hicules");
+
+  const [selectedType, setSelectedType] =
+    useState("Tous les types");
+
+  const [selectedStatus, setSelectedStatus] =
+    useState("Tous les statuts");
+
+  const [period, setPeriod] =
+    useState<Period>("today");
+
+  const [customStart, setCustomStart] =
+    useState("");
+
+  const [customEnd, setCustomEnd] =
+    useState("");
+
+  const [showPeriodMenu, setShowPeriodMenu] =
+    useState(false);
+
+  const filteredAlerts = useMemo(() => {
+    const today = new Date(2026, 7, 24);
+
+    return alerts.filter((alert) => {
+      const alertDate = parseFrenchDate(alert.date);
+
+      /* Recherche */
+      const matchesSearch =
+        search.trim() === "" ||
+        alert.vehicle
+          .toLowerCase()
+          .includes(search.toLowerCase()) ||
+        alert.registration
+          .toLowerCase()
+          .includes(search.toLowerCase()) ||
+        alert.message
+          .toLowerCase()
+          .includes(search.toLowerCase()) ||
+        alert.location
+          .toLowerCase()
+          .includes(search.toLowerCase());
+
+      /* VÃ©hicule */
+      const matchesVehicle =
+        selectedVehicle === "Tous les vÃ©hicules" ||
+        alert.vehicle === selectedVehicle;
+
+      /* Type */
+      const matchesType =
+        selectedType === "Tous les types" ||
+        alert.type === selectedType;
+
+      /* Statut */
+      const matchesStatus =
+        selectedStatus === "Tous les statuts" ||
+        (selectedStatus === "Actives" &&
+          alert.status === "Active") ||
+        (selectedStatus === "RÃ©solues" &&
+          alert.status === "RÃ©solue");
+
+      /* Date */
+      let matchesPeriod = true;
+
+      if (period === "today") {
+        matchesPeriod =
+          alertDate.toDateString() ===
+          today.toDateString();
+      }
+
+      if (period === "yesterday") {
+        const yesterday = new Date(today);
+        yesterday.setDate(today.getDate() - 1);
+
+        matchesPeriod =
+          alertDate.toDateString() ===
+          yesterday.toDateString();
+      }
+
+      if (period === "7days") {
+        const start = new Date(today);
+        start.setDate(today.getDate() - 6);
+
+        matchesPeriod =
+          alertDate >= start && alertDate <= today;
+      }
+
+      if (period === "30days") {
+        const start = new Date(today);
+        start.setDate(today.getDate() - 29);
+
+        matchesPeriod =
+          alertDate >= start && alertDate <= today;
+      }
+
+      if (period === "3months") {
+        const start = new Date(today);
+        start.setMonth(today.getMonth() - 3);
+
+        matchesPeriod =
+          alertDate >= start && alertDate <= today;
+      }
+
+      if (period === "6months") {
+        const start = new Date(today);
+        start.setMonth(today.getMonth() - 6);
+
+        matchesPeriod =
+          alertDate >= start && alertDate <= today;
+      }
+
+      if (period === "1year") {
+        const start = new Date(today);
+        start.setFullYear(today.getFullYear() - 1);
+
+        matchesPeriod =
+          alertDate >= start && alertDate <= today;
+      }
+
+      if (period === "custom") {
+        if (customStart && customEnd) {
+          const start = new Date(customStart);
+          const end = new Date(customEnd);
+
+          end.setHours(23, 59, 59, 999);
+
+          matchesPeriod =
+            alertDate >= start &&
+            alertDate <= end;
+        }
+      }
+
+      return (
+        matchesSearch &&
+        matchesVehicle &&
+        matchesType &&
+        matchesStatus &&
+        matchesPeriod
+      );
+    });
+  }, [
+    search,
+    selectedVehicle,
+    selectedType,
+    selectedStatus,
+    period,
+    customStart,
+    customEnd,
+  ]);
+
+  const activeAlerts = filteredAlerts.filter(
+    (alert) => alert.status === "Active"
+  );
+
+  const criticalAlerts = filteredAlerts.filter(
+    (alert) =>
+      alert.severity === "Critique" &&
+      alert.status === "Active"
+  );
+
+  const resolvedAlerts = filteredAlerts.filter(
+    (alert) => alert.status === "RÃ©solue"
+  );
+
+  const handlePeriodChange = (value: Period) => {
+    setPeriod(value);
+    setShowPeriodMenu(false);
+  };
+
+  return (
+    <div className="space-y-6">
+
+      {/* HEADER */}
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+
+        <div className="flex items-center gap-3">
+
+          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-red-500/10">
+            <Bell className="h-5 w-5 text-red-400" />
+          </div>
+
+          <div>
+            <h1 className="text-2xl font-semibold text-white">
+              Alertes
+            </h1>
+
+            <p className="mt-1 text-sm text-slate-400">
+              Surveillez les Ã©vÃ©nements nÃ©cessitant votre attention.
+            </p>
+          </div>
+
+        </div>
+
+        <button
+          type="button"
+          onClick={() =>
+            window.alert(
+              "Toutes les alertes ont ete marquees comme lues."
+            )
+          }
+          className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-4 py-2.5 text-sm font-medium text-slate-300 transition hover:bg-slate-800 hover:text-white"
+        >
+          <CheckCircle2 className="h-4 w-4" />
+          Marquer tout comme lu
+        </button>
+
+      </div>
+
+      {/* STATISTIQUES */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+
+        <div className="rounded-xl border border-slate-800 bg-slate-900 p-5">
+
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-slate-400">
+              Alertes actives
+            </p>
+
+            <Bell className="h-5 w-5 text-red-400" />
+          </div>
+
+          <p className="mt-3 text-3xl font-bold text-white">
+            {activeAlerts.length}
+          </p>
+
+          <p className="mt-1 text-xs text-slate-500">
+            Alertes nÃ©cessitant une action
+          </p>
+
+        </div>
+
+        <div className="rounded-xl border border-slate-800 bg-slate-900 p-5">
+
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-slate-400">
+              Critiques
+            </p>
+
+            <XCircle className="h-5 w-5 text-red-400" />
+          </div>
+
+          <p className="mt-3 text-3xl font-bold text-red-400">
+            {criticalAlerts.length}
+          </p>
+
+          <p className="mt-1 text-xs text-slate-500">
+            PrioritÃ© Ã©levÃ©e
+          </p>
+
+        </div>
+
+        <div className="rounded-xl border border-slate-800 bg-slate-900 p-5">
+
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-slate-400">
+              PÃ©riode sÃ©lectionnÃ©e
+            </p>
+
+            <Clock3 className="h-5 w-5 text-amber-400" />
+          </div>
+
+          <p className="mt-3 text-xl font-bold text-amber-400">
+            {getPeriodLabel(
+              period,
+              customStart,
+              customEnd
+            )}
+          </p>
+
+          <p className="mt-1 text-xs text-slate-500">
+            {filteredAlerts.length} alerte(s)
+          </p>
+
+        </div>
+
+        <div className="rounded-xl border border-slate-800 bg-slate-900 p-5">
+
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-slate-400">
+              RÃ©solues
+            </p>
+
+            <CheckCircle2 className="h-5 w-5 text-emerald-400" />
+          </div>
+
+          <p className="mt-3 text-3xl font-bold text-emerald-400">
+            {resolvedAlerts.length}
+          </p>
+
+          <p className="mt-1 text-xs text-slate-500">
+            Alertes traitÃ©es
+          </p>
+
+        </div>
+
+      </div>
+
+      {/* FILTRES */}
+      <div className="rounded-xl border border-slate-800 bg-slate-900 p-4">
+
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
+
+          {/* RECHERCHE */}
+          <div className="relative">
+
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+
+            <input
+              type="text"
+              value={search}
+              onChange={(event) =>
+                setSearch(event.target.value)
+              }
+              placeholder="Rechercher une alerte..."
+              className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2.5 pl-10 pr-3 text-sm text-white outline-none placeholder:text-slate-600 focus:border-blue-500"
+            />
+
+          </div>
+
+          {/* VEHICULE */}
+          <select
+            value={selectedVehicle}
+            onChange={(event) =>
+              setSelectedVehicle(event.target.value)
+            }
+            className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-slate-300 outline-none focus:border-blue-500"
+          >
+            <option>Tous les vÃ©hicules</option>
+            <option>Ford Transit Custom</option>
+            <option>Renault Express</option>
+            <option>Dacia Dokker</option>
+            <option>Peugeot Partner</option>
+            <option>Ford Ranger</option>
+          </select>
+
+          {/* TYPE */}
+          <select
+            value={selectedType}
+            onChange={(event) =>
+              setSelectedType(event.target.value)
+            }
+            className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-slate-300 outline-none focus:border-blue-500"
+          >
+            <option>Tous les types</option>
+            <option>ExcÃ¨s de vitesse</option>
+            <option>GÃ©ozone</option>
+            <option>Carburant</option>
+            <option>Batterie</option>
+          </select>
+
+          {/* STATUT */}
+          <select
+            value={selectedStatus}
+            onChange={(event) =>
+              setSelectedStatus(event.target.value)
+            }
+            className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-slate-300 outline-none focus:border-blue-500"
+          >
+            <option>Tous les statuts</option>
+            <option>Actives</option>
+            <option>RÃ©solues</option>
+          </select>
+
+          {/* PERIODE */}
+          <div className="relative">
+
+            <button
+              type="button"
+              onClick={() =>
+                setShowPeriodMenu(!showPeriodMenu)
+              }
+              className="flex w-full items-center justify-between gap-2 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-slate-300 transition hover:bg-slate-800 hover:text-white"
+            >
+
+              <span className="flex min-w-0 items-center gap-2">
+
+                <CalendarDays className="h-4 w-4 shrink-0 text-blue-400" />
+
+                <span className="truncate">
+                  {getPeriodLabel(
+                    period,
+                    customStart,
+                    customEnd
+                  )}
+                </span>
+
+              </span>
+
+              <ChevronDown className="h-4 w-4 shrink-0 text-slate-500" />
+
+            </button>
+
+            {showPeriodMenu && (
+              <div className="absolute right-0 top-full z-40 mt-2 w-full min-w-[230px] overflow-hidden rounded-xl border border-slate-700 bg-slate-900 shadow-2xl">
+
+                <div className="p-2">
+
+                  {[
+                    ["today", "Aujourd'hui"],
+                    ["yesterday", "Hier"],
+                    ["7days", "7 derniers jours"],
+                    ["30days", "30 derniers jours"],
+                    ["3months", "3 derniers mois"],
+                    ["6months", "6 derniers mois"],
+                    ["1year", "1 an"],
+                    ["custom", "PÃ©riode personnalisÃ©e"],
+                  ].map(([value, label]) => (
+
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() =>
+                        handlePeriodChange(
+                          value as Period
+                        )
+                      }
+                      className={`flex w-full items-center rounded-lg px-3 py-2.5 text-left text-sm transition ${
+                        period === value
+                          ? "bg-blue-500/10 text-blue-400"
+                          : "text-slate-300 hover:bg-slate-800 hover:text-white"
+                      }`}
+                    >
+                      {label}
+                    </button>
+
+                  ))}
+
+                </div>
+
+              </div>
+            )}
+
+          </div>
+
+        </div>
+
+        {/* DATES PERSONNALISEES */}
+        {period === "custom" && (
+          <div className="mt-4 grid grid-cols-1 gap-3 border-t border-slate-800 pt-4 sm:grid-cols-2">
+
+            <div>
+
+              <label
+                htmlFor="alert-start-date"
+                className="mb-2 block text-xs font-medium text-slate-400"
+              >
+                Date de dÃ©but
+              </label>
+
+              <input
+                id="alert-start-date"
+                type="date"
+                value={customStart}
+                max={customEnd || undefined}
+                onChange={(event) =>
+                  setCustomStart(event.target.value)
+                }
+                className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-white outline-none focus:border-blue-500"
+              />
+
+            </div>
+
+            <div>
+
+              <label
+                htmlFor="alert-end-date"
+                className="mb-2 block text-xs font-medium text-slate-400"
+              >
+                Date de fin
+              </label>
+
+              <input
+                id="alert-end-date"
+                type="date"
+                value={customEnd}
+                min={customStart || undefined}
+                onChange={(event) =>
+                  setCustomEnd(event.target.value)
+                }
+                className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-white outline-none focus:border-blue-500"
+              />
+
+            </div>
+
+          </div>
+        )}
+
+      </div>
+
+      {/* TABLEAU DES ALERTES */}
+      <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900">
+
+        <div className="border-b border-slate-800 px-5 py-4">
+
+          <h2 className="font-semibold text-white">
+            Alertes rÃ©centes
+          </h2>
+
+          <p className="mt-1 text-xs text-slate-500">
+            {filteredAlerts.length} alerte(s) correspondant aux filtres sÃ©lectionnÃ©s.
+          </p>
+
+        </div>
+
+        <div className="overflow-x-auto">
+
+          <table className="min-w-full">
+
+            <thead>
+
+              <tr className="border-b border-slate-800 bg-slate-950/50">
+
+                <th className="px-5 py-4 text-left text-xs font-medium uppercase tracking-wider text-slate-500">
+                  Alerte
+                </th>
+
+                <th className="px-5 py-4 text-left text-xs font-medium uppercase tracking-wider text-slate-500">
+                  VÃ©hicule
+                </th>
+
+                <th className="px-5 py-4 text-left text-xs font-medium uppercase tracking-wider text-slate-500">
+                  GravitÃ©
+                </th>
+
+                <th className="px-5 py-4 text-left text-xs font-medium uppercase tracking-wider text-slate-500">
+                  Localisation
+                </th>
+
+                <th className="px-5 py-4 text-left text-xs font-medium uppercase tracking-wider text-slate-500">
+                  Date
+                </th>
+
+                <th className="px-5 py-4 text-left text-xs font-medium uppercase tracking-wider text-slate-500">
+                  Statut
+                </th>
+
+              </tr>
+
+            </thead>
+
+            <tbody className="divide-y divide-slate-800">
+
+              {filteredAlerts.map((alert) => (
+
+                <tr
+                  key={alert.id}
+                  className="transition hover:bg-slate-800/40"
+                >
+
+                  <td className="px-5 py-4">
+
+                    <div className="flex items-center gap-3">
+
+                      <AlertTypeIcon type={alert.type} />
+
+                      <div>
+
+                        <p className="text-sm font-medium text-white">
+                          {alert.type}
+                        </p>
+
+                        <p className="mt-1 max-w-xs text-xs text-slate-500">
+                          {alert.message}
+                        </p>
+
+                      </div>
+
+                    </div>
+
+                  </td>
+
+                  <td className="px-5 py-4">
+
+                    <a
+                      href={`/dashboard/vehicle/${alert.id}`}
+                      className="flex items-center gap-2"
+                    >
+
+                      <Car className="h-4 w-4 text-blue-400" />
+
+                      <div>
+
+                        <p className="text-sm font-medium text-white hover:text-blue-400">
+                          {alert.vehicle}
+                        </p>
+
+                        <p className="text-xs text-slate-500">
+                          {alert.registration}
+                        </p>
+
+                      </div>
+
+                    </a>
+
+                  </td>
+
+                  <td className="px-5 py-4">
+                    <SeverityBadge severity={alert.severity} />
+                  </td>
+
+                  <td className="px-5 py-4">
+
+                    <div className="flex items-center gap-2 text-sm text-slate-300">
+
+                      <MapPin className="h-4 w-4 text-slate-500" />
+
+                      {alert.location}
+
+                    </div>
+
+                  </td>
+
+                  <td className="px-5 py-4">
+
+                    <p className="text-sm text-slate-300">
+                      {alert.date}
+                    </p>
+
+                    <p className="text-xs text-slate-500">
+                      {alert.time}
+                    </p>
+
+                  </td>
+
+                  <td className="px-5 py-4">
+
+                    {alert.status === "Active" ? (
+
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-400">
+
+                        <span className="h-1.5 w-1.5 rounded-full bg-red-400" />
+
+                        Active
+
+                      </span>
+
+                    ) : (
+
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-400">
+
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+
+                        RÃ©solue
+
+                      </span>
+
+                    )}
+
+                  </td>
+
+                </tr>
+
+              ))}
+
+            </tbody>
+
+          </table>
+
+          {filteredAlerts.length === 0 && (
+            <div className="px-5 py-12 text-center">
+
+              <CalendarDays className="mx-auto h-8 w-8 text-slate-600" />
+
+              <p className="mt-3 text-sm font-medium text-white">
+                Aucune alerte trouvÃ©e
+              </p>
+
+              <p className="mt-1 text-xs text-slate-500">
+                Modifiez la pÃ©riode ou les filtres de recherche.
+              </p>
+
+            </div>
+          )}
+
+        </div>
+
+      </div>
+
+      {/* INFORMATION */}
+      <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-4">
+
+        <div className="flex gap-3">
+
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-red-400" />
+
+          <div>
+
+            <p className="text-sm font-medium text-white">
+              SystÃ¨me d&apos;alertes tÃ©lÃ©matiques
+            </p>
+
+            <p className="mt-1 text-xs leading-5 text-slate-400">
+              Les alertes affichÃ©es sont actuellement des donnÃ©es de
+              dÃ©monstration. Elles pourront Ãªtre connectÃ©es aux Ã©vÃ©nements
+              rÃ©els provenant de Traccar et des boÃ®tiers tÃ©lÃ©matiques.
+            </p>
+
+          </div>
+
+        </div>
+
+      </div>
+
+    </div>
+  );
+}
+
+============================================================
+FILE : .\app\dashboard\layout.tsx
+EXISTS : True
+============================================================
+"use client";
+
+import {
+  useEffect,
+  useState,
+  type ReactNode,
+} from "react";
+
+import {
+  useRouter,
+} from "next/navigation";
+
+import DashboardShell from "../../components/DashboardShell";
+
+import {
+  supabase,
+} from "../components/supabase";
+
+import {
+  DashboardAccessProvider,
+  type DashboardIdentity,
+  type DashboardRole,
+} from "./DashboardAccessContext";
+
+
+const VALID_ROLES:
+  DashboardRole[] = [
+    "matelematics_admin",
+    "partner_admin",
+    "client_admin",
+    "user",
+  ];
+
+
+function isDashboardRole(
+  value: unknown,
+): value is DashboardRole {
+  return VALID_ROLES.includes(
+    value as DashboardRole,
+  );
+}
+
+
+function roleLabel(
+  role: DashboardRole,
+) {
+  switch (role) {
+    case "matelematics_admin":
+      return "Administrateur Matelematics";
+
+    case "partner_admin":
+      return "Administrateur partenaire";
+
+    case "client_admin":
+      return "Administrateur client";
+
+    case "user":
+      return "Utilisateur";
+
+    default:
+      return "Utilisateur";
+  }
+}
+
+
+export default function DashboardLayout({
+  children,
+}: {
+  children: ReactNode;
+}) {
+  const router =
+    useRouter();
+
+  const [
+    identity,
+    setIdentity,
+  ] =
+    useState<DashboardIdentity | null>(
+      null,
+    );
+
+  const [
+    loading,
+    setLoading,
+  ] =
+    useState(true);
+
+  const [
+    error,
+    setError,
+  ] =
+    useState<string | null>(
+      null,
+    );
+
+
+  useEffect(() => {
+    let mounted =
+      true;
+
+
+    async function loadIdentity() {
+      setLoading(true);
+      setError(null);
+
+
+      const {
+        data: {
+          session,
+        },
+        error:
+          sessionError,
+      } =
+        await supabase.auth.getSession();
+
+
+      if (
+        sessionError ||
+        !session
+      ) {
+        router.replace(
+          "/login",
+        );
+
+        return;
+      }
+
+
+      const {
+        data: profile,
+        error:
+          profileError,
+      } =
+        await supabase
+          .from(
+            "profiles",
+          )
+          .select(
+            "id,full_name,role,company_id,partner_id",
+          )
+          .eq(
+            "id",
+            session.user.id,
+          )
+          .single();
+
+
+      if (!mounted) {
+        return;
+      }
+
+
+      if (
+        profileError ||
+        !profile
+      ) {
+        console.error(
+          "[Dashboard] profile load error",
+          profileError,
+        );
+
+        setError(
+          "Impossible de charger votre profil Matelematics.",
+        );
+
+        setLoading(false);
+
+        return;
+      }
+
+
+      if (
+        !isDashboardRole(
+          profile.role,
+        )
+      ) {
+        setError(
+          "Votre rôle utilisateur n'est pas reconnu.",
+        );
+
+        setLoading(false);
+
+        return;
+      }
+
+
+      setIdentity({
+        id:
+          session.user.id,
+
+        email:
+          session.user.email ??
+          null,
+
+        fullName:
+          profile.full_name ||
+          session.user.email ||
+          "Utilisateur",
+
+        role:
+          profile.role,
+
+        companyId:
+          profile.company_id,
+
+        partnerId:
+          profile.partner_id,
+      });
+
+
+      setLoading(false);
+    }
+
+
+    void loadIdentity();
+
+
+    const {
+      data: {
+        subscription,
+      },
+    } =
+      supabase.auth.onAuthStateChange(
+        (
+          event,
+          session,
+        ) => {
+          if (
+            event ===
+              "SIGNED_OUT" ||
+            !session
+          ) {
+            router.replace(
+              "/login",
+            );
+          }
+        },
+      );
+
+
+    return () => {
+      mounted =
+        false;
+
+      subscription.unsubscribe();
+    };
+  }, [
+    router,
+  ]);
+
+
+  async function handleLogout() {
+    await supabase.auth.signOut();
+
+    router.replace(
+      "/login",
+    );
+  }
+
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-950 text-white">
+        <div className="text-center">
+          <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-2 border-slate-700 border-t-blue-500" />
+
+          <p className="text-sm text-slate-400">
+            Chargement de votre espace...
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+
+  if (
+    error ||
+    !identity
+  ) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-950 px-6">
+        <div className="max-w-md rounded-xl border border-red-500/20 bg-red-500/5 p-6 text-center">
+          <p className="font-semibold text-red-300">
+            Accès impossible
+          </p>
+
+          <p className="mt-2 text-sm text-red-200/70">
+            {error ??
+              "Profil utilisateur indisponible."}
+          </p>
+
+          <button
+            type="button"
+            onClick={
+              handleLogout
+            }
+            className="mt-5 rounded-lg bg-slate-800 px-4 py-2 text-sm text-white transition hover:bg-slate-700"
+          >
+            Retour à la connexion
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+
+  return (
+    <DashboardAccessProvider
+      identity={
+        identity
+      }
+    >
+      <DashboardShell
+        basePath="/dashboard"
+        onLogout={
+          handleLogout
+        }
+        userName={
+          identity.fullName
+        }
+        userRole={
+          identity.role
+        }
+        userRoleLabel={
+          roleLabel(
+            identity.role,
+          )
+        }
+      >
+        {children}
+      </DashboardShell>
+    </DashboardAccessProvider>
+  );
+}
+
+
+============================================================
+FILE : .\app\dashboard\components\Sidebar.tsx
+EXISTS : False
+============================================================
+
+============================================================
+FILE : .\app\dashboard\components\sidebar.tsx
+EXISTS : False
+============================================================

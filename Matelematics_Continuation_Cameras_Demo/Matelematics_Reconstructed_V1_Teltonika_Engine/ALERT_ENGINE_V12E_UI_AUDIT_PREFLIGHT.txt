@@ -1,0 +1,9730 @@
+﻿============================================================
+ MATELEMATICS - ALERT ENGINE V1.2E UI AUDIT PREFLIGHT
+============================================================
+
+DATE    : 2026-09-05 23:29:17
+PROJECT : C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine
+
+
+============================================================
+ FILE : .\app\api\alert-settings\route.ts
+============================================================
+
+----- FULL FILE -----
+import {
+  NextRequest,
+  NextResponse,
+} from "next/server";
+
+import {
+  createClient,
+} from "@supabase/supabase-js";
+
+
+export const runtime =
+  "nodejs";
+
+export const dynamic =
+  "force-dynamic";
+
+
+type Role =
+  | "matelematics_admin"
+  | "partner_admin"
+  | "client_admin"
+  | "user";
+
+
+type Profile = {
+  id: string;
+  role: Role;
+  company_id: string | null;
+  partner_id: string | null;
+};
+
+
+type RuleKey =
+  | "coolant_temperature_high"
+  | "overspeed"
+  | "battery_voltage_low_12v"
+  | "battery_voltage_low_24v"
+  | "low_fuel";
+
+
+type AlertSeverity =
+  | "critical"
+  | "high"
+  | "medium"
+  | "info";
+
+
+const ALERT_SEVERITIES:
+  AlertSeverity[] = [
+    "critical",
+    "high",
+    "medium",
+    "info",
+  ];
+
+
+type RuleDefinition = {
+  key: RuleKey;
+  label: string;
+  description: string;
+  unit: string;
+  platformValue: number;
+  platformEnabled: boolean;
+  platformSeverity: AlertSeverity;
+  min: number;
+  max: number;
+  step: number;
+};
+
+
+type AlertSettingRow = {
+  id?: string;
+  rule_key: string;
+  enabled: boolean;
+  threshold_value:
+    | number
+    | string
+    | null;
+
+  severity:
+    string |
+    null;
+
+  updated_at?:
+    | string
+    | null;
+};
+
+
+const RULES:
+  RuleDefinition[] = [
+    {
+      key:
+        "coolant_temperature_high",
+
+      label:
+        "TempÃ©rature moteur Ã©levÃ©e",
+
+      description:
+        "Alerte lorsque la tempÃ©rature moteur atteint ce seuil.",
+
+      unit:
+        "Â°C",
+
+      platformValue:
+        105,
+
+      platformEnabled:
+        true,
+
+      platformSeverity:
+        "critical",
+
+      min:
+        60,
+
+      max:
+        130,
+
+      step:
+        1,
+    },
+
+    {
+      key:
+        "overspeed",
+
+      label:
+        "ExcÃ¨s de vitesse",
+
+      description:
+        "Alerte lorsque le vÃ©hicule dÃ©passe cette vitesse.",
+
+      unit:
+        "km/h",
+
+      platformValue:
+        120,
+
+      platformEnabled:
+        true,
+
+      platformSeverity:
+        "high",
+
+      min:
+        10,
+
+      max:
+        250,
+
+      step:
+        1,
+    },
+
+    {
+      key:
+        "battery_voltage_low_12v",
+
+      label:
+        "Batterie faible â€” 12 V",
+
+      description:
+        "Seuil de tension externe basse pour un systÃ¨me 12 V.",
+
+      unit:
+        "V",
+
+      platformValue:
+        11.8,
+
+      platformEnabled:
+        true,
+
+      platformSeverity:
+        "medium",
+
+      min:
+        5,
+
+      max:
+        18,
+
+      step:
+        0.1,
+    },
+
+    {
+      key:
+        "battery_voltage_low_24v",
+
+      label:
+        "Batterie faible â€” 24 V",
+
+      description:
+        "Seuil de tension externe basse pour un systÃ¨me 24 V.",
+
+      unit:
+        "V",
+
+      platformValue:
+        22,
+
+      platformEnabled:
+        true,
+
+      platformSeverity:
+        "medium",
+
+      min:
+        10,
+
+      max:
+        36,
+
+      step:
+        0.1,
+    },
+
+    {
+      key:
+        "low_fuel",
+
+      label:
+        "Carburant faible",
+
+      description:
+        "Alerte lorsque le niveau de carburant atteint ce pourcentage.",
+
+      unit:
+        "%",
+
+      platformValue:
+        15,
+
+      platformEnabled:
+        true,
+
+      platformSeverity:
+        "medium",
+
+      min:
+        1,
+
+      max:
+        100,
+
+      step:
+        1,
+    },
+  ];
+
+
+const RULE_MAP =
+  new Map<
+    RuleKey,
+    RuleDefinition
+  >(
+    RULES.map(
+      (rule) => [
+        rule.key,
+        rule,
+      ],
+    ),
+  );
+
+
+const supabaseUrl =
+  process.env.SUPABASE_URL ??
+  process.env.NEXT_PUBLIC_SUPABASE_URL;
+
+const secretKey =
+  process.env.SUPABASE_SECRET_KEY;
+
+
+function getAdmin() {
+  if (
+    !supabaseUrl ||
+    !secretKey
+  ) {
+    throw new Error(
+      "SUPABASE_CONFIG",
+    );
+  }
+
+  return createClient(
+    supabaseUrl,
+    secretKey,
+    {
+      auth: {
+        persistSession:
+          false,
+
+        autoRefreshToken:
+          false,
+
+        detectSessionInUrl:
+          false,
+      },
+    },
+  );
+}
+
+
+async function authenticate(
+  request:
+    NextRequest,
+) {
+  const authorization =
+    request.headers.get(
+      "authorization",
+    );
+
+  const token =
+    authorization?.startsWith(
+      "Bearer ",
+    )
+      ? authorization.slice(7)
+      : null;
+
+  if (!token) {
+    throw new Error(
+      "AUTH_REQUIRED",
+    );
+  }
+
+  const admin =
+    getAdmin();
+
+  const {
+    data:
+      userData,
+
+    error:
+      userError,
+  } =
+    await admin.auth.getUser(
+      token,
+    );
+
+  if (
+    userError ||
+    !userData.user
+  ) {
+    throw new Error(
+      "AUTH_REQUIRED",
+    );
+  }
+
+  const {
+    data:
+      profile,
+
+    error:
+      profileError,
+  } =
+    await admin
+      .from(
+        "profiles",
+      )
+      .select(
+        "id,role,company_id,partner_id",
+      )
+      .eq(
+        "id",
+        userData.user.id,
+      )
+      .single();
+
+  if (
+    profileError ||
+    !profile
+  ) {
+    throw new Error(
+      "PROFILE_REQUIRED",
+    );
+  }
+
+  return {
+    admin,
+
+    profile:
+      profile as Profile,
+  };
+}
+
+
+function canManage(
+  profile:
+    Profile,
+) {
+  return (
+    profile.role ===
+      "matelematics_admin" ||
+    profile.role ===
+      "partner_admin" ||
+    profile.role ===
+      "client_admin"
+  );
+}
+
+
+async function getAccessibleCompanies(
+  admin:
+    ReturnType<typeof getAdmin>,
+
+  profile:
+    Profile,
+) {
+  if (
+    profile.role ===
+      "client_admin" ||
+    profile.role ===
+      "user"
+  ) {
+    if (
+      !profile.company_id
+    ) {
+      return [];
+    }
+
+    const {
+      data,
+      error,
+    } =
+      await admin
+        .from(
+          "companies",
+        )
+        .select(
+          "id,name",
+        )
+        .eq(
+          "id",
+          profile.company_id,
+        );
+
+    if (error) {
+      throw error;
+    }
+
+    return data ?? [];
+  }
+
+
+  if (
+    profile.role ===
+    "partner_admin"
+  ) {
+    if (
+      !profile.partner_id
+    ) {
+      return [];
+    }
+
+    const {
+      data,
+      error,
+    } =
+      await admin
+        .from(
+          "companies",
+        )
+        .select(
+          "id,name",
+        )
+        .eq(
+          "partner_id",
+          profile.partner_id,
+        )
+        .order(
+          "name",
+        );
+
+    if (error) {
+      throw error;
+    }
+
+    return data ?? [];
+  }
+
+
+  const {
+    data,
+    error,
+  } =
+    await admin
+      .from(
+        "companies",
+      )
+      .select(
+        "id,name",
+      )
+      .order(
+        "name",
+      );
+
+  if (error) {
+    throw error;
+  }
+
+  return data ?? [];
+}
+
+
+function companyAccessible(
+  companies:
+    {
+      id: string;
+      name: string;
+    }[],
+
+  companyId:
+    string,
+) {
+  return companies.some(
+    (company) =>
+      company.id ===
+      companyId,
+  );
+}
+
+
+async function getAccessibleVehicle(
+  admin:
+    ReturnType<typeof getAdmin>,
+
+  profile:
+    Profile,
+
+  vehicleId:
+    string,
+) {
+  const companies =
+    await getAccessibleCompanies(
+      admin,
+      profile,
+    );
+
+  const {
+    data:
+      vehicle,
+
+    error,
+  } =
+    await admin
+      .from(
+        "vehicles",
+      )
+      .select(
+        "id,company_id,name,registration",
+      )
+      .eq(
+        "id",
+        vehicleId,
+      )
+      .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  if (
+    !vehicle ||
+    !companyAccessible(
+      companies,
+      vehicle.company_id,
+    )
+  ) {
+    throw new Error(
+      "FORBIDDEN",
+    );
+  }
+
+  return vehicle;
+}
+
+
+function thresholdFromRow(
+  row:
+    AlertSettingRow |
+    undefined,
+) {
+  if (
+    !row ||
+    row.threshold_value ===
+      null
+  ) {
+    return null;
+  }
+
+  const value =
+    Number(
+      row.threshold_value,
+    );
+
+  return Number.isFinite(
+    value,
+  )
+    ? value
+    : null;
+}
+
+
+async function readCompanyRows(
+  admin:
+    ReturnType<typeof getAdmin>,
+
+  companyId:
+    string,
+) {
+  const {
+    data,
+    error,
+  } =
+    await admin
+      .from(
+        "alert_settings",
+      )
+      .select(
+        "id,rule_key,enabled,threshold_value,severity,updated_at",
+      )
+      .eq(
+        "company_id",
+        companyId,
+      )
+      .is(
+        "vehicle_id",
+        null,
+      );
+
+  if (error) {
+    throw error;
+  }
+
+  return (
+    data ??
+    []
+  ) as AlertSettingRow[];
+}
+
+
+async function readVehicleRows(
+  admin:
+    ReturnType<typeof getAdmin>,
+
+  companyId:
+    string,
+
+  vehicleId:
+    string,
+) {
+  const {
+    data,
+    error,
+  } =
+    await admin
+      .from(
+        "alert_settings",
+      )
+      .select(
+        "id,rule_key,enabled,threshold_value,severity,updated_at",
+      )
+      .eq(
+        "company_id",
+        companyId,
+      )
+      .eq(
+        "vehicle_id",
+        vehicleId,
+      );
+
+  if (error) {
+    throw error;
+  }
+
+  return (
+    data ??
+    []
+  ) as AlertSettingRow[];
+}
+
+
+function severityFromRow(
+  row:
+    AlertSettingRow |
+    undefined,
+): AlertSeverity | null {
+
+  if (
+    !row ||
+    !row.severity
+  ) {
+    return null;
+  }
+
+  if (
+    row.severity === "critical" ||
+    row.severity === "high" ||
+    row.severity === "medium" ||
+    row.severity === "info"
+  ) {
+    return row.severity;
+  }
+
+  return null;
+}
+
+
+function validateSeverity(
+  key:
+    RuleKey,
+
+  raw:
+    unknown,
+): AlertSeverity {
+
+  if (
+    typeof raw !== "string" ||
+    !ALERT_SEVERITIES.includes(
+      raw as AlertSeverity,
+    )
+  ) {
+    throw new Error(
+      `INVALID_SEVERITY:${key}`,
+    );
+  }
+
+  return raw as AlertSeverity;
+}
+
+
+function rowMap(
+  rows:
+    AlertSettingRow[],
+) {
+  return new Map<
+    string,
+    AlertSettingRow
+  >(
+    rows.map(
+      (row) => [
+        row.rule_key,
+        row,
+      ],
+    ),
+  );
+}
+
+
+function validateValue(
+  key:
+    RuleKey,
+
+  rawValue:
+    unknown,
+) {
+  const definition =
+    RULE_MAP.get(
+      key,
+    );
+
+  if (!definition) {
+    throw new Error(
+      `UNKNOWN_RULE:${key}`,
+    );
+  }
+
+  const value =
+    typeof rawValue ===
+      "number"
+      ? rawValue
+      : Number(
+          rawValue,
+        );
+
+  if (
+    !Number.isFinite(
+      value,
+    ) ||
+    value <
+      definition.min ||
+    value >
+      definition.max
+  ) {
+    throw new Error(
+      `INVALID_THRESHOLD:${key}`,
+    );
+  }
+
+  return value;
+}
+
+
+async function writeSetting({
+  admin,
+  companyId,
+  vehicleId,
+  key,
+  value,
+  enabled,
+  severity,
+}: {
+  admin:
+    ReturnType<typeof getAdmin>;
+
+  companyId:
+    string;
+
+  vehicleId:
+    string |
+    null;
+
+  key:
+    RuleKey;
+
+  value:
+    number;
+
+  enabled:
+    boolean;
+
+  severity:
+    AlertSeverity;
+}) {
+  const baseQuery =
+    admin
+      .from(
+        "alert_settings",
+      )
+      .select(
+        "id",
+      )
+      .eq(
+        "company_id",
+        companyId,
+      )
+      .eq(
+        "rule_key",
+        key,
+      );
+
+  const result =
+    vehicleId ===
+      null
+      ? await baseQuery
+          .is(
+            "vehicle_id",
+            null,
+          )
+          .limit(1)
+          .maybeSingle()
+      : await baseQuery
+          .eq(
+            "vehicle_id",
+            vehicleId,
+          )
+          .limit(1)
+          .maybeSingle();
+
+  if (result.error) {
+    throw result.error;
+  }
+
+  if (result.data) {
+    const {
+      error,
+    } =
+      await admin
+        .from(
+          "alert_settings",
+        )
+        .update({
+          enabled,
+
+          threshold_value:
+            value,
+
+          severity,
+        })
+        .eq(
+          "id",
+          result.data.id,
+        );
+
+    if (error) {
+      throw error;
+    }
+
+    return;
+  }
+
+  const {
+    error,
+  } =
+    await admin
+      .from(
+        "alert_settings",
+      )
+      .insert({
+        company_id:
+          companyId,
+
+        vehicle_id:
+          vehicleId,
+
+        rule_key:
+          key,
+
+        enabled,
+
+        threshold_value:
+          value,
+
+        severity,
+      });
+
+  if (error) {
+    throw error;
+  }
+}
+
+
+async function deleteVehicleSetting({
+  admin,
+  companyId,
+  vehicleId,
+  key,
+}: {
+  admin:
+    ReturnType<typeof getAdmin>;
+
+  companyId:
+    string;
+
+  vehicleId:
+    string;
+
+  key:
+    RuleKey;
+}) {
+  const {
+    error,
+  } =
+    await admin
+      .from(
+        "alert_settings",
+      )
+      .delete()
+      .eq(
+        "company_id",
+        companyId,
+      )
+      .eq(
+        "vehicle_id",
+        vehicleId,
+      )
+      .eq(
+        "rule_key",
+        key,
+      );
+
+  if (error) {
+    throw error;
+  }
+}
+
+
+function errorResponse(
+  cause:
+    unknown,
+) {
+  const message =
+    cause instanceof Error
+      ? cause.message
+      : "UNKNOWN_ERROR";
+
+  if (
+    message ===
+    "AUTH_REQUIRED"
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "AUTH_REQUIRED",
+      },
+      {
+        status:
+          401,
+      },
+    );
+  }
+
+  if (
+    message ===
+      "PROFILE_REQUIRED" ||
+    message ===
+      "FORBIDDEN"
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          message,
+      },
+      {
+        status:
+          403,
+      },
+    );
+  }
+
+  if (
+    message.startsWith(
+      "UNKNOWN_RULE:",
+    ) ||
+    message.startsWith(
+      "INVALID_THRESHOLD:",
+    ) ||
+    message.startsWith(
+      "INVALID_SEVERITY:",
+    )
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          message,
+      },
+      {
+        status:
+          400,
+      },
+    );
+  }
+
+  console.error(
+    "[Alert Settings]",
+    cause,
+  );
+
+  return NextResponse.json(
+    {
+      error:
+        message,
+    },
+    {
+      status:
+        500,
+    },
+  );
+}
+
+
+export async function GET(
+  request:
+    NextRequest,
+) {
+  try {
+    const {
+      admin,
+      profile,
+    } =
+      await authenticate(
+        request,
+      );
+
+    const vehicleId =
+      request.nextUrl
+        .searchParams
+        .get(
+          "vehicleId",
+        );
+
+
+    /*
+     * VEHICLE MODE
+     */
+    if (vehicleId) {
+      const vehicle =
+        await getAccessibleVehicle(
+          admin,
+          profile,
+          vehicleId,
+        );
+
+      const [
+        companyRows,
+        vehicleRows,
+      ] =
+        await Promise.all([
+          readCompanyRows(
+            admin,
+            vehicle.company_id,
+          ),
+
+          readVehicleRows(
+            admin,
+            vehicle.company_id,
+            vehicle.id,
+          ),
+        ]);
+
+      const companyMap =
+        rowMap(
+          companyRows,
+        );
+
+      const vehicleMap =
+        rowMap(
+          vehicleRows,
+        );
+
+      const settings =
+        RULES.map(
+          (rule) => {
+            const companyRow =
+              companyMap.get(
+                rule.key,
+              );
+
+            const vehicleRow =
+              vehicleMap.get(
+                rule.key,
+              );
+
+            const companyThreshold =
+              thresholdFromRow(
+                companyRow,
+              );
+
+            const vehicleThreshold =
+              thresholdFromRow(
+                vehicleRow,
+              );
+
+            const inheritedValue =
+              companyThreshold ??
+              rule.platformValue;
+
+            const inheritedEnabled =
+              companyRow
+                ? companyRow.enabled
+                : rule.platformEnabled;
+
+            const inheritedSource =
+              companyRow
+                ? "company"
+                : "platform";
+
+            const inheritedSeverity =
+              severityFromRow(
+                companyRow,
+              ) ??
+              rule.platformSeverity;
+
+            const vehicleSeverity =
+              severityFromRow(
+                vehicleRow,
+              );
+
+            const mode =
+              vehicleRow
+                ? "vehicle"
+                : "inherit";
+
+            const vehicleValue =
+              vehicleThreshold;
+
+            const vehicleEnabled =
+              vehicleRow
+                ? vehicleRow.enabled
+                : null;
+
+            return {
+              ...rule,
+
+              inheritedValue,
+
+              inheritedEnabled,
+
+              inheritedSource,
+
+              inheritedSeverity,
+
+              vehicleValue,
+
+              vehicleEnabled,
+
+              vehicleSeverity,
+
+              mode,
+
+              effectiveValue:
+                vehicleRow
+                  ? (
+                      vehicleThreshold ??
+                      inheritedValue
+                    )
+                  : inheritedValue,
+
+              effectiveEnabled:
+                vehicleRow
+                  ? vehicleRow.enabled
+                  : inheritedEnabled,
+
+              effectiveSeverity:
+                vehicleRow
+                  ? (
+                      vehicleSeverity ??
+                      inheritedSeverity
+                    )
+                  : inheritedSeverity,
+            };
+          },
+        );
+
+      return NextResponse.json({
+        mode:
+          "vehicle",
+
+        vehicle: {
+          id:
+            vehicle.id,
+
+          companyId:
+            vehicle.company_id,
+
+          name:
+            vehicle.name,
+
+          registration:
+            vehicle.registration,
+        },
+
+        settings,
+
+        canManage:
+          canManage(
+            profile,
+          ),
+      });
+    }
+
+
+    /*
+     * COMPANY MODE
+     */
+    const companies =
+      await getAccessibleCompanies(
+        admin,
+        profile,
+      );
+
+    if (
+      companies.length ===
+      0
+    ) {
+      return NextResponse.json({
+        companies:
+          [],
+
+        selectedCompanyId:
+          null,
+
+        settings:
+          [],
+
+        canManage:
+          canManage(
+            profile,
+          ),
+      });
+    }
+
+    const requestedCompanyId =
+      request.nextUrl
+        .searchParams
+        .get(
+          "companyId",
+        );
+
+    const selectedCompanyId =
+      requestedCompanyId &&
+      companyAccessible(
+        companies,
+        requestedCompanyId,
+      )
+        ? requestedCompanyId
+        : companies[0].id;
+
+    if (
+      requestedCompanyId &&
+      requestedCompanyId !==
+        selectedCompanyId
+    ) {
+      throw new Error(
+        "FORBIDDEN",
+      );
+    }
+
+    const rows =
+      await readCompanyRows(
+        admin,
+        selectedCompanyId,
+      );
+
+    const companyMap =
+      rowMap(
+        rows,
+      );
+
+    const settings =
+      RULES.map(
+        (rule) => {
+          const row =
+            companyMap.get(
+              rule.key,
+            );
+
+          const value =
+            thresholdFromRow(
+              row,
+            );
+
+          return {
+            ...rule,
+
+            value:
+              value ??
+              rule.platformValue,
+
+            enabled:
+              row
+                ? row.enabled
+                : rule.platformEnabled,
+
+            severity:
+              severityFromRow(
+                row,
+              ) ??
+              rule.platformSeverity,
+
+            source:
+              row
+                ? "company"
+                : "platform",
+
+            enabledSource:
+              row
+                ? "company"
+                : "platform",
+
+            updatedAt:
+              row?.updated_at ??
+              null,
+          };
+        },
+      );
+
+    return NextResponse.json({
+      companies,
+
+      selectedCompanyId,
+
+      settings,
+
+      canManage:
+        canManage(
+          profile,
+        ),
+    });
+
+  } catch (cause) {
+    return errorResponse(
+      cause,
+    );
+  }
+}
+
+
+export async function POST(
+  request:
+    NextRequest,
+) {
+  try {
+    const {
+      admin,
+      profile,
+    } =
+      await authenticate(
+        request,
+      );
+
+    if (
+      !canManage(
+        profile,
+      )
+    ) {
+      throw new Error(
+        "FORBIDDEN",
+      );
+    }
+
+    const body =
+      (
+        await request.json()
+      ) as {
+        action?:
+          unknown;
+
+        companyId?:
+          unknown;
+
+        vehicleId?:
+          unknown;
+
+        settings?:
+          unknown;
+      };
+
+
+    /*
+     * VEHICLE SAVE
+     */
+    if (
+      body.action ===
+      "vehicle-save"
+    ) {
+      const vehicleId =
+        typeof body.vehicleId ===
+          "string"
+          ? body.vehicleId
+          : "";
+
+      if (!vehicleId) {
+        throw new Error(
+          "FORBIDDEN",
+        );
+      }
+
+      const vehicle =
+        await getAccessibleVehicle(
+          admin,
+          profile,
+          vehicleId,
+        );
+
+      if (
+        !body.settings ||
+        typeof body.settings !==
+          "object" ||
+        Array.isArray(
+          body.settings,
+        )
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "INVALID_SETTINGS",
+          },
+          {
+            status:
+              400,
+          },
+        );
+      }
+
+      const incoming =
+        body.settings as
+          Record<
+            string,
+            unknown
+          >;
+
+      const validated:
+        {
+          key:
+            RuleKey;
+
+          mode:
+            "inherit" |
+            "vehicle";
+
+          value:
+            number |
+            null;
+
+          enabled:
+            boolean |
+            null;
+
+          severity:
+            AlertSeverity |
+            null;
+        }[] = [];
+
+      for (
+        const rule of
+        RULES
+      ) {
+        const raw =
+          incoming[
+            rule.key
+          ];
+
+        if (
+          !raw ||
+          typeof raw !==
+            "object" ||
+          Array.isArray(
+            raw,
+          )
+        ) {
+          return NextResponse.json(
+            {
+              error:
+                `INVALID_SETTING:${rule.key}`,
+            },
+            {
+              status:
+                400,
+            },
+          );
+        }
+
+        const object =
+          raw as
+            Record<
+              string,
+              unknown
+            >;
+
+        if (
+          object.mode ===
+          "inherit"
+        ) {
+          validated.push({
+            key:
+              rule.key,
+
+            mode:
+              "inherit",
+
+            value:
+              null,
+
+            enabled:
+              null,
+
+            severity:
+              null,
+          });
+
+          continue;
+        }
+
+        if (
+          object.mode !==
+          "vehicle"
+        ) {
+          return NextResponse.json(
+            {
+              error:
+                `INVALID_MODE:${rule.key}`,
+            },
+            {
+              status:
+                400,
+            },
+          );
+        }
+
+        if (
+          typeof object.enabled !==
+          "boolean"
+        ) {
+          return NextResponse.json(
+            {
+              error:
+                `INVALID_ENABLED:${rule.key}`,
+            },
+            {
+              status:
+                400,
+            },
+          );
+        }
+
+        const value =
+          validateValue(
+            rule.key,
+            object.value,
+          );
+
+        const severity =
+          validateSeverity(
+            rule.key,
+            object.severity,
+          );
+
+        validated.push({
+          key:
+            rule.key,
+
+          mode:
+            "vehicle",
+
+          value,
+
+          enabled:
+            object.enabled,
+
+          severity,
+        });
+      }
+
+
+      for (
+        const item of
+        validated
+      ) {
+        if (
+          item.mode ===
+          "inherit"
+        ) {
+          await deleteVehicleSetting({
+            admin,
+
+            companyId:
+              vehicle.company_id,
+
+            vehicleId:
+              vehicle.id,
+
+            key:
+              item.key,
+          });
+
+          continue;
+        }
+
+        await writeSetting({
+          admin,
+
+          companyId:
+            vehicle.company_id,
+
+          vehicleId:
+            vehicle.id,
+
+          key:
+            item.key,
+
+          value:
+            item.value!,
+
+          enabled:
+            item.enabled!,
+
+          severity:
+            item.severity!,
+        });
+      }
+
+      return NextResponse.json({
+        ok:
+          true,
+
+        vehicleId:
+          vehicle.id,
+      });
+    }
+
+
+    /*
+     * COMPANY MODE
+     */
+    const companies =
+      await getAccessibleCompanies(
+        admin,
+        profile,
+      );
+
+    const companyId =
+      typeof body.companyId ===
+        "string"
+        ? body.companyId
+        : "";
+
+    if (
+      !companyId ||
+      !companyAccessible(
+        companies,
+        companyId,
+      )
+    ) {
+      throw new Error(
+        "FORBIDDEN",
+      );
+    }
+
+
+    if (
+      body.action ===
+      "reset"
+    ) {
+      const {
+        error,
+      } =
+        await admin
+          .from(
+            "alert_settings",
+          )
+          .delete()
+          .eq(
+            "company_id",
+            companyId,
+          )
+          .is(
+            "vehicle_id",
+            null,
+          )
+          .in(
+            "rule_key",
+            RULES.map(
+              (rule) =>
+                rule.key,
+            ),
+          );
+
+      if (error) {
+        throw error;
+      }
+
+      return NextResponse.json({
+        ok:
+          true,
+
+        reset:
+          true,
+      });
+    }
+
+
+    if (
+      !body.settings ||
+      typeof body.settings !==
+        "object" ||
+      Array.isArray(
+        body.settings,
+      )
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "INVALID_SETTINGS",
+        },
+        {
+          status:
+            400,
+        },
+      );
+    }
+
+    const incoming =
+      body.settings as
+        Record<
+          string,
+          unknown
+        >;
+
+    const validated:
+      {
+        key:
+          RuleKey;
+
+        value:
+          number;
+
+        enabled:
+          boolean;
+
+        severity:
+          AlertSeverity;
+      }[] = [];
+
+    for (
+      const rule of
+      RULES
+    ) {
+      const raw =
+        incoming[
+          rule.key
+        ];
+
+      /*
+       * Temporary backward compatibility:
+       * numeric value = enabled true.
+       */
+      if (
+        typeof raw ===
+        "number"
+      ) {
+        validated.push({
+          key:
+            rule.key,
+
+          value:
+            validateValue(
+              rule.key,
+              raw,
+            ),
+
+          enabled:
+            true,
+
+          severity:
+            rule.platformSeverity,
+        });
+
+        continue;
+      }
+
+      if (
+        !raw ||
+        typeof raw !==
+          "object" ||
+        Array.isArray(
+          raw,
+        )
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              `INVALID_SETTING:${rule.key}`,
+          },
+          {
+            status:
+              400,
+          },
+        );
+      }
+
+      const object =
+        raw as
+          Record<
+            string,
+            unknown
+          >;
+
+      if (
+        typeof object.enabled !==
+        "boolean"
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              `INVALID_ENABLED:${rule.key}`,
+          },
+          {
+            status:
+              400,
+          },
+        );
+      }
+
+      validated.push({
+        key:
+          rule.key,
+
+        value:
+          validateValue(
+            rule.key,
+            object.value,
+          ),
+
+        enabled:
+          object.enabled,
+
+        severity:
+          validateSeverity(
+            rule.key,
+            object.severity,
+          ),
+      });
+    }
+
+
+    for (
+      const item of
+      validated
+    ) {
+      await writeSetting({
+        admin,
+
+        companyId,
+
+        vehicleId:
+          null,
+
+        key:
+          item.key,
+
+        value:
+          item.value,
+
+        enabled:
+          item.enabled,
+
+        severity:
+          item.severity,
+      });
+    }
+
+    return NextResponse.json({
+      ok:
+        true,
+    });
+
+  } catch (cause) {
+    return errorResponse(
+      cause,
+    );
+  }
+}
+
+----- TARGETED MATCHES -----
+
+PATTERN : platformValue
+LINE    : 62
+type RuleDefinition = {
+  key: RuleKey;
+  label: string;
+  description: string;
+  unit: string;
+  platformValue: number;
+  platformEnabled: boolean;
+  platformSeverity: AlertSeverity;
+  min: number;
+  max: number;
+  step: number;
+};
+
+
+type AlertSettingRow = {
+  id?: string;
+
+PATTERN : platformValue
+LINE    : 105
+        "Alerte lorsque la température moteur atteint ce seuil.",
+
+      unit:
+        "°C",
+
+      platformValue:
+        105,
+
+      platformEnabled:
+        true,
+
+      platformSeverity:
+        "critical",
+
+      min:
+        60,
+
+PATTERN : platformValue
+LINE    : 137
+        "Alerte lorsque le véhicule dépasse cette vitesse.",
+
+      unit:
+        "km/h",
+
+      platformValue:
+        120,
+
+      platformEnabled:
+        true,
+
+      platformSeverity:
+        "high",
+
+      min:
+        10,
+
+PATTERN : platformValue
+LINE    : 169
+        "Seuil de tension externe basse pour un système 12 V.",
+
+      unit:
+        "V",
+
+      platformValue:
+        11.8,
+
+      platformEnabled:
+        true,
+
+      platformSeverity:
+        "medium",
+
+      min:
+        5,
+
+PATTERN : platformValue
+LINE    : 201
+        "Seuil de tension externe basse pour un système 24 V.",
+
+      unit:
+        "V",
+
+      platformValue:
+        22,
+
+      platformEnabled:
+        true,
+
+      platformSeverity:
+        "medium",
+
+      min:
+        10,
+
+PATTERN : platformValue
+LINE    : 233
+        "Alerte lorsque le niveau de carburant atteint ce pourcentage.",
+
+      unit:
+        "%",
+
+      platformValue:
+        15,
+
+      platformEnabled:
+        true,
+
+      platformSeverity:
+        "medium",
+
+      min:
+        1,
+
+PATTERN : platformValue
+LINE    : 1137
+                vehicleRow,
+              );
+
+            const inheritedValue =
+              companyThreshold ??
+              rule.platformValue;
+
+            const inheritedEnabled =
+              companyRow
+                ? companyRow.enabled
+                : rule.platformEnabled;
+
+            const inheritedSource =
+              companyRow
+                ? "company"
+                : "platform";
+
+PATTERN : platformValue
+LINE    : 1329
+          return {
+            ...rule,
+
+            value:
+              value ??
+              rule.platformValue,
+
+            enabled:
+              row
+                ? row.enabled
+                : rule.platformEnabled,
+
+            severity:
+              severityFromRow(
+                row,
+              ) ??
+
+PATTERN : platformEnabled
+LINE    : 63
+  key: RuleKey;
+  label: string;
+  description: string;
+  unit: string;
+  platformValue: number;
+  platformEnabled: boolean;
+  platformSeverity: AlertSeverity;
+  min: number;
+  max: number;
+  step: number;
+};
+
+
+type AlertSettingRow = {
+  id?: string;
+  rule_key: string;
+
+PATTERN : platformEnabled
+LINE    : 108
+        "°C",
+
+      platformValue:
+        105,
+
+      platformEnabled:
+        true,
+
+      platformSeverity:
+        "critical",
+
+      min:
+        60,
+
+      max:
+        130,
+
+PATTERN : platformEnabled
+LINE    : 140
+        "km/h",
+
+      platformValue:
+        120,
+
+      platformEnabled:
+        true,
+
+      platformSeverity:
+        "high",
+
+      min:
+        10,
+
+      max:
+        250,
+
+PATTERN : platformEnabled
+LINE    : 172
+        "V",
+
+      platformValue:
+        11.8,
+
+      platformEnabled:
+        true,
+
+      platformSeverity:
+        "medium",
+
+      min:
+        5,
+
+      max:
+        18,
+
+PATTERN : platformEnabled
+LINE    : 204
+        "V",
+
+      platformValue:
+        22,
+
+      platformEnabled:
+        true,
+
+      platformSeverity:
+        "medium",
+
+      min:
+        10,
+
+      max:
+        36,
+
+PATTERN : platformEnabled
+LINE    : 236
+        "%",
+
+      platformValue:
+        15,
+
+      platformEnabled:
+        true,
+
+      platformSeverity:
+        "medium",
+
+      min:
+        1,
+
+      max:
+        100,
+
+PATTERN : platformEnabled
+LINE    : 1142
+              rule.platformValue;
+
+            const inheritedEnabled =
+              companyRow
+                ? companyRow.enabled
+                : rule.platformEnabled;
+
+            const inheritedSource =
+              companyRow
+                ? "company"
+                : "platform";
+
+            const inheritedSeverity =
+              severityFromRow(
+                companyRow,
+              ) ??
+
+PATTERN : platformEnabled
+LINE    : 1334
+              rule.platformValue,
+
+            enabled:
+              row
+                ? row.enabled
+                : rule.platformEnabled,
+
+            severity:
+              severityFromRow(
+                row,
+              ) ??
+              rule.platformSeverity,
+
+            source:
+              row
+                ? "company"
+
+PATTERN : platformSeverity
+LINE    : 64
+  label: string;
+  description: string;
+  unit: string;
+  platformValue: number;
+  platformEnabled: boolean;
+  platformSeverity: AlertSeverity;
+  min: number;
+  max: number;
+  step: number;
+};
+
+
+type AlertSettingRow = {
+  id?: string;
+  rule_key: string;
+  enabled: boolean;
+
+PATTERN : platformSeverity
+LINE    : 111
+        105,
+
+      platformEnabled:
+        true,
+
+      platformSeverity:
+        "critical",
+
+      min:
+        60,
+
+      max:
+        130,
+
+      step:
+        1,
+
+PATTERN : platformSeverity
+LINE    : 143
+        120,
+
+      platformEnabled:
+        true,
+
+      platformSeverity:
+        "high",
+
+      min:
+        10,
+
+      max:
+        250,
+
+      step:
+        1,
+
+PATTERN : platformSeverity
+LINE    : 175
+        11.8,
+
+      platformEnabled:
+        true,
+
+      platformSeverity:
+        "medium",
+
+      min:
+        5,
+
+      max:
+        18,
+
+      step:
+        0.1,
+
+PATTERN : platformSeverity
+LINE    : 207
+        22,
+
+      platformEnabled:
+        true,
+
+      platformSeverity:
+        "medium",
+
+      min:
+        10,
+
+      max:
+        36,
+
+      step:
+        0.1,
+
+PATTERN : platformSeverity
+LINE    : 239
+        15,
+
+      platformEnabled:
+        true,
+
+      platformSeverity:
+        "medium",
+
+      min:
+        1,
+
+      max:
+        100,
+
+      step:
+        1,
+
+PATTERN : platformSeverity
+LINE    : 1153
+
+            const inheritedSeverity =
+              severityFromRow(
+                companyRow,
+              ) ??
+              rule.platformSeverity;
+
+            const vehicleSeverity =
+              severityFromRow(
+                vehicleRow,
+              );
+
+            const mode =
+              vehicleRow
+                ? "vehicle"
+                : "inherit";
+
+PATTERN : platformSeverity
+LINE    : 1340
+
+            severity:
+              severityFromRow(
+                row,
+              ) ??
+              rule.platformSeverity,
+
+            source:
+              row
+                ? "company"
+                : "platform",
+
+            enabledSource:
+              row
+                ? "company"
+                : "platform",
+
+PATTERN : platformSeverity
+LINE    : 1817
+
+          enabled:
+            true,
+
+          severity:
+            rule.platformSeverity,
+        });
+
+        continue;
+      }
+
+      if (
+        !raw ||
+        typeof raw !==
+          "object" ||
+        Array.isArray(
+
+PATTERN : inheritedValue
+LINE    : 1135
+            const vehicleThreshold =
+              thresholdFromRow(
+                vehicleRow,
+              );
+
+            const inheritedValue =
+              companyThreshold ??
+              rule.platformValue;
+
+            const inheritedEnabled =
+              companyRow
+                ? companyRow.enabled
+                : rule.platformEnabled;
+
+            const inheritedSource =
+              companyRow
+
+PATTERN : inheritedValue
+LINE    : 1176
+                : null;
+
+            return {
+              ...rule,
+
+              inheritedValue,
+
+              inheritedEnabled,
+
+              inheritedSource,
+
+              inheritedSeverity,
+
+              vehicleValue,
+
+              vehicleEnabled,
+
+PATTERN : inheritedValue
+LINE    : 1196
+
+              effectiveValue:
+                vehicleRow
+                  ? (
+                      vehicleThreshold ??
+                      inheritedValue
+                    )
+                  : inheritedValue,
+
+              effectiveEnabled:
+                vehicleRow
+                  ? vehicleRow.enabled
+                  : inheritedEnabled,
+
+              effectiveSeverity:
+                vehicleRow
+
+PATTERN : inheritedValue
+LINE    : 1198
+                vehicleRow
+                  ? (
+                      vehicleThreshold ??
+                      inheritedValue
+                    )
+                  : inheritedValue,
+
+              effectiveEnabled:
+                vehicleRow
+                  ? vehicleRow.enabled
+                  : inheritedEnabled,
+
+              effectiveSeverity:
+                vehicleRow
+                  ? (
+                      vehicleSeverity ??
+
+PATTERN : inheritedEnabled
+LINE    : 1139
+
+            const inheritedValue =
+              companyThreshold ??
+              rule.platformValue;
+
+            const inheritedEnabled =
+              companyRow
+                ? companyRow.enabled
+                : rule.platformEnabled;
+
+            const inheritedSource =
+              companyRow
+                ? "company"
+                : "platform";
+
+            const inheritedSeverity =
+
+PATTERN : inheritedEnabled
+LINE    : 1178
+            return {
+              ...rule,
+
+              inheritedValue,
+
+              inheritedEnabled,
+
+              inheritedSource,
+
+              inheritedSeverity,
+
+              vehicleValue,
+
+              vehicleEnabled,
+
+              vehicleSeverity,
+
+PATTERN : inheritedEnabled
+LINE    : 1203
+                  : inheritedValue,
+
+              effectiveEnabled:
+                vehicleRow
+                  ? vehicleRow.enabled
+                  : inheritedEnabled,
+
+              effectiveSeverity:
+                vehicleRow
+                  ? (
+                      vehicleSeverity ??
+                      inheritedSeverity
+                    )
+                  : inheritedSeverity,
+            };
+          },
+
+PATTERN : inheritedSeverity
+LINE    : 1149
+            const inheritedSource =
+              companyRow
+                ? "company"
+                : "platform";
+
+            const inheritedSeverity =
+              severityFromRow(
+                companyRow,
+              ) ??
+              rule.platformSeverity;
+
+            const vehicleSeverity =
+              severityFromRow(
+                vehicleRow,
+              );
+
+
+PATTERN : inheritedSeverity
+LINE    : 1182
+
+              inheritedEnabled,
+
+              inheritedSource,
+
+              inheritedSeverity,
+
+              vehicleValue,
+
+              vehicleEnabled,
+
+              vehicleSeverity,
+
+              mode,
+
+              effectiveValue:
+
+PATTERN : inheritedSeverity
+LINE    : 1209
+
+              effectiveSeverity:
+                vehicleRow
+                  ? (
+                      vehicleSeverity ??
+                      inheritedSeverity
+                    )
+                  : inheritedSeverity,
+            };
+          },
+        );
+
+      return NextResponse.json({
+        mode:
+          "vehicle",
+
+
+PATTERN : inheritedSeverity
+LINE    : 1211
+                vehicleRow
+                  ? (
+                      vehicleSeverity ??
+                      inheritedSeverity
+                    )
+                  : inheritedSeverity,
+            };
+          },
+        );
+
+      return NextResponse.json({
+        mode:
+          "vehicle",
+
+        vehicle: {
+          id:
+
+PATTERN : effectiveValue
+LINE    : 1192
+
+              vehicleSeverity,
+
+              mode,
+
+              effectiveValue:
+                vehicleRow
+                  ? (
+                      vehicleThreshold ??
+                      inheritedValue
+                    )
+                  : inheritedValue,
+
+              effectiveEnabled:
+                vehicleRow
+                  ? vehicleRow.enabled
+
+PATTERN : effectiveEnabled
+LINE    : 1200
+                      vehicleThreshold ??
+                      inheritedValue
+                    )
+                  : inheritedValue,
+
+              effectiveEnabled:
+                vehicleRow
+                  ? vehicleRow.enabled
+                  : inheritedEnabled,
+
+              effectiveSeverity:
+                vehicleRow
+                  ? (
+                      vehicleSeverity ??
+                      inheritedSeverity
+                    )
+
+PATTERN : effectiveSeverity
+LINE    : 1205
+              effectiveEnabled:
+                vehicleRow
+                  ? vehicleRow.enabled
+                  : inheritedEnabled,
+
+              effectiveSeverity:
+                vehicleRow
+                  ? (
+                      vehicleSeverity ??
+                      inheritedSeverity
+                    )
+                  : inheritedSeverity,
+            };
+          },
+        );
+
+
+PATTERN : vehicleValue
+LINE    : 1165
+            const mode =
+              vehicleRow
+                ? "vehicle"
+                : "inherit";
+
+            const vehicleValue =
+              vehicleThreshold;
+
+            const vehicleEnabled =
+              vehicleRow
+                ? vehicleRow.enabled
+                : null;
+
+            return {
+              ...rule,
+
+
+PATTERN : vehicleValue
+LINE    : 1184
+
+              inheritedSource,
+
+              inheritedSeverity,
+
+              vehicleValue,
+
+              vehicleEnabled,
+
+              vehicleSeverity,
+
+              mode,
+
+              effectiveValue:
+                vehicleRow
+                  ? (
+
+PATTERN : vehicleEnabled
+LINE    : 1168
+                : "inherit";
+
+            const vehicleValue =
+              vehicleThreshold;
+
+            const vehicleEnabled =
+              vehicleRow
+                ? vehicleRow.enabled
+                : null;
+
+            return {
+              ...rule,
+
+              inheritedValue,
+
+              inheritedEnabled,
+
+PATTERN : vehicleEnabled
+LINE    : 1186
+
+              inheritedSeverity,
+
+              vehicleValue,
+
+              vehicleEnabled,
+
+              vehicleSeverity,
+
+              mode,
+
+              effectiveValue:
+                vehicleRow
+                  ? (
+                      vehicleThreshold ??
+                      inheritedValue
+
+PATTERN : vehicleSeverity
+LINE    : 1155
+              severityFromRow(
+                companyRow,
+              ) ??
+              rule.platformSeverity;
+
+            const vehicleSeverity =
+              severityFromRow(
+                vehicleRow,
+              );
+
+            const mode =
+              vehicleRow
+                ? "vehicle"
+                : "inherit";
+
+            const vehicleValue =
+
+PATTERN : vehicleSeverity
+LINE    : 1188
+
+              vehicleValue,
+
+              vehicleEnabled,
+
+              vehicleSeverity,
+
+              mode,
+
+              effectiveValue:
+                vehicleRow
+                  ? (
+                      vehicleThreshold ??
+                      inheritedValue
+                    )
+                  : inheritedValue,
+
+PATTERN : vehicleSeverity
+LINE    : 1208
+                  : inheritedEnabled,
+
+              effectiveSeverity:
+                vehicleRow
+                  ? (
+                      vehicleSeverity ??
+                      inheritedSeverity
+                    )
+                  : inheritedSeverity,
+            };
+          },
+        );
+
+      return NextResponse.json({
+        mode:
+          "vehicle",
+
+PATTERN : source
+LINE    : 1144
+            const inheritedEnabled =
+              companyRow
+                ? companyRow.enabled
+                : rule.platformEnabled;
+
+            const inheritedSource =
+              companyRow
+                ? "company"
+                : "platform";
+
+            const inheritedSeverity =
+              severityFromRow(
+                companyRow,
+              ) ??
+              rule.platformSeverity;
+
+
+PATTERN : source
+LINE    : 1180
+
+              inheritedValue,
+
+              inheritedEnabled,
+
+              inheritedSource,
+
+              inheritedSeverity,
+
+              vehicleValue,
+
+              vehicleEnabled,
+
+              vehicleSeverity,
+
+              mode,
+
+PATTERN : source
+LINE    : 1342
+              severityFromRow(
+                row,
+              ) ??
+              rule.platformSeverity,
+
+            source:
+              row
+                ? "company"
+                : "platform",
+
+            enabledSource:
+              row
+                ? "company"
+                : "platform",
+
+            updatedAt:
+
+PATTERN : source
+LINE    : 1347
+            source:
+              row
+                ? "company"
+                : "platform",
+
+            enabledSource:
+              row
+                ? "company"
+                : "platform",
+
+            updatedAt:
+              row?.updated_at ??
+              null,
+          };
+        },
+      );
+
+PATTERN : inheritedSource
+LINE    : 1144
+            const inheritedEnabled =
+              companyRow
+                ? companyRow.enabled
+                : rule.platformEnabled;
+
+            const inheritedSource =
+              companyRow
+                ? "company"
+                : "platform";
+
+            const inheritedSeverity =
+              severityFromRow(
+                companyRow,
+              ) ??
+              rule.platformSeverity;
+
+
+PATTERN : inheritedSource
+LINE    : 1180
+
+              inheritedValue,
+
+              inheritedEnabled,
+
+              inheritedSource,
+
+              inheritedSeverity,
+
+              vehicleValue,
+
+              vehicleEnabled,
+
+              vehicleSeverity,
+
+              mode,
+
+PATTERN : severity
+LINE    : 41
+  | "battery_voltage_low_12v"
+  | "battery_voltage_low_24v"
+  | "low_fuel";
+
+
+type AlertSeverity =
+  | "critical"
+  | "high"
+  | "medium"
+  | "info";
+
+
+const ALERT_SEVERITIES:
+  AlertSeverity[] = [
+    "critical",
+    "high",
+
+PATTERN : severity
+LINE    : 49
+  | "medium"
+  | "info";
+
+
+const ALERT_SEVERITIES:
+  AlertSeverity[] = [
+    "critical",
+    "high",
+    "medium",
+    "info",
+  ];
+
+
+type RuleDefinition = {
+  key: RuleKey;
+  label: string;
+
+PATTERN : severity
+LINE    : 64
+  label: string;
+  description: string;
+  unit: string;
+  platformValue: number;
+  platformEnabled: boolean;
+  platformSeverity: AlertSeverity;
+  min: number;
+  max: number;
+  step: number;
+};
+
+
+type AlertSettingRow = {
+  id?: string;
+  rule_key: string;
+  enabled: boolean;
+
+PATTERN : severity
+LINE    : 80
+  threshold_value:
+    | number
+    | string
+    | null;
+
+  severity:
+    string |
+    null;
+
+  updated_at?:
+    | string
+    | null;
+};
+
+
+const RULES:
+
+PATTERN : severity
+LINE    : 111
+        105,
+
+      platformEnabled:
+        true,
+
+      platformSeverity:
+        "critical",
+
+      min:
+        60,
+
+      max:
+        130,
+
+      step:
+        1,
+
+PATTERN : severity
+LINE    : 143
+        120,
+
+      platformEnabled:
+        true,
+
+      platformSeverity:
+        "high",
+
+      min:
+        10,
+
+      max:
+        250,
+
+      step:
+        1,
+
+PATTERN : severity
+LINE    : 175
+        11.8,
+
+      platformEnabled:
+        true,
+
+      platformSeverity:
+        "medium",
+
+      min:
+        5,
+
+      max:
+        18,
+
+      step:
+        0.1,
+
+PATTERN : severity
+LINE    : 207
+        22,
+
+      platformEnabled:
+        true,
+
+      platformSeverity:
+        "medium",
+
+      min:
+        10,
+
+      max:
+        36,
+
+      step:
+        0.1,
+
+PATTERN : severity
+LINE    : 239
+        15,
+
+      platformEnabled:
+        true,
+
+      platformSeverity:
+        "medium",
+
+      min:
+        1,
+
+      max:
+        100,
+
+      step:
+        1,
+
+PATTERN : severity
+LINE    : 621
+    await admin
+      .from(
+        "alert_settings",
+      )
+      .select(
+        "id,rule_key,enabled,threshold_value,severity,updated_at",
+      )
+      .eq(
+        "company_id",
+        companyId,
+      )
+      .is(
+        "vehicle_id",
+        null,
+      );
+
+
+PATTERN : severity
+LINE    : 662
+    await admin
+      .from(
+        "alert_settings",
+      )
+      .select(
+        "id,rule_key,enabled,threshold_value,severity,updated_at",
+      )
+      .eq(
+        "company_id",
+        companyId,
+      )
+      .eq(
+        "vehicle_id",
+        vehicleId,
+      );
+
+
+PATTERN : severity
+LINE    : 684
+    []
+  ) as AlertSettingRow[];
+}
+
+
+function severityFromRow(
+  row:
+    AlertSettingRow |
+    undefined,
+): AlertSeverity | null {
+
+  if (
+    !row ||
+    !row.severity
+  ) {
+    return null;
+
+PATTERN : severity
+LINE    : 688
+
+function severityFromRow(
+  row:
+    AlertSettingRow |
+    undefined,
+): AlertSeverity | null {
+
+  if (
+    !row ||
+    !row.severity
+  ) {
+    return null;
+  }
+
+  if (
+    row.severity === "critical" ||
+
+PATTERN : severity
+LINE    : 692
+    undefined,
+): AlertSeverity | null {
+
+  if (
+    !row ||
+    !row.severity
+  ) {
+    return null;
+  }
+
+  if (
+    row.severity === "critical" ||
+    row.severity === "high" ||
+    row.severity === "medium" ||
+    row.severity === "info"
+  ) {
+
+PATTERN : severity
+LINE    : 698
+  ) {
+    return null;
+  }
+
+  if (
+    row.severity === "critical" ||
+    row.severity === "high" ||
+    row.severity === "medium" ||
+    row.severity === "info"
+  ) {
+    return row.severity;
+  }
+
+  return null;
+}
+
+
+PATTERN : severity
+LINE    : 699
+    return null;
+  }
+
+  if (
+    row.severity === "critical" ||
+    row.severity === "high" ||
+    row.severity === "medium" ||
+    row.severity === "info"
+  ) {
+    return row.severity;
+  }
+
+  return null;
+}
+
+
+
+PATTERN : severity
+LINE    : 700
+  }
+
+  if (
+    row.severity === "critical" ||
+    row.severity === "high" ||
+    row.severity === "medium" ||
+    row.severity === "info"
+  ) {
+    return row.severity;
+  }
+
+  return null;
+}
+
+
+function validateSeverity(
+
+PATTERN : severity
+LINE    : 701
+
+  if (
+    row.severity === "critical" ||
+    row.severity === "high" ||
+    row.severity === "medium" ||
+    row.severity === "info"
+  ) {
+    return row.severity;
+  }
+
+  return null;
+}
+
+
+function validateSeverity(
+  key:
+
+PATTERN : severity
+LINE    : 703
+    row.severity === "critical" ||
+    row.severity === "high" ||
+    row.severity === "medium" ||
+    row.severity === "info"
+  ) {
+    return row.severity;
+  }
+
+  return null;
+}
+
+
+function validateSeverity(
+  key:
+    RuleKey,
+
+
+PATTERN : severity
+LINE    : 710
+
+  return null;
+}
+
+
+function validateSeverity(
+  key:
+    RuleKey,
+
+  raw:
+    unknown,
+): AlertSeverity {
+
+  if (
+    typeof raw !== "string" ||
+    !ALERT_SEVERITIES.includes(
+
+PATTERN : severity
+LINE    : 716
+  key:
+    RuleKey,
+
+  raw:
+    unknown,
+): AlertSeverity {
+
+  if (
+    typeof raw !== "string" ||
+    !ALERT_SEVERITIES.includes(
+      raw as AlertSeverity,
+    )
+  ) {
+    throw new Error(
+      `INVALID_SEVERITY:${key}`,
+    );
+
+PATTERN : severity
+LINE    : 721
+): AlertSeverity {
+
+  if (
+    typeof raw !== "string" ||
+    !ALERT_SEVERITIES.includes(
+      raw as AlertSeverity,
+    )
+  ) {
+    throw new Error(
+      `INVALID_SEVERITY:${key}`,
+    );
+  }
+
+  return raw as AlertSeverity;
+}
+
+
+PATTERN : severity
+LINE    : 725
+    !ALERT_SEVERITIES.includes(
+      raw as AlertSeverity,
+    )
+  ) {
+    throw new Error(
+      `INVALID_SEVERITY:${key}`,
+    );
+  }
+
+  return raw as AlertSeverity;
+}
+
+
+function rowMap(
+  rows:
+    AlertSettingRow[],
+
+PATTERN : severity
+LINE    : 729
+    throw new Error(
+      `INVALID_SEVERITY:${key}`,
+    );
+  }
+
+  return raw as AlertSeverity;
+}
+
+
+function rowMap(
+  rows:
+    AlertSettingRow[],
+) {
+  return new Map<
+    string,
+    AlertSettingRow
+
+PATTERN : severity
+LINE    : 802
+  companyId,
+  vehicleId,
+  key,
+  value,
+  enabled,
+  severity,
+}: {
+  admin:
+    ReturnType<typeof getAdmin>;
+
+  companyId:
+    string;
+
+  vehicleId:
+    string |
+    null;
+
+PATTERN : severity
+LINE    : 823
+    number;
+
+  enabled:
+    boolean;
+
+  severity:
+    AlertSeverity;
+}) {
+  const baseQuery =
+    admin
+      .from(
+        "alert_settings",
+      )
+      .select(
+        "id",
+      )
+
+PATTERN : severity
+LINE    : 824
+
+  enabled:
+    boolean;
+
+  severity:
+    AlertSeverity;
+}) {
+  const baseQuery =
+    admin
+      .from(
+        "alert_settings",
+      )
+      .select(
+        "id",
+      )
+      .eq(
+
+PATTERN : severity
+LINE    : 879
+          enabled,
+
+          threshold_value:
+            value,
+
+          severity,
+        })
+        .eq(
+          "id",
+          result.data.id,
+        );
+
+    if (error) {
+      throw error;
+    }
+
+
+PATTERN : severity
+LINE    : 915
+        enabled,
+
+        threshold_value:
+          value,
+
+        severity,
+      });
+
+  if (error) {
+    throw error;
+  }
+}
+
+
+async function deleteVehicleSetting({
+  admin,
+
+PATTERN : severity
+LINE    : 1020
+    ) ||
+    message.startsWith(
+      "INVALID_THRESHOLD:",
+    ) ||
+    message.startsWith(
+      "INVALID_SEVERITY:",
+    )
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          message,
+      },
+      {
+        status:
+          400,
+
+PATTERN : severity
+LINE    : 1149
+            const inheritedSource =
+              companyRow
+                ? "company"
+                : "platform";
+
+            const inheritedSeverity =
+              severityFromRow(
+                companyRow,
+              ) ??
+              rule.platformSeverity;
+
+            const vehicleSeverity =
+              severityFromRow(
+                vehicleRow,
+              );
+
+
+PATTERN : severity
+LINE    : 1150
+              companyRow
+                ? "company"
+                : "platform";
+
+            const inheritedSeverity =
+              severityFromRow(
+                companyRow,
+              ) ??
+              rule.platformSeverity;
+
+            const vehicleSeverity =
+              severityFromRow(
+                vehicleRow,
+              );
+
+            const mode =
+
+PATTERN : severity
+LINE    : 1153
+
+            const inheritedSeverity =
+              severityFromRow(
+                companyRow,
+              ) ??
+              rule.platformSeverity;
+
+            const vehicleSeverity =
+              severityFromRow(
+                vehicleRow,
+              );
+
+            const mode =
+              vehicleRow
+                ? "vehicle"
+                : "inherit";
+
+PATTERN : severity
+LINE    : 1155
+              severityFromRow(
+                companyRow,
+              ) ??
+              rule.platformSeverity;
+
+            const vehicleSeverity =
+              severityFromRow(
+                vehicleRow,
+              );
+
+            const mode =
+              vehicleRow
+                ? "vehicle"
+                : "inherit";
+
+            const vehicleValue =
+
+PATTERN : severity
+LINE    : 1156
+                companyRow,
+              ) ??
+              rule.platformSeverity;
+
+            const vehicleSeverity =
+              severityFromRow(
+                vehicleRow,
+              );
+
+            const mode =
+              vehicleRow
+                ? "vehicle"
+                : "inherit";
+
+            const vehicleValue =
+              vehicleThreshold;
+
+PATTERN : severity
+LINE    : 1182
+
+              inheritedEnabled,
+
+              inheritedSource,
+
+              inheritedSeverity,
+
+              vehicleValue,
+
+              vehicleEnabled,
+
+              vehicleSeverity,
+
+              mode,
+
+              effectiveValue:
+
+PATTERN : severity
+LINE    : 1188
+
+              vehicleValue,
+
+              vehicleEnabled,
+
+              vehicleSeverity,
+
+              mode,
+
+              effectiveValue:
+                vehicleRow
+                  ? (
+                      vehicleThreshold ??
+                      inheritedValue
+                    )
+                  : inheritedValue,
+
+PATTERN : severity
+LINE    : 1205
+              effectiveEnabled:
+                vehicleRow
+                  ? vehicleRow.enabled
+                  : inheritedEnabled,
+
+              effectiveSeverity:
+                vehicleRow
+                  ? (
+                      vehicleSeverity ??
+                      inheritedSeverity
+                    )
+                  : inheritedSeverity,
+            };
+          },
+        );
+
+
+PATTERN : severity
+LINE    : 1208
+                  : inheritedEnabled,
+
+              effectiveSeverity:
+                vehicleRow
+                  ? (
+                      vehicleSeverity ??
+                      inheritedSeverity
+                    )
+                  : inheritedSeverity,
+            };
+          },
+        );
+
+      return NextResponse.json({
+        mode:
+          "vehicle",
+
+PATTERN : severity
+LINE    : 1209
+
+              effectiveSeverity:
+                vehicleRow
+                  ? (
+                      vehicleSeverity ??
+                      inheritedSeverity
+                    )
+                  : inheritedSeverity,
+            };
+          },
+        );
+
+      return NextResponse.json({
+        mode:
+          "vehicle",
+
+
+PATTERN : severity
+LINE    : 1211
+                vehicleRow
+                  ? (
+                      vehicleSeverity ??
+                      inheritedSeverity
+                    )
+                  : inheritedSeverity,
+            };
+          },
+        );
+
+      return NextResponse.json({
+        mode:
+          "vehicle",
+
+        vehicle: {
+          id:
+
+PATTERN : severity
+LINE    : 1336
+            enabled:
+              row
+                ? row.enabled
+                : rule.platformEnabled,
+
+            severity:
+              severityFromRow(
+                row,
+              ) ??
+              rule.platformSeverity,
+
+            source:
+              row
+                ? "company"
+                : "platform",
+
+
+PATTERN : severity
+LINE    : 1337
+              row
+                ? row.enabled
+                : rule.platformEnabled,
+
+            severity:
+              severityFromRow(
+                row,
+              ) ??
+              rule.platformSeverity,
+
+            source:
+              row
+                ? "company"
+                : "platform",
+
+            enabledSource:
+
+PATTERN : severity
+LINE    : 1340
+
+            severity:
+              severityFromRow(
+                row,
+              ) ??
+              rule.platformSeverity,
+
+            source:
+              row
+                ? "company"
+                : "platform",
+
+            enabledSource:
+              row
+                ? "company"
+                : "platform",
+
+PATTERN : severity
+LINE    : 1491
+
+          enabled:
+            boolean |
+            null;
+
+          severity:
+            AlertSeverity |
+            null;
+        }[] = [];
+
+      for (
+        const rule of
+        RULES
+      ) {
+        const raw =
+          incoming[
+
+PATTERN : severity
+LINE    : 1492
+          enabled:
+            boolean |
+            null;
+
+          severity:
+            AlertSeverity |
+            null;
+        }[] = [];
+
+      for (
+        const rule of
+        RULES
+      ) {
+        const raw =
+          incoming[
+            rule.key
+
+PATTERN : severity
+LINE    : 1549
+              null,
+
+            enabled:
+              null,
+
+            severity:
+              null,
+          });
+
+          continue;
+        }
+
+        if (
+          object.mode !==
+          "vehicle"
+        ) {
+
+PATTERN : severity
+LINE    : 1594
+          validateValue(
+            rule.key,
+            object.value,
+          );
+
+        const severity =
+          validateSeverity(
+            rule.key,
+            object.severity,
+          );
+
+        validated.push({
+          key:
+            rule.key,
+
+          mode:
+
+PATTERN : severity
+LINE    : 1595
+            rule.key,
+            object.value,
+          );
+
+        const severity =
+          validateSeverity(
+            rule.key,
+            object.severity,
+          );
+
+        validated.push({
+          key:
+            rule.key,
+
+          mode:
+            "vehicle",
+
+PATTERN : severity
+LINE    : 1597
+          );
+
+        const severity =
+          validateSeverity(
+            rule.key,
+            object.severity,
+          );
+
+        validated.push({
+          key:
+            rule.key,
+
+          mode:
+            "vehicle",
+
+          value,
+
+PATTERN : severity
+LINE    : 1612
+          value,
+
+          enabled:
+            object.enabled,
+
+          severity,
+        });
+      }
+
+
+      for (
+        const item of
+        validated
+      ) {
+        if (
+          item.mode ===
+
+PATTERN : severity
+LINE    : 1659
+            item.value!,
+
+          enabled:
+            item.enabled!,
+
+          severity:
+            item.severity!,
+        });
+      }
+
+      return NextResponse.json({
+        ok:
+          true,
+
+        vehicleId:
+          vehicle.id,
+
+PATTERN : severity
+LINE    : 1660
+
+          enabled:
+            item.enabled!,
+
+          severity:
+            item.severity!,
+        });
+      }
+
+      return NextResponse.json({
+        ok:
+          true,
+
+        vehicleId:
+          vehicle.id,
+      });
+
+PATTERN : severity
+LINE    : 1782
+          number;
+
+        enabled:
+          boolean;
+
+        severity:
+          AlertSeverity;
+      }[] = [];
+
+    for (
+      const rule of
+      RULES
+    ) {
+      const raw =
+        incoming[
+          rule.key
+
+PATTERN : severity
+LINE    : 1783
+
+        enabled:
+          boolean;
+
+        severity:
+          AlertSeverity;
+      }[] = [];
+
+    for (
+      const rule of
+      RULES
+    ) {
+      const raw =
+        incoming[
+          rule.key
+        ];
+
+PATTERN : severity
+LINE    : 1816
+            ),
+
+          enabled:
+            true,
+
+          severity:
+            rule.platformSeverity,
+        });
+
+        continue;
+      }
+
+      if (
+        !raw ||
+        typeof raw !==
+          "object" ||
+
+PATTERN : severity
+LINE    : 1817
+
+          enabled:
+            true,
+
+          severity:
+            rule.platformSeverity,
+        });
+
+        continue;
+      }
+
+      if (
+        !raw ||
+        typeof raw !==
+          "object" ||
+        Array.isArray(
+
+PATTERN : severity
+LINE    : 1879
+          ),
+
+        enabled:
+          object.enabled,
+
+        severity:
+          validateSeverity(
+            rule.key,
+            object.severity,
+          ),
+      });
+    }
+
+
+    for (
+      const item of
+
+PATTERN : severity
+LINE    : 1880
+
+        enabled:
+          object.enabled,
+
+        severity:
+          validateSeverity(
+            rule.key,
+            object.severity,
+          ),
+      });
+    }
+
+
+    for (
+      const item of
+      validated
+
+PATTERN : severity
+LINE    : 1882
+          object.enabled,
+
+        severity:
+          validateSeverity(
+            rule.key,
+            object.severity,
+          ),
+      });
+    }
+
+
+    for (
+      const item of
+      validated
+    ) {
+      await writeSetting({
+
+PATTERN : severity
+LINE    : 1909
+          item.value,
+
+        enabled:
+          item.enabled,
+
+        severity:
+          item.severity,
+      });
+    }
+
+    return NextResponse.json({
+      ok:
+        true,
+    });
+
+  } catch (cause) {
+
+PATTERN : severity
+LINE    : 1910
+
+        enabled:
+          item.enabled,
+
+        severity:
+          item.severity,
+      });
+    }
+
+    return NextResponse.json({
+      ok:
+        true,
+    });
+
+  } catch (cause) {
+    return errorResponse(
+
+============================================================
+ FILE : .\app\dashboard\parametres\AlertSettingsPanel.tsx
+============================================================
+
+----- FULL FILE -----
+"use client";
+
+import {
+  AlertTriangle,
+  BatteryMedium,
+  Fuel,
+  Gauge,
+  RotateCcw,
+  Save,
+  Thermometer,
+} from "lucide-react";
+
+import {
+  useCallback,
+  useEffect,
+  useState,
+} from "react";
+
+import {
+  supabase,
+} from "../../components/supabase";
+
+import {
+  useDashboardAccess,
+} from "../DashboardAccessContext";
+
+
+type AlertSeverity =
+  | "critical"
+  | "high"
+  | "medium"
+  | "info";
+
+
+type Setting = {
+  key: string;
+  label: string;
+  description: string;
+  unit: string;
+
+  platformValue:
+    number;
+
+  platformEnabled:
+    boolean;
+
+  platformSeverity:
+    AlertSeverity;
+
+  value:
+    number;
+
+  enabled:
+    boolean;
+
+  severity:
+    AlertSeverity;
+
+  source:
+    "platform" |
+    "company";
+
+  enabledSource:
+    "platform" |
+    "company";
+
+  min:
+    number;
+
+  max:
+    number;
+
+  step:
+    number;
+
+  updatedAt:
+    string |
+    null;
+};
+
+
+type Company = {
+  id: string;
+  name: string;
+};
+
+
+type Payload = {
+  companies:
+    Company[];
+
+  selectedCompanyId:
+    string |
+    null;
+
+  settings:
+    Setting[];
+
+  canManage:
+    boolean;
+};
+
+
+function RuleIcon({
+  ruleKey,
+}: {
+  ruleKey:
+    string;
+}) {
+  if (
+    ruleKey ===
+    "coolant_temperature_high"
+  ) {
+    return (
+      <Thermometer className="h-5 w-5 text-red-400" />
+    );
+  }
+
+  if (
+    ruleKey ===
+      "battery_voltage_low_12v" ||
+    ruleKey ===
+      "battery_voltage_low_24v"
+  ) {
+    return (
+      <BatteryMedium className="h-5 w-5 text-amber-400" />
+    );
+  }
+
+  if (
+    ruleKey ===
+    "low_fuel"
+  ) {
+    return (
+      <Fuel className="h-5 w-5 text-orange-400" />
+    );
+  }
+
+  return (
+    <Gauge className="h-5 w-5 text-blue-400" />
+  );
+}
+
+
+export default function AlertSettingsPanel() {
+  const {
+    identity,
+    canUpdate,
+  } =
+    useDashboardAccess();
+
+  const [
+    payload,
+    setPayload,
+  ] =
+    useState<
+      Payload |
+      null
+    >(
+      null,
+    );
+
+  const [
+    values,
+    setValues,
+  ] =
+    useState<
+      Record<
+        string,
+        string
+      >
+    >({});
+
+  const [
+    enabledValues,
+    setEnabledValues,
+  ] =
+    useState<
+      Record<
+        string,
+        boolean
+      >
+    >({});
+
+  const [
+    severityValues,
+    setSeverityValues,
+  ] =
+    useState<
+      Record<
+        string,
+        AlertSeverity
+      >
+    >({});
+
+  const [
+    selectedCompanyId,
+    setSelectedCompanyId,
+  ] =
+    useState("");
+
+  const [
+    loading,
+    setLoading,
+  ] =
+    useState(true);
+
+  const [
+    saving,
+    setSaving,
+  ] =
+    useState(false);
+
+  const [
+    error,
+    setError,
+  ] =
+    useState<
+      string |
+      null
+    >(null);
+
+  const [
+    message,
+    setMessage,
+  ] =
+    useState<
+      string |
+      null
+    >(null);
+
+
+  const load =
+    useCallback(
+      async (
+        companyId?:
+          string,
+      ) => {
+        setLoading(true);
+        setError(null);
+
+        try {
+          const {
+            data: {
+              session,
+            },
+          } =
+            await supabase.auth.getSession();
+
+          if (!session) {
+            throw new Error(
+              "Session expirÃ©e.",
+            );
+          }
+
+          const suffix =
+            companyId
+              ? `?companyId=${encodeURIComponent(
+                  companyId,
+                )}`
+              : "";
+
+          const response =
+            await fetch(
+              `/api/alert-settings${suffix}`,
+              {
+                cache:
+                  "no-store",
+
+                headers: {
+                  Authorization:
+                    `Bearer ${session.access_token}`,
+                },
+              },
+            );
+
+          const data =
+            await response.json();
+
+          if (!response.ok) {
+            throw new Error(
+              data.error ??
+              "Configuration des alertes indisponible.",
+            );
+          }
+
+          const nextPayload =
+            data as Payload;
+
+          setPayload(
+            nextPayload,
+          );
+
+          setSelectedCompanyId(
+            nextPayload
+              .selectedCompanyId ??
+            "",
+          );
+
+          const nextValues:
+            Record<
+              string,
+              string
+            > = {};
+
+          const nextEnabled:
+            Record<
+              string,
+              boolean
+            > = {};
+
+          const nextSeverity:
+            Record<
+              string,
+              AlertSeverity
+            > = {};
+
+          for (
+            const setting of
+            nextPayload.settings
+          ) {
+            nextValues[
+              setting.key
+            ] =
+              String(
+                setting.value,
+              );
+
+            nextEnabled[
+              setting.key
+            ] =
+              setting.enabled;
+
+            nextSeverity[
+              setting.key
+            ] =
+              setting.severity;
+          }
+
+          setValues(
+            nextValues,
+          );
+
+          setEnabledValues(
+            nextEnabled,
+          );
+
+          setSeverityValues(
+            nextSeverity,
+          );
+
+        } catch (cause) {
+          setError(
+            cause instanceof Error
+              ? cause.message
+              : "Erreur de chargement.",
+          );
+
+        } finally {
+          setLoading(false);
+        }
+      },
+      [],
+    );
+
+
+  useEffect(
+    () => {
+      void load();
+    },
+    [
+      load,
+    ],
+  );
+
+
+  async function send(
+    body:
+      Record<
+        string,
+        unknown
+      >,
+  ) {
+    const {
+      data: {
+        session,
+      },
+    } =
+      await supabase.auth.getSession();
+
+    if (!session) {
+      throw new Error(
+        "Session expirÃ©e.",
+      );
+    }
+
+    const response =
+      await fetch(
+        "/api/alert-settings",
+        {
+          method:
+            "POST",
+
+          headers: {
+            Authorization:
+              `Bearer ${session.access_token}`,
+
+            "Content-Type":
+              "application/json",
+          },
+
+          body:
+            JSON.stringify(
+              body,
+            ),
+        },
+      );
+
+    const data =
+      await response.json();
+
+    if (!response.ok) {
+      throw new Error(
+        data.error ??
+        "Enregistrement impossible.",
+      );
+    }
+
+    return data;
+  }
+
+
+  async function save() {
+    if (
+      !payload ||
+      !selectedCompanyId
+    ) {
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    setMessage(null);
+
+    try {
+      const settings:
+        Record<
+          string,
+          {
+            enabled:
+              boolean;
+
+            value:
+              number;
+
+            severity:
+              AlertSeverity;
+          }
+        > = {};
+
+      for (
+        const rule of
+        payload.settings
+      ) {
+        const value =
+          Number(
+            values[
+              rule.key
+            ],
+          );
+
+        if (
+          !Number.isFinite(
+            value,
+          ) ||
+          value <
+            rule.min ||
+          value >
+            rule.max
+        ) {
+          throw new Error(
+            `${rule.label} : valeur comprise entre ${rule.min} et ${rule.max} ${rule.unit}.`,
+          );
+        }
+
+        settings[
+          rule.key
+        ] = {
+          enabled:
+            enabledValues[
+              rule.key
+            ] ??
+            true,
+
+          value,
+
+          severity:
+            severityValues[
+              rule.key
+            ] ??
+            rule.platformSeverity,
+        };
+      }
+
+      await send({
+        companyId:
+          selectedCompanyId,
+
+        settings,
+      });
+
+      setMessage(
+        "Configuration des alertes enregistrÃ©e.",
+      );
+
+      await load(
+        selectedCompanyId,
+      );
+
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : "Enregistrement impossible.",
+      );
+
+    } finally {
+      setSaving(false);
+    }
+  }
+
+
+  async function reset() {
+    if (
+      !selectedCompanyId
+    ) {
+      return;
+    }
+
+    const confirmed =
+      window.confirm(
+        "RÃ©initialiser les rÃ¨gles aux valeurs plateforme ?",
+      );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    setMessage(null);
+
+    try {
+      await send({
+        companyId:
+          selectedCompanyId,
+
+        action:
+          "reset",
+      });
+
+      setMessage(
+        "Valeurs plateforme restaurÃ©es.",
+      );
+
+      await load(
+        selectedCompanyId,
+      );
+
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : "RÃ©initialisation impossible.",
+      );
+
+    } finally {
+      setSaving(false);
+    }
+  }
+
+
+  const showCompanySelector =
+    identity.role ===
+      "matelematics_admin" ||
+    identity.role ===
+      "partner_admin";
+
+
+  return (
+    <section className="mb-6 overflow-hidden rounded-2xl border border-blue-500/20 bg-slate-900">
+
+      <div className="border-b border-slate-800 px-5 py-5">
+
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+
+          <div className="flex items-start gap-3">
+
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-500/10">
+              <AlertTriangle className="h-5 w-5 text-blue-400" />
+            </div>
+
+            <div>
+
+              <h2 className="font-semibold text-white">
+                Configuration des alertes
+              </h2>
+
+              <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-400">
+                Activez ou dÃ©sactivez les rÃ¨gles et dÃ©finissez les seuils globaux de l'entreprise.
+              </p>
+
+            </div>
+
+          </div>
+
+
+          {showCompanySelector &&
+            payload &&
+            payload.companies.length >
+              0 && (
+
+            <select
+              value={
+                selectedCompanyId
+              }
+              onChange={
+                (
+                  event,
+                ) => {
+                  const companyId =
+                    event.target.value;
+
+                  setSelectedCompanyId(
+                    companyId,
+                  );
+
+                  void load(
+                    companyId,
+                  );
+                }
+              }
+              className="min-w-[240px] rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-white outline-none"
+            >
+              {payload.companies.map(
+                (company) => (
+                  <option
+                    key={
+                      company.id
+                    }
+                    value={
+                      company.id
+                    }
+                  >
+                    {company.name}
+                  </option>
+                ),
+              )}
+            </select>
+          )}
+
+        </div>
+
+      </div>
+
+
+      {error && (
+        <div className="mx-5 mt-5 rounded-xl border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-300">
+          {error}
+        </div>
+      )}
+
+
+      {message && (
+        <div className="mx-5 mt-5 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4 text-sm text-emerald-300">
+          {message}
+        </div>
+      )}
+
+
+      {loading ? (
+
+        <div className="p-8 text-sm text-slate-400">
+          Chargement des rÃ¨gles d'alerte...
+        </div>
+
+      ) : !payload ||
+        payload.settings.length ===
+          0 ? (
+
+        <div className="p-8 text-sm text-slate-400">
+          Aucune configuration d'alerte disponible.
+        </div>
+
+      ) : (
+
+        <>
+
+          <div className="grid gap-4 p-5 lg:grid-cols-2">
+
+            {payload.settings.map(
+              (rule) => {
+
+                const enabled =
+                  enabledValues[
+                    rule.key
+                  ] ??
+                  true;
+
+                return (
+
+                  <div
+                    key={
+                      rule.key
+                    }
+                    className="rounded-xl border border-slate-800 bg-slate-950/60 p-4"
+                  >
+
+                    <div className="flex items-start justify-between gap-4">
+
+                      <div className="flex items-start gap-3">
+
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-900">
+                          <RuleIcon
+                            ruleKey={
+                              rule.key
+                            }
+                          />
+                        </div>
+
+                        <div>
+
+                          <p className="text-sm font-semibold text-white">
+                            {rule.label}
+                          </p>
+
+                          <p className="mt-1 text-xs leading-5 text-slate-500">
+                            {rule.description}
+                          </p>
+
+                        </div>
+
+                      </div>
+
+
+                      <span
+                        className={
+                          rule.source ===
+                          "company"
+                            ? "shrink-0 rounded-full bg-blue-500/10 px-2.5 py-1 text-[11px] font-medium text-blue-300"
+                            : "shrink-0 rounded-full bg-slate-800 px-2.5 py-1 text-[11px] font-medium text-slate-400"
+                        }
+                      >
+                        {rule.source ===
+                        "company"
+                          ? "Valeur client"
+                          : "Valeur plateforme"}
+                      </span>
+
+                    </div>
+
+
+                    <div className="mt-4 flex flex-wrap items-center gap-3">
+
+                      <button
+                        type="button"
+                        disabled={
+                          !canUpdate ||
+                          !payload.canManage ||
+                          saving
+                        }
+                        onClick={
+                          () =>
+                            setEnabledValues(
+                              (
+                                current,
+                              ) => ({
+                                ...current,
+
+                                [rule.key]:
+                                  !enabled,
+                              }),
+                            )
+                        }
+                        className={
+                          enabled
+                            ? "rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-300"
+                            : "rounded-full border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-400"
+                        }
+                      >
+                        {enabled
+                          ? "ActivÃ©e"
+                          : "DÃ©sactivÃ©e"}
+                      </button>
+
+
+                      <input
+                        type="number"
+                        min={
+                          rule.min
+                        }
+                        max={
+                          rule.max
+                        }
+                        step={
+                          rule.step
+                        }
+                        disabled={
+                          !canUpdate ||
+                          !payload.canManage ||
+                          saving
+                        }
+                        value={
+                          values[
+                            rule.key
+                          ] ??
+                          ""
+                        }
+                        onChange={
+                          (
+                            event,
+                          ) =>
+                            setValues(
+                              (
+                                current,
+                              ) => ({
+                                ...current,
+
+                                [rule.key]:
+                                  event.target.value,
+                              }),
+                            )
+                        }
+                        className="w-32 rounded-xl border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm font-medium text-white outline-none transition focus:border-blue-500 disabled:opacity-60"
+                      />
+
+                      <span className="text-sm text-slate-400">
+                        {rule.unit}
+                      </span>
+
+                      <select
+                        value={
+                          severityValues[
+                            rule.key
+                          ] ??
+                          rule.platformSeverity
+                        }
+                        disabled={
+                          !canUpdate ||
+                          !payload.canManage ||
+                          saving
+                        }
+                        onChange={
+                          (
+                            event,
+                          ) =>
+                            setSeverityValues(
+                              (
+                                current,
+                              ) => ({
+                                ...current,
+
+                                [rule.key]:
+                                  event.target.value as AlertSeverity,
+                              }),
+                            )
+                        }
+                        className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm text-white outline-none focus:border-blue-500 disabled:opacity-60"
+                      >
+                        <option value="critical">
+                          Critique
+                        </option>
+
+                        <option value="high">
+                          Majeure
+                        </option>
+
+                        <option value="medium">
+                          Moderee
+                        </option>
+
+                        <option value="info">
+                          Information
+                        </option>
+                      </select>
+
+                    </div>
+
+
+                    <div className="mt-3 text-xs text-slate-600">
+                      Plateforme : {rule.platformEnabled ? "ActivÃ©e" : "DÃ©sactivÃ©e"} Â· {rule.platformValue} {rule.unit}
+                    </div>
+
+                  </div>
+                );
+              },
+            )}
+
+          </div>
+
+
+          <div className="flex flex-col gap-3 border-t border-slate-800 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+
+            <p className="text-xs text-slate-500">
+              PrioritÃ© : vÃ©hicule &gt; client &gt; plateforme.
+            </p>
+
+
+            {canUpdate &&
+              payload.canManage && (
+
+              <div className="flex flex-wrap gap-2">
+
+                <button
+                  type="button"
+                  disabled={
+                    saving
+                  }
+                  onClick={
+                    () =>
+                      void reset()
+                  }
+                  className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-4 py-2.5 text-sm text-slate-300 transition hover:bg-slate-800 disabled:opacity-50"
+                >
+                  <RotateCcw className="h-4 w-4" />
+                  Valeurs plateforme
+                </button>
+
+                <button
+                  type="button"
+                  disabled={
+                    saving
+                  }
+                  onClick={
+                    () =>
+                      void save()
+                  }
+                  className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-blue-500 disabled:opacity-50"
+                >
+                  <Save className="h-4 w-4" />
+
+                  {saving
+                    ? "Enregistrement..."
+                    : "Enregistrer"}
+                </button>
+
+              </div>
+            )}
+
+          </div>
+
+        </>
+      )}
+
+    </section>
+  );
+}
+
+----- TARGETED MATCHES -----
+
+PATTERN : platformValue
+LINE    : 41
+  key: string;
+  label: string;
+  description: string;
+  unit: string;
+
+  platformValue:
+    number;
+
+  platformEnabled:
+    boolean;
+
+  platformSeverity:
+    AlertSeverity;
+
+  value:
+    number;
+
+PATTERN : platformValue
+LINE    : 891
+
+                    </div>
+
+
+                    <div className="mt-3 text-xs text-slate-600">
+                      Plateforme : {rule.platformEnabled ? "Activée" : "Désactivée"} · {rule.platformValue} {rule.unit}
+                    </div>
+
+                  </div>
+                );
+              },
+            )}
+
+          </div>
+
+
+
+PATTERN : platformEnabled
+LINE    : 44
+  unit: string;
+
+  platformValue:
+    number;
+
+  platformEnabled:
+    boolean;
+
+  platformSeverity:
+    AlertSeverity;
+
+  value:
+    number;
+
+  enabled:
+    boolean;
+
+PATTERN : platformEnabled
+LINE    : 891
+
+                    </div>
+
+
+                    <div className="mt-3 text-xs text-slate-600">
+                      Plateforme : {rule.platformEnabled ? "Activée" : "Désactivée"} · {rule.platformValue} {rule.unit}
+                    </div>
+
+                  </div>
+                );
+              },
+            )}
+
+          </div>
+
+
+
+PATTERN : platformSeverity
+LINE    : 47
+    number;
+
+  platformEnabled:
+    boolean;
+
+  platformSeverity:
+    AlertSeverity;
+
+  value:
+    number;
+
+  enabled:
+    boolean;
+
+  severity:
+    AlertSeverity;
+
+PATTERN : platformSeverity
+LINE    : 501
+
+          severity:
+            severityValues[
+              rule.key
+            ] ??
+            rule.platformSeverity,
+        };
+      }
+
+      await send({
+        companyId:
+          selectedCompanyId,
+
+        settings,
+      });
+
+
+PATTERN : platformSeverity
+LINE    : 846
+                      <select
+                        value={
+                          severityValues[
+                            rule.key
+                          ] ??
+                          rule.platformSeverity
+                        }
+                        disabled={
+                          !canUpdate ||
+                          !payload.canManage ||
+                          saving
+                        }
+                        onChange={
+                          (
+                            event,
+                          ) =>
+
+PATTERN : source
+LINE    : 59
+    boolean;
+
+  severity:
+    AlertSeverity;
+
+  source:
+    "platform" |
+    "company";
+
+  enabledSource:
+    "platform" |
+    "company";
+
+  min:
+    number;
+
+
+PATTERN : source
+LINE    : 63
+
+  source:
+    "platform" |
+    "company";
+
+  enabledSource:
+    "platform" |
+    "company";
+
+  min:
+    number;
+
+  max:
+    number;
+
+  step:
+
+PATTERN : source
+LINE    : 748
+                      </div>
+
+
+                      <span
+                        className={
+                          rule.source ===
+                          "company"
+                            ? "shrink-0 rounded-full bg-blue-500/10 px-2.5 py-1 text-[11px] font-medium text-blue-300"
+                            : "shrink-0 rounded-full bg-slate-800 px-2.5 py-1 text-[11px] font-medium text-slate-400"
+                        }
+                      >
+                        {rule.source ===
+                        "company"
+                          ? "Valeur client"
+                          : "Valeur plateforme"}
+                      </span>
+
+PATTERN : source
+LINE    : 754
+                          "company"
+                            ? "shrink-0 rounded-full bg-blue-500/10 px-2.5 py-1 text-[11px] font-medium text-blue-300"
+                            : "shrink-0 rounded-full bg-slate-800 px-2.5 py-1 text-[11px] font-medium text-slate-400"
+                        }
+                      >
+                        {rule.source ===
+                        "company"
+                          ? "Valeur client"
+                          : "Valeur plateforme"}
+                      </span>
+
+                    </div>
+
+
+                    <div className="mt-4 flex flex-wrap items-center gap-3">
+
+
+PATTERN : severity
+LINE    : 28
+import {
+  useDashboardAccess,
+} from "../DashboardAccessContext";
+
+
+type AlertSeverity =
+  | "critical"
+  | "high"
+  | "medium"
+  | "info";
+
+
+type Setting = {
+  key: string;
+  label: string;
+  description: string;
+
+PATTERN : severity
+LINE    : 47
+    number;
+
+  platformEnabled:
+    boolean;
+
+  platformSeverity:
+    AlertSeverity;
+
+  value:
+    number;
+
+  enabled:
+    boolean;
+
+  severity:
+    AlertSeverity;
+
+PATTERN : severity
+LINE    : 48
+
+  platformEnabled:
+    boolean;
+
+  platformSeverity:
+    AlertSeverity;
+
+  value:
+    number;
+
+  enabled:
+    boolean;
+
+  severity:
+    AlertSeverity;
+
+
+PATTERN : severity
+LINE    : 56
+    number;
+
+  enabled:
+    boolean;
+
+  severity:
+    AlertSeverity;
+
+  source:
+    "platform" |
+    "company";
+
+  enabledSource:
+    "platform" |
+    "company";
+
+
+PATTERN : severity
+LINE    : 57
+
+  enabled:
+    boolean;
+
+  severity:
+    AlertSeverity;
+
+  source:
+    "platform" |
+    "company";
+
+  enabledSource:
+    "platform" |
+    "company";
+
+  min:
+
+PATTERN : severity
+LINE    : 186
+        boolean
+      >
+    >({});
+
+  const [
+    severityValues,
+    setSeverityValues,
+  ] =
+    useState<
+      Record<
+        string,
+        AlertSeverity
+      >
+    >({});
+
+  const [
+
+PATTERN : severity
+LINE    : 187
+      >
+    >({});
+
+  const [
+    severityValues,
+    setSeverityValues,
+  ] =
+    useState<
+      Record<
+        string,
+        AlertSeverity
+      >
+    >({});
+
+  const [
+    selectedCompanyId,
+
+PATTERN : severity
+LINE    : 192
+    setSeverityValues,
+  ] =
+    useState<
+      Record<
+        string,
+        AlertSeverity
+      >
+    >({});
+
+  const [
+    selectedCompanyId,
+    setSelectedCompanyId,
+  ] =
+    useState("");
+
+  const [
+
+PATTERN : severity
+LINE    : 312
+            Record<
+              string,
+              boolean
+            > = {};
+
+          const nextSeverity:
+            Record<
+              string,
+              AlertSeverity
+            > = {};
+
+          for (
+            const setting of
+            nextPayload.settings
+          ) {
+            nextValues[
+
+PATTERN : severity
+LINE    : 315
+            > = {};
+
+          const nextSeverity:
+            Record<
+              string,
+              AlertSeverity
+            > = {};
+
+          for (
+            const setting of
+            nextPayload.settings
+          ) {
+            nextValues[
+              setting.key
+            ] =
+              String(
+
+PATTERN : severity
+LINE    : 334
+            nextEnabled[
+              setting.key
+            ] =
+              setting.enabled;
+
+            nextSeverity[
+              setting.key
+            ] =
+              setting.severity;
+          }
+
+          setValues(
+            nextValues,
+          );
+
+          setEnabledValues(
+
+PATTERN : severity
+LINE    : 337
+              setting.enabled;
+
+            nextSeverity[
+              setting.key
+            ] =
+              setting.severity;
+          }
+
+          setValues(
+            nextValues,
+          );
+
+          setEnabledValues(
+            nextEnabled,
+          );
+
+
+PATTERN : severity
+LINE    : 348
+
+          setEnabledValues(
+            nextEnabled,
+          );
+
+          setSeverityValues(
+            nextSeverity,
+          );
+
+        } catch (cause) {
+          setError(
+            cause instanceof Error
+              ? cause.message
+              : "Erreur de chargement.",
+          );
+
+
+PATTERN : severity
+LINE    : 349
+          setEnabledValues(
+            nextEnabled,
+          );
+
+          setSeverityValues(
+            nextSeverity,
+          );
+
+        } catch (cause) {
+          setError(
+            cause instanceof Error
+              ? cause.message
+              : "Erreur de chargement.",
+          );
+
+        } finally {
+
+PATTERN : severity
+LINE    : 456
+              boolean;
+
+            value:
+              number;
+
+            severity:
+              AlertSeverity;
+          }
+        > = {};
+
+      for (
+        const rule of
+        payload.settings
+      ) {
+        const value =
+          Number(
+
+PATTERN : severity
+LINE    : 457
+
+            value:
+              number;
+
+            severity:
+              AlertSeverity;
+          }
+        > = {};
+
+      for (
+        const rule of
+        payload.settings
+      ) {
+        const value =
+          Number(
+            values[
+
+PATTERN : severity
+LINE    : 497
+            ] ??
+            true,
+
+          value,
+
+          severity:
+            severityValues[
+              rule.key
+            ] ??
+            rule.platformSeverity,
+        };
+      }
+
+      await send({
+        companyId:
+          selectedCompanyId,
+
+PATTERN : severity
+LINE    : 498
+            true,
+
+          value,
+
+          severity:
+            severityValues[
+              rule.key
+            ] ??
+            rule.platformSeverity,
+        };
+      }
+
+      await send({
+        companyId:
+          selectedCompanyId,
+
+
+PATTERN : severity
+LINE    : 501
+
+          severity:
+            severityValues[
+              rule.key
+            ] ??
+            rule.platformSeverity,
+        };
+      }
+
+      await send({
+        companyId:
+          selectedCompanyId,
+
+        settings,
+      });
+
+
+PATTERN : severity
+LINE    : 843
+                        {rule.unit}
+                      </span>
+
+                      <select
+                        value={
+                          severityValues[
+                            rule.key
+                          ] ??
+                          rule.platformSeverity
+                        }
+                        disabled={
+                          !canUpdate ||
+                          !payload.canManage ||
+                          saving
+                        }
+                        onChange={
+
+PATTERN : severity
+LINE    : 846
+                      <select
+                        value={
+                          severityValues[
+                            rule.key
+                          ] ??
+                          rule.platformSeverity
+                        }
+                        disabled={
+                          !canUpdate ||
+                          !payload.canManage ||
+                          saving
+                        }
+                        onChange={
+                          (
+                            event,
+                          ) =>
+
+PATTERN : severity
+LINE    : 857
+                        }
+                        onChange={
+                          (
+                            event,
+                          ) =>
+                            setSeverityValues(
+                              (
+                                current,
+                              ) => ({
+                                ...current,
+
+                                [rule.key]:
+                                  event.target.value as AlertSeverity,
+                              }),
+                            )
+                        }
+
+PATTERN : severity
+LINE    : 864
+                                current,
+                              ) => ({
+                                ...current,
+
+                                [rule.key]:
+                                  event.target.value as AlertSeverity,
+                              }),
+                            )
+                        }
+                        className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm text-white outline-none focus:border-blue-500 disabled:opacity-60"
+                      >
+                        <option value="critical">
+                          Critique
+                        </option>
+
+                        <option value="high">
+
+============================================================
+ FILE : .\app\dashboard\vehicle\[id]\VehicleAlertSettingsPanel.tsx
+============================================================
+
+----- FULL FILE -----
+"use client";
+
+import {
+  AlertTriangle,
+  BatteryMedium,
+  Fuel,
+  Gauge,
+  Save,
+  Thermometer,
+} from "lucide-react";
+
+import {
+  useCallback,
+  useEffect,
+  useState,
+} from "react";
+
+import {
+  supabase,
+} from "../../../components/supabase";
+
+import {
+  useDashboardAccess,
+} from "../../DashboardAccessContext";
+
+
+type AlertSeverity =
+  | "critical"
+  | "high"
+  | "medium"
+  | "info";
+
+
+type RuleSetting = {
+  key: string;
+  label: string;
+  description: string;
+  unit: string;
+
+  platformValue:
+    number;
+
+  platformEnabled:
+    boolean;
+
+  platformSeverity:
+    AlertSeverity;
+
+  inheritedValue:
+    number;
+
+  inheritedEnabled:
+    boolean;
+
+  inheritedSeverity:
+    AlertSeverity;
+
+  inheritedSource:
+    "company" |
+    "platform";
+
+  vehicleValue:
+    number |
+    null;
+
+  vehicleEnabled:
+    boolean |
+    null;
+
+  vehicleSeverity:
+    AlertSeverity |
+    null;
+
+  effectiveValue:
+    number;
+
+  effectiveEnabled:
+    boolean;
+
+  effectiveSeverity:
+    AlertSeverity;
+
+  mode:
+    "inherit" |
+    "vehicle";
+
+  min:
+    number;
+
+  max:
+    number;
+
+  step:
+    number;
+};
+
+
+type Payload = {
+  mode:
+    "vehicle";
+
+  vehicle: {
+    id: string;
+    companyId: string;
+    name: string;
+    registration: string;
+  };
+
+  settings:
+    RuleSetting[];
+
+  canManage:
+    boolean;
+};
+
+
+type LocalRule = {
+  mode:
+    "inherit" |
+    "vehicle";
+
+  value:
+    string;
+
+  enabled:
+    boolean;
+
+  severity:
+    AlertSeverity;
+};
+
+
+function RuleIcon({
+  ruleKey,
+}: {
+  ruleKey:
+    string;
+}) {
+  if (
+    ruleKey ===
+    "coolant_temperature_high"
+  ) {
+    return (
+      <Thermometer className="h-5 w-5 text-red-400" />
+    );
+  }
+
+  if (
+    ruleKey ===
+      "battery_voltage_low_12v" ||
+    ruleKey ===
+      "battery_voltage_low_24v"
+  ) {
+    return (
+      <BatteryMedium className="h-5 w-5 text-amber-400" />
+    );
+  }
+
+  if (
+    ruleKey ===
+    "low_fuel"
+  ) {
+    return (
+      <Fuel className="h-5 w-5 text-orange-400" />
+    );
+  }
+
+  return (
+    <Gauge className="h-5 w-5 text-blue-400" />
+  );
+}
+
+
+export default function VehicleAlertSettingsPanel({
+  vehicleId,
+}: {
+  vehicleId:
+    string;
+}) {
+  const {
+    canUpdate,
+  } =
+    useDashboardAccess();
+
+  const [
+    payload,
+    setPayload,
+  ] =
+    useState<
+      Payload |
+      null
+    >(null);
+
+  const [
+    local,
+    setLocal,
+  ] =
+    useState<
+      Record<
+        string,
+        LocalRule
+      >
+    >({});
+
+  const [
+    loading,
+    setLoading,
+  ] =
+    useState(true);
+
+  const [
+    saving,
+    setSaving,
+  ] =
+    useState(false);
+
+  const [
+    error,
+    setError,
+  ] =
+    useState<
+      string |
+      null
+    >(null);
+
+  const [
+    message,
+    setMessage,
+  ] =
+    useState<
+      string |
+      null
+    >(null);
+
+
+  const load =
+    useCallback(
+      async () => {
+        setLoading(true);
+        setError(null);
+
+        try {
+          const {
+            data: {
+              session,
+            },
+          } =
+            await supabase.auth.getSession();
+
+          if (!session) {
+            throw new Error(
+              "Session expirÃ©e.",
+            );
+          }
+
+          const response =
+            await fetch(
+              `/api/alert-settings?vehicleId=${encodeURIComponent(
+                vehicleId,
+              )}`,
+              {
+                cache:
+                  "no-store",
+
+                headers: {
+                  Authorization:
+                    `Bearer ${session.access_token}`,
+                },
+              },
+            );
+
+          const data =
+            await response.json();
+
+          if (!response.ok) {
+            throw new Error(
+              data.error ??
+              "Configuration vÃ©hicule indisponible.",
+            );
+          }
+
+          const nextPayload =
+            data as Payload;
+
+          setPayload(
+            nextPayload,
+          );
+
+          const nextLocal:
+            Record<
+              string,
+              LocalRule
+            > = {};
+
+          for (
+            const rule of
+            nextPayload.settings
+          ) {
+            nextLocal[
+              rule.key
+            ] = {
+              mode:
+                rule.mode,
+
+              value:
+                String(
+                  rule.vehicleValue ??
+                  rule.inheritedValue,
+                ),
+
+              enabled:
+                rule.vehicleEnabled ??
+                rule.inheritedEnabled,
+
+              severity:
+                rule.vehicleSeverity ??
+                rule.inheritedSeverity,
+            };
+          }
+
+          setLocal(
+            nextLocal,
+          );
+
+        } catch (cause) {
+          setError(
+            cause instanceof Error
+              ? cause.message
+              : "Erreur de chargement.",
+          );
+
+        } finally {
+          setLoading(false);
+        }
+      },
+      [
+        vehicleId,
+      ],
+    );
+
+
+  useEffect(
+    () => {
+      void load();
+    },
+    [
+      load,
+    ],
+  );
+
+
+  async function save() {
+    if (!payload) {
+      return;
+    }
+
+    setSaving(true);
+    setError(null);
+    setMessage(null);
+
+    try {
+      const settings:
+        Record<
+          string,
+          {
+            mode:
+              "inherit" |
+              "vehicle";
+
+            value?:
+              number;
+
+            enabled?:
+              boolean;
+
+            severity?:
+              AlertSeverity;
+          }
+        > = {};
+
+      for (
+        const rule of
+        payload.settings
+      ) {
+        const current =
+          local[
+            rule.key
+          ];
+
+        if (!current) {
+          throw new Error(
+            `Configuration manquante : ${rule.label}.`,
+          );
+        }
+
+        if (
+          current.mode ===
+          "inherit"
+        ) {
+          settings[
+            rule.key
+          ] = {
+            mode:
+              "inherit",
+          };
+
+          continue;
+        }
+
+        const value =
+          Number(
+            current.value,
+          );
+
+        if (
+          !Number.isFinite(
+            value,
+          ) ||
+          value <
+            rule.min ||
+          value >
+            rule.max
+        ) {
+          throw new Error(
+            `${rule.label} : valeur comprise entre ${rule.min} et ${rule.max} ${rule.unit}.`,
+          );
+        }
+
+        settings[
+          rule.key
+        ] = {
+          mode:
+            "vehicle",
+
+          value,
+
+          enabled:
+            current.enabled,
+
+          severity:
+            current.severity,
+        };
+      }
+
+      const {
+        data: {
+          session,
+        },
+      } =
+        await supabase.auth.getSession();
+
+      if (!session) {
+        throw new Error(
+          "Session expirÃ©e.",
+        );
+      }
+
+      const response =
+        await fetch(
+          "/api/alert-settings",
+          {
+            method:
+              "POST",
+
+            headers: {
+              Authorization:
+                `Bearer ${session.access_token}`,
+
+              "Content-Type":
+                "application/json",
+            },
+
+            body:
+              JSON.stringify({
+                action:
+                  "vehicle-save",
+
+                vehicleId,
+
+                settings,
+              }),
+          },
+        );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ??
+          "Enregistrement impossible.",
+        );
+      }
+
+      setMessage(
+        "Configuration d'alertes du vÃ©hicule enregistrÃ©e.",
+      );
+
+      await load();
+
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : "Enregistrement impossible.",
+      );
+
+    } finally {
+      setSaving(false);
+    }
+  }
+
+
+  return (
+    <section className="rounded-2xl border border-blue-500/20 bg-slate-900 p-6">
+
+      <div className="mb-5 flex items-start gap-3">
+
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-500/10">
+          <AlertTriangle className="h-5 w-5 text-blue-400" />
+        </div>
+
+        <div>
+
+          <h2 className="text-lg font-semibold text-white">
+            ParamÃ¨tres d'alertes du vÃ©hicule
+          </h2>
+
+          <p className="mt-1 text-sm text-slate-400">
+            HÃ©ritez de la configuration du client ou dÃ©finissez une configuration spÃ©cifique au vÃ©hicule.
+          </p>
+
+        </div>
+
+      </div>
+
+
+      {error && (
+        <div className="mb-4 rounded-xl border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-300">
+          {error}
+        </div>
+      )}
+
+
+      {message && (
+        <div className="mb-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4 text-sm text-emerald-300">
+          {message}
+        </div>
+      )}
+
+
+      {loading ? (
+
+        <p className="py-6 text-sm text-slate-400">
+          Chargement des paramÃ¨tres d'alertes...
+        </p>
+
+      ) : !payload ? (
+
+        <p className="py-6 text-sm text-slate-400">
+          Configuration indisponible.
+        </p>
+
+      ) : (
+
+        <>
+
+          <div className="grid gap-4 xl:grid-cols-2">
+
+            {payload.settings.map(
+              (rule) => {
+                const current =
+                  local[
+                    rule.key
+                  ];
+
+                if (!current) {
+                  return null;
+                }
+
+                const editable =
+                  canUpdate &&
+                  payload.canManage;
+
+                return (
+
+                  <div
+                    key={
+                      rule.key
+                    }
+                    className="rounded-xl border border-slate-800 bg-slate-950/60 p-4"
+                  >
+
+                    <div className="flex items-start gap-3">
+
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-900">
+                        <RuleIcon
+                          ruleKey={
+                            rule.key
+                          }
+                        />
+                      </div>
+
+                      <div>
+
+                        <p className="font-medium text-white">
+                          {rule.label}
+                        </p>
+
+                        <p className="mt-1 text-xs leading-5 text-slate-500">
+                          {rule.description}
+                        </p>
+
+                      </div>
+
+                    </div>
+
+
+                    <div className="mt-4 rounded-lg bg-slate-900 px-3 py-2 text-xs text-slate-400">
+
+                      HÃ©ritÃ© :
+                      {" "}
+
+                      <span
+                        className={
+                          rule.inheritedEnabled
+                            ? "font-semibold text-emerald-300"
+                            : "font-semibold text-slate-300"
+                        }
+                      >
+                        {rule.inheritedEnabled
+                          ? "ActivÃ©e"
+                          : "DÃ©sactivÃ©e"}
+                      </span>
+
+                      {" Â· "}
+
+                      {rule.inheritedValue} {rule.unit}
+
+                      {" Â· "}
+
+                      {rule.inheritedSource ===
+                      "company"
+                        ? "Client"
+                        : "Plateforme"}
+
+                    </div>
+
+
+                    <div className="mt-4 space-y-4">
+
+                      <label className="flex cursor-pointer items-start gap-3">
+
+                        <input
+                          type="radio"
+                          name={
+                            `alert-${rule.key}`
+                          }
+                          checked={
+                            current.mode ===
+                            "inherit"
+                          }
+                          disabled={
+                            !editable ||
+                            saving
+                          }
+                          onChange={
+                            () =>
+                              setLocal(
+                                (
+                                  previous,
+                                ) => ({
+                                  ...previous,
+
+                                  [rule.key]: {
+                                    ...previous[
+                                      rule.key
+                                    ],
+
+                                    mode:
+                                      "inherit",
+
+                                    enabled:
+                                      rule.inheritedEnabled,
+
+                                    severity:
+                                      rule.inheritedSeverity,
+
+                                    value:
+                                      String(
+                                        rule.inheritedValue,
+                                      ),
+                                  },
+                                }),
+                              )
+                          }
+                          className="mt-1"
+                        />
+
+                        <span>
+
+                          <span className="block text-sm font-medium text-slate-200">
+                            HÃ©riter du client
+                          </span>
+
+                          <span className="text-xs text-slate-500">
+                            Valeur effective : {rule.inheritedEnabled ? "ActivÃ©e" : "DÃ©sactivÃ©e"} Â· {rule.inheritedValue} {rule.unit}
+                          </span>
+
+                        </span>
+
+                      </label>
+
+
+                      <label className="flex cursor-pointer items-start gap-3">
+
+                        <input
+                          type="radio"
+                          name={
+                            `alert-${rule.key}`
+                          }
+                          checked={
+                            current.mode ===
+                            "vehicle"
+                          }
+                          disabled={
+                            !editable ||
+                            saving
+                          }
+                          onChange={
+                            () =>
+                              setLocal(
+                                (
+                                  previous,
+                                ) => ({
+                                  ...previous,
+
+                                  [rule.key]: {
+                                    ...previous[
+                                      rule.key
+                                    ],
+
+                                    mode:
+                                      "vehicle",
+                                  },
+                                }),
+                              )
+                          }
+                          className="mt-1"
+                        />
+
+                        <span className="flex-1">
+
+                          <span className="block text-sm font-medium text-slate-200">
+                            Configuration spÃ©cifique vÃ©hicule
+                          </span>
+
+
+                          <span className="mt-3 flex flex-wrap items-center gap-3">
+
+                            <button
+                              type="button"
+                              disabled={
+                                !editable ||
+                                saving ||
+                                current.mode !==
+                                  "vehicle"
+                              }
+                              onClick={
+                                (
+                                  event,
+                                ) => {
+                                  event.preventDefault();
+
+                                  setLocal(
+                                    (
+                                      previous,
+                                    ) => ({
+                                      ...previous,
+
+                                      [rule.key]: {
+                                        ...previous[
+                                          rule.key
+                                        ],
+
+                                        enabled:
+                                          !previous[
+                                            rule.key
+                                          ].enabled,
+                                      },
+                                    }),
+                                  );
+                                }
+                              }
+                              className={
+                                current.enabled
+                                  ? "rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-300 disabled:opacity-50"
+                                  : "rounded-full border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-400 disabled:opacity-50"
+                              }
+                            >
+                              {current.enabled
+                                ? "ActivÃ©e"
+                                : "DÃ©sactivÃ©e"}
+                            </button>
+
+
+                            <input
+                              type="number"
+                              min={
+                                rule.min
+                              }
+                              max={
+                                rule.max
+                              }
+                              step={
+                                rule.step
+                              }
+                              value={
+                                current.value
+                              }
+                              disabled={
+                                !editable ||
+                                saving ||
+                                current.mode !==
+                                  "vehicle"
+                              }
+                              onChange={
+                                (
+                                  event,
+                                ) =>
+                                  setLocal(
+                                    (
+                                      previous,
+                                    ) => ({
+                                      ...previous,
+
+                                      [rule.key]: {
+                                        ...previous[
+                                          rule.key
+                                        ],
+
+                                        value:
+                                          event.target.value,
+                                      },
+                                    }),
+                                  )
+                              }
+                              className="w-28 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white outline-none focus:border-blue-500 disabled:opacity-50"
+                            />
+
+                            <span className="text-sm text-slate-400">
+                              {rule.unit}
+                            </span>
+
+                            <select
+                              value={
+                                current.severity
+                              }
+                              disabled={
+                                !editable ||
+                                saving ||
+                                current.mode !==
+                                  "vehicle"
+                              }
+                              onChange={
+                                (
+                                  event,
+                                ) =>
+                                  setLocal(
+                                    (
+                                      previous,
+                                    ) => ({
+                                      ...previous,
+
+                                      [rule.key]: {
+                                        ...previous[
+                                          rule.key
+                                        ],
+
+                                        severity:
+                                          event.target.value as AlertSeverity,
+                                      },
+                                    }),
+                                  )
+                              }
+                              className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white outline-none focus:border-blue-500 disabled:opacity-50"
+                            >
+                              <option value="critical">
+                                Critique
+                              </option>
+
+                              <option value="high">
+                                Majeure
+                              </option>
+
+                              <option value="medium">
+                                Moderee
+                              </option>
+
+                              <option value="info">
+                                Information
+                              </option>
+                            </select>
+
+                          </span>
+
+                        </span>
+
+                      </label>
+
+                    </div>
+
+                  </div>
+                );
+              },
+            )}
+
+          </div>
+
+
+          <div className="mt-5 flex flex-col gap-3 border-t border-slate-800 pt-4 sm:flex-row sm:items-center sm:justify-between">
+
+            <p className="text-xs text-slate-500">
+              Une configuration spÃ©cifique vÃ©hicule remplace l'Ã©tat et le seuil hÃ©ritÃ©s.
+            </p>
+
+
+            {canUpdate &&
+              payload.canManage && (
+
+              <button
+                type="button"
+                disabled={
+                  saving
+                }
+                onClick={
+                  () =>
+                    void save()
+                }
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-blue-500 disabled:opacity-50"
+              >
+                <Save className="h-4 w-4" />
+
+                {saving
+                  ? "Enregistrement..."
+                  : "Enregistrer la configuration"}
+              </button>
+            )}
+
+          </div>
+
+        </>
+      )}
+
+    </section>
+  );
+}
+
+----- TARGETED MATCHES -----
+
+PATTERN : platformValue
+LINE    : 40
+  key: string;
+  label: string;
+  description: string;
+  unit: string;
+
+  platformValue:
+    number;
+
+  platformEnabled:
+    boolean;
+
+  platformSeverity:
+    AlertSeverity;
+
+  inheritedValue:
+    number;
+
+PATTERN : platformEnabled
+LINE    : 43
+  unit: string;
+
+  platformValue:
+    number;
+
+  platformEnabled:
+    boolean;
+
+  platformSeverity:
+    AlertSeverity;
+
+  inheritedValue:
+    number;
+
+  inheritedEnabled:
+    boolean;
+
+PATTERN : platformSeverity
+LINE    : 46
+    number;
+
+  platformEnabled:
+    boolean;
+
+  platformSeverity:
+    AlertSeverity;
+
+  inheritedValue:
+    number;
+
+  inheritedEnabled:
+    boolean;
+
+  inheritedSeverity:
+    AlertSeverity;
+
+PATTERN : inheritedValue
+LINE    : 49
+    boolean;
+
+  platformSeverity:
+    AlertSeverity;
+
+  inheritedValue:
+    number;
+
+  inheritedEnabled:
+    boolean;
+
+  inheritedSeverity:
+    AlertSeverity;
+
+  inheritedSource:
+    "company" |
+
+PATTERN : inheritedValue
+LINE    : 308
+                rule.mode,
+
+              value:
+                String(
+                  rule.vehicleValue ??
+                  rule.inheritedValue,
+                ),
+
+              enabled:
+                rule.vehicleEnabled ??
+                rule.inheritedEnabled,
+
+              severity:
+                rule.vehicleSeverity ??
+                rule.inheritedSeverity,
+            };
+
+PATTERN : inheritedValue
+LINE    : 638
+                          : "Désactivée"}
+                      </span>
+
+                      {" · "}
+
+                      {rule.inheritedValue} {rule.unit}
+
+                      {" · "}
+
+                      {rule.inheritedSource ===
+                      "company"
+                        ? "Client"
+                        : "Plateforme"}
+
+                    </div>
+
+
+PATTERN : inheritedValue
+LINE    : 691
+                                    severity:
+                                      rule.inheritedSeverity,
+
+                                    value:
+                                      String(
+                                        rule.inheritedValue,
+                                      ),
+                                  },
+                                }),
+                              )
+                          }
+                          className="mt-1"
+                        />
+
+                        <span>
+
+
+PATTERN : inheritedValue
+LINE    : 707
+                          <span className="block text-sm font-medium text-slate-200">
+                            Hériter du client
+                          </span>
+
+                          <span className="text-xs text-slate-500">
+                            Valeur effective : {rule.inheritedEnabled ? "Activée" : "Désactivée"} · {rule.inheritedValue} {rule.unit}
+                          </span>
+
+                        </span>
+
+                      </label>
+
+
+                      <label className="flex cursor-pointer items-start gap-3">
+
+                        <input
+
+PATTERN : inheritedEnabled
+LINE    : 52
+    AlertSeverity;
+
+  inheritedValue:
+    number;
+
+  inheritedEnabled:
+    boolean;
+
+  inheritedSeverity:
+    AlertSeverity;
+
+  inheritedSource:
+    "company" |
+    "platform";
+
+  vehicleValue:
+
+PATTERN : inheritedEnabled
+LINE    : 313
+                  rule.inheritedValue,
+                ),
+
+              enabled:
+                rule.vehicleEnabled ??
+                rule.inheritedEnabled,
+
+              severity:
+                rule.vehicleSeverity ??
+                rule.inheritedSeverity,
+            };
+          }
+
+          setLocal(
+            nextLocal,
+          );
+
+PATTERN : inheritedEnabled
+LINE    : 626
+                      Hérité :
+                      {" "}
+
+                      <span
+                        className={
+                          rule.inheritedEnabled
+                            ? "font-semibold text-emerald-300"
+                            : "font-semibold text-slate-300"
+                        }
+                      >
+                        {rule.inheritedEnabled
+                          ? "Activée"
+                          : "Désactivée"}
+                      </span>
+
+                      {" · "}
+
+PATTERN : inheritedEnabled
+LINE    : 631
+                          rule.inheritedEnabled
+                            ? "font-semibold text-emerald-300"
+                            : "font-semibold text-slate-300"
+                        }
+                      >
+                        {rule.inheritedEnabled
+                          ? "Activée"
+                          : "Désactivée"}
+                      </span>
+
+                      {" · "}
+
+                      {rule.inheritedValue} {rule.unit}
+
+                      {" · "}
+
+
+PATTERN : inheritedEnabled
+LINE    : 684
+
+                                    mode:
+                                      "inherit",
+
+                                    enabled:
+                                      rule.inheritedEnabled,
+
+                                    severity:
+                                      rule.inheritedSeverity,
+
+                                    value:
+                                      String(
+                                        rule.inheritedValue,
+                                      ),
+                                  },
+                                }),
+
+PATTERN : inheritedEnabled
+LINE    : 707
+                          <span className="block text-sm font-medium text-slate-200">
+                            Hériter du client
+                          </span>
+
+                          <span className="text-xs text-slate-500">
+                            Valeur effective : {rule.inheritedEnabled ? "Activée" : "Désactivée"} · {rule.inheritedValue} {rule.unit}
+                          </span>
+
+                        </span>
+
+                      </label>
+
+
+                      <label className="flex cursor-pointer items-start gap-3">
+
+                        <input
+
+PATTERN : inheritedSeverity
+LINE    : 55
+    number;
+
+  inheritedEnabled:
+    boolean;
+
+  inheritedSeverity:
+    AlertSeverity;
+
+  inheritedSource:
+    "company" |
+    "platform";
+
+  vehicleValue:
+    number |
+    null;
+
+
+PATTERN : inheritedSeverity
+LINE    : 317
+                rule.vehicleEnabled ??
+                rule.inheritedEnabled,
+
+              severity:
+                rule.vehicleSeverity ??
+                rule.inheritedSeverity,
+            };
+          }
+
+          setLocal(
+            nextLocal,
+          );
+
+        } catch (cause) {
+          setError(
+            cause instanceof Error
+
+PATTERN : inheritedSeverity
+LINE    : 687
+
+                                    enabled:
+                                      rule.inheritedEnabled,
+
+                                    severity:
+                                      rule.inheritedSeverity,
+
+                                    value:
+                                      String(
+                                        rule.inheritedValue,
+                                      ),
+                                  },
+                                }),
+                              )
+                          }
+                          className="mt-1"
+
+PATTERN : effectiveValue
+LINE    : 74
+
+  vehicleSeverity:
+    AlertSeverity |
+    null;
+
+  effectiveValue:
+    number;
+
+  effectiveEnabled:
+    boolean;
+
+  effectiveSeverity:
+    AlertSeverity;
+
+  mode:
+    "inherit" |
+
+PATTERN : effectiveEnabled
+LINE    : 77
+    null;
+
+  effectiveValue:
+    number;
+
+  effectiveEnabled:
+    boolean;
+
+  effectiveSeverity:
+    AlertSeverity;
+
+  mode:
+    "inherit" |
+    "vehicle";
+
+  min:
+
+PATTERN : effectiveSeverity
+LINE    : 80
+    number;
+
+  effectiveEnabled:
+    boolean;
+
+  effectiveSeverity:
+    AlertSeverity;
+
+  mode:
+    "inherit" |
+    "vehicle";
+
+  min:
+    number;
+
+  max:
+
+PATTERN : vehicleValue
+LINE    : 62
+
+  inheritedSource:
+    "company" |
+    "platform";
+
+  vehicleValue:
+    number |
+    null;
+
+  vehicleEnabled:
+    boolean |
+    null;
+
+  vehicleSeverity:
+    AlertSeverity |
+    null;
+
+PATTERN : vehicleValue
+LINE    : 307
+              mode:
+                rule.mode,
+
+              value:
+                String(
+                  rule.vehicleValue ??
+                  rule.inheritedValue,
+                ),
+
+              enabled:
+                rule.vehicleEnabled ??
+                rule.inheritedEnabled,
+
+              severity:
+                rule.vehicleSeverity ??
+                rule.inheritedSeverity,
+
+PATTERN : vehicleEnabled
+LINE    : 66
+
+  vehicleValue:
+    number |
+    null;
+
+  vehicleEnabled:
+    boolean |
+    null;
+
+  vehicleSeverity:
+    AlertSeverity |
+    null;
+
+  effectiveValue:
+    number;
+
+
+PATTERN : vehicleEnabled
+LINE    : 312
+                  rule.vehicleValue ??
+                  rule.inheritedValue,
+                ),
+
+              enabled:
+                rule.vehicleEnabled ??
+                rule.inheritedEnabled,
+
+              severity:
+                rule.vehicleSeverity ??
+                rule.inheritedSeverity,
+            };
+          }
+
+          setLocal(
+            nextLocal,
+
+PATTERN : vehicleSeverity
+LINE    : 70
+
+  vehicleEnabled:
+    boolean |
+    null;
+
+  vehicleSeverity:
+    AlertSeverity |
+    null;
+
+  effectiveValue:
+    number;
+
+  effectiveEnabled:
+    boolean;
+
+  effectiveSeverity:
+
+PATTERN : vehicleSeverity
+LINE    : 316
+              enabled:
+                rule.vehicleEnabled ??
+                rule.inheritedEnabled,
+
+              severity:
+                rule.vehicleSeverity ??
+                rule.inheritedSeverity,
+            };
+          }
+
+          setLocal(
+            nextLocal,
+          );
+
+        } catch (cause) {
+          setError(
+
+PATTERN : source
+LINE    : 58
+    boolean;
+
+  inheritedSeverity:
+    AlertSeverity;
+
+  inheritedSource:
+    "company" |
+    "platform";
+
+  vehicleValue:
+    number |
+    null;
+
+  vehicleEnabled:
+    boolean |
+    null;
+
+PATTERN : source
+LINE    : 642
+
+                      {rule.inheritedValue} {rule.unit}
+
+                      {" · "}
+
+                      {rule.inheritedSource ===
+                      "company"
+                        ? "Client"
+                        : "Plateforme"}
+
+                    </div>
+
+
+                    <div className="mt-4 space-y-4">
+
+                      <label className="flex cursor-pointer items-start gap-3">
+
+PATTERN : inheritedSource
+LINE    : 58
+    boolean;
+
+  inheritedSeverity:
+    AlertSeverity;
+
+  inheritedSource:
+    "company" |
+    "platform";
+
+  vehicleValue:
+    number |
+    null;
+
+  vehicleEnabled:
+    boolean |
+    null;
+
+PATTERN : inheritedSource
+LINE    : 642
+
+                      {rule.inheritedValue} {rule.unit}
+
+                      {" · "}
+
+                      {rule.inheritedSource ===
+                      "company"
+                        ? "Client"
+                        : "Plateforme"}
+
+                    </div>
+
+
+                    <div className="mt-4 space-y-4">
+
+                      <label className="flex cursor-pointer items-start gap-3">
+
+PATTERN : severity
+LINE    : 27
+import {
+  useDashboardAccess,
+} from "../../DashboardAccessContext";
+
+
+type AlertSeverity =
+  | "critical"
+  | "high"
+  | "medium"
+  | "info";
+
+
+type RuleSetting = {
+  key: string;
+  label: string;
+  description: string;
+
+PATTERN : severity
+LINE    : 46
+    number;
+
+  platformEnabled:
+    boolean;
+
+  platformSeverity:
+    AlertSeverity;
+
+  inheritedValue:
+    number;
+
+  inheritedEnabled:
+    boolean;
+
+  inheritedSeverity:
+    AlertSeverity;
+
+PATTERN : severity
+LINE    : 47
+
+  platformEnabled:
+    boolean;
+
+  platformSeverity:
+    AlertSeverity;
+
+  inheritedValue:
+    number;
+
+  inheritedEnabled:
+    boolean;
+
+  inheritedSeverity:
+    AlertSeverity;
+
+
+PATTERN : severity
+LINE    : 55
+    number;
+
+  inheritedEnabled:
+    boolean;
+
+  inheritedSeverity:
+    AlertSeverity;
+
+  inheritedSource:
+    "company" |
+    "platform";
+
+  vehicleValue:
+    number |
+    null;
+
+
+PATTERN : severity
+LINE    : 56
+
+  inheritedEnabled:
+    boolean;
+
+  inheritedSeverity:
+    AlertSeverity;
+
+  inheritedSource:
+    "company" |
+    "platform";
+
+  vehicleValue:
+    number |
+    null;
+
+  vehicleEnabled:
+
+PATTERN : severity
+LINE    : 70
+
+  vehicleEnabled:
+    boolean |
+    null;
+
+  vehicleSeverity:
+    AlertSeverity |
+    null;
+
+  effectiveValue:
+    number;
+
+  effectiveEnabled:
+    boolean;
+
+  effectiveSeverity:
+
+PATTERN : severity
+LINE    : 71
+  vehicleEnabled:
+    boolean |
+    null;
+
+  vehicleSeverity:
+    AlertSeverity |
+    null;
+
+  effectiveValue:
+    number;
+
+  effectiveEnabled:
+    boolean;
+
+  effectiveSeverity:
+    AlertSeverity;
+
+PATTERN : severity
+LINE    : 80
+    number;
+
+  effectiveEnabled:
+    boolean;
+
+  effectiveSeverity:
+    AlertSeverity;
+
+  mode:
+    "inherit" |
+    "vehicle";
+
+  min:
+    number;
+
+  max:
+
+PATTERN : severity
+LINE    : 81
+
+  effectiveEnabled:
+    boolean;
+
+  effectiveSeverity:
+    AlertSeverity;
+
+  mode:
+    "inherit" |
+    "vehicle";
+
+  min:
+    number;
+
+  max:
+    number;
+
+PATTERN : severity
+LINE    : 128
+    string;
+
+  enabled:
+    boolean;
+
+  severity:
+    AlertSeverity;
+};
+
+
+function RuleIcon({
+  ruleKey,
+}: {
+  ruleKey:
+    string;
+}) {
+
+PATTERN : severity
+LINE    : 129
+
+  enabled:
+    boolean;
+
+  severity:
+    AlertSeverity;
+};
+
+
+function RuleIcon({
+  ruleKey,
+}: {
+  ruleKey:
+    string;
+}) {
+  if (
+
+PATTERN : severity
+LINE    : 315
+
+              enabled:
+                rule.vehicleEnabled ??
+                rule.inheritedEnabled,
+
+              severity:
+                rule.vehicleSeverity ??
+                rule.inheritedSeverity,
+            };
+          }
+
+          setLocal(
+            nextLocal,
+          );
+
+        } catch (cause) {
+
+PATTERN : severity
+LINE    : 316
+              enabled:
+                rule.vehicleEnabled ??
+                rule.inheritedEnabled,
+
+              severity:
+                rule.vehicleSeverity ??
+                rule.inheritedSeverity,
+            };
+          }
+
+          setLocal(
+            nextLocal,
+          );
+
+        } catch (cause) {
+          setError(
+
+PATTERN : severity
+LINE    : 317
+                rule.vehicleEnabled ??
+                rule.inheritedEnabled,
+
+              severity:
+                rule.vehicleSeverity ??
+                rule.inheritedSeverity,
+            };
+          }
+
+          setLocal(
+            nextLocal,
+          );
+
+        } catch (cause) {
+          setError(
+            cause instanceof Error
+
+PATTERN : severity
+LINE    : 376
+              number;
+
+            enabled?:
+              boolean;
+
+            severity?:
+              AlertSeverity;
+          }
+        > = {};
+
+      for (
+        const rule of
+        payload.settings
+      ) {
+        const current =
+          local[
+
+PATTERN : severity
+LINE    : 377
+
+            enabled?:
+              boolean;
+
+            severity?:
+              AlertSeverity;
+          }
+        > = {};
+
+      for (
+        const rule of
+        payload.settings
+      ) {
+        const current =
+          local[
+            rule.key
+
+PATTERN : severity
+LINE    : 440
+          value,
+
+          enabled:
+            current.enabled,
+
+          severity:
+            current.severity,
+        };
+      }
+
+      const {
+        data: {
+          session,
+        },
+      } =
+        await supabase.auth.getSession();
+
+PATTERN : severity
+LINE    : 441
+
+          enabled:
+            current.enabled,
+
+          severity:
+            current.severity,
+        };
+      }
+
+      const {
+        data: {
+          session,
+        },
+      } =
+        await supabase.auth.getSession();
+
+
+PATTERN : severity
+LINE    : 686
+                                      "inherit",
+
+                                    enabled:
+                                      rule.inheritedEnabled,
+
+                                    severity:
+                                      rule.inheritedSeverity,
+
+                                    value:
+                                      String(
+                                        rule.inheritedValue,
+                                      ),
+                                  },
+                                }),
+                              )
+                          }
+
+PATTERN : severity
+LINE    : 687
+
+                                    enabled:
+                                      rule.inheritedEnabled,
+
+                                    severity:
+                                      rule.inheritedSeverity,
+
+                                    value:
+                                      String(
+                                        rule.inheritedValue,
+                                      ),
+                                  },
+                                }),
+                              )
+                          }
+                          className="mt-1"
+
+PATTERN : severity
+LINE    : 857
+                              {rule.unit}
+                            </span>
+
+                            <select
+                              value={
+                                current.severity
+                              }
+                              disabled={
+                                !editable ||
+                                saving ||
+                                current.mode !==
+                                  "vehicle"
+                              }
+                              onChange={
+                                (
+                                  event,
+
+PATTERN : severity
+LINE    : 880
+                                      [rule.key]: {
+                                        ...previous[
+                                          rule.key
+                                        ],
+
+                                        severity:
+                                          event.target.value as AlertSeverity,
+                                      },
+                                    }),
+                                  )
+                              }
+                              className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white outline-none focus:border-blue-500 disabled:opacity-50"
+                            >
+                              <option value="critical">
+                                Critique
+                              </option>
+
+PATTERN : severity
+LINE    : 881
+                                        ...previous[
+                                          rule.key
+                                        ],
+
+                                        severity:
+                                          event.target.value as AlertSeverity,
+                                      },
+                                    }),
+                                  )
+                              }
+                              className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white outline-none focus:border-blue-500 disabled:opacity-50"
+                            >
+                              <option value="critical">
+                                Critique
+                              </option>
+
+
+PATTERN : Paramètres d'alertes du véhicule
+LINE    : 526
+        </div>
+
+        <div>
+
+          <h2 className="text-lg font-semibold text-white">
+            Paramètres d'alertes du véhicule
+          </h2>
+
+          <p className="mt-1 text-sm text-slate-400">
+            Héritez de la configuration du client ou définissez une configuration spécifique au véhicule.
+          </p>
+
+        </div>
+
+      </div>
+
+
+============================================================
+ FILE : .\app\dashboard\alerts\page.tsx
+============================================================
+
+----- FULL FILE -----
+"use client";
+
+import Link from "next/link";
+
+import {
+  Activity,
+  AlertTriangle,
+  Bell,
+  CheckCircle2,
+  Clock3,
+  Gauge,
+  MapPin,
+  RefreshCw,
+  Search,
+  ShieldAlert,
+  Truck,
+  Wrench,
+  XCircle,
+} from "lucide-react";
+
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+
+import {
+  supabase,
+} from "../../components/supabase";
+
+
+type AlertSeverity =
+  | "critical"
+  | "high"
+  | "medium"
+  | "info";
+
+
+type AlertLifecycle =
+  | "active"
+  | "acknowledged"
+  | "resolved";
+
+
+type AlertItem = {
+  id:
+    string;
+
+  vehicleId:
+    string;
+
+  companyId:
+    string;
+
+  vehicleName:
+    string;
+
+  registration:
+    string;
+
+  companyName:
+    string;
+
+  alertType:
+    string;
+
+  label:
+    string;
+
+  category:
+    string;
+
+  ruleLabel:
+    string;
+
+  message:
+    string;
+
+  severity:
+    AlertSeverity;
+
+  lifecycle:
+    AlertLifecycle;
+
+  status:
+    string;
+
+  triggeredAt:
+    string;
+
+  resolvedAt:
+    string |
+    null;
+
+  acknowledgedAt:
+    string |
+    null;
+
+  acknowledgedBy:
+    string |
+    null;
+
+  recurrenceCount:
+    number;
+
+  firstSeenAt:
+    string;
+
+  lastSeenAt:
+    string;
+
+  diagnostic:
+    boolean;
+};
+
+
+type VehicleOption = {
+  id:
+    string;
+
+  name:
+    string;
+
+  registration:
+    string;
+};
+
+
+type Payload = {
+  alerts:
+    AlertItem[];
+
+  vehicles:
+    VehicleOption[];
+
+  metrics: {
+    active:
+      number;
+
+    critical:
+      number;
+
+    acknowledged:
+      number;
+
+    resolved:
+      number;
+  };
+};
+
+
+function formatDate(
+  value: string | null,
+) {
+  if (
+    !value
+  ) {
+    return "-";
+  }
+
+
+  return new Date(
+    value,
+  ).toLocaleString(
+    "fr-FR",
+    {
+      timeZone:
+        "Africa/Casablanca",
+    },
+  );
+}
+
+
+function severityLabel(
+  severity: AlertSeverity,
+) {
+  if (
+    severity ===
+    "critical"
+  ) {
+    return "Critique";
+  }
+
+
+  if (
+    severity ===
+    "high"
+  ) {
+    return "Majeure";
+  }
+
+
+  if (
+    severity ===
+    "medium"
+  ) {
+    return "Moderee";
+  }
+
+
+  return "Information";
+}
+
+
+function severityClasses(
+  severity: AlertSeverity,
+) {
+  if (
+    severity ===
+    "critical"
+  ) {
+    return "bg-red-500/10 text-red-300 ring-red-500/20";
+  }
+
+
+  if (
+    severity ===
+    "high"
+  ) {
+    return "bg-orange-500/10 text-orange-300 ring-orange-500/20";
+  }
+
+
+  if (
+    severity ===
+    "medium"
+  ) {
+    return "bg-amber-500/10 text-amber-300 ring-amber-500/20";
+  }
+
+
+  return "bg-blue-500/10 text-blue-300 ring-blue-500/20";
+}
+
+
+function lifecycleLabel(
+  lifecycle: AlertLifecycle,
+) {
+  if (
+    lifecycle ===
+    "resolved"
+  ) {
+    return "Resolue";
+  }
+
+
+  if (
+    lifecycle ===
+    "acknowledged"
+  ) {
+    return "Acquittee";
+  }
+
+
+  return "Active";
+}
+
+
+function lifecycleClasses(
+  lifecycle: AlertLifecycle,
+) {
+  if (
+    lifecycle ===
+    "resolved"
+  ) {
+    return "bg-emerald-500/10 text-emerald-300";
+  }
+
+
+  if (
+    lifecycle ===
+    "acknowledged"
+  ) {
+    return "bg-blue-500/10 text-blue-300";
+  }
+
+
+  return "bg-red-500/10 text-red-300";
+}
+
+
+function AlertIcon({
+  alert,
+}: {
+  alert:
+    AlertItem;
+}) {
+  if (
+    alert.diagnostic
+  ) {
+    return (
+      <Wrench className="h-5 w-5 text-orange-400" />
+    );
+  }
+
+
+  if (
+    alert.alertType ===
+    "door_open_moving"
+  ) {
+    return (
+      <ShieldAlert className="h-5 w-5 text-red-400" />
+    );
+  }
+
+
+  if (
+    alert.alertType ===
+    "overspeed"
+  ) {
+    return (
+      <Gauge className="h-5 w-5 text-red-400" />
+    );
+  }
+
+
+  if (
+    alert.alertType ===
+      "gps_lost" ||
+    alert.alertType ===
+      "tracker_offline"
+  ) {
+    return (
+      <MapPin className="h-5 w-5 text-amber-400" />
+    );
+  }
+
+
+  return (
+    <Bell className="h-5 w-5 text-blue-400" />
+  );
+}
+
+
+export default function AlertsPage() {
+  const [
+    payload,
+    setPayload,
+  ] =
+    useState<Payload | null>(
+      null,
+    );
+
+
+  const [
+    loading,
+    setLoading,
+  ] =
+    useState(
+      true,
+    );
+
+
+  const [
+    actionLoading,
+    setActionLoading,
+  ] =
+    useState<
+      string |
+      null
+    >(
+      null,
+    );
+
+
+  const [
+    error,
+    setError,
+  ] =
+    useState<
+      string |
+      null
+    >(
+      null,
+    );
+
+
+  const [
+    message,
+    setMessage,
+  ] =
+    useState<
+      string |
+      null
+    >(
+      null,
+    );
+
+
+  const [
+    search,
+    setSearch,
+  ] =
+    useState(
+      "",
+    );
+
+
+  const [
+    selectedVehicle,
+    setSelectedVehicle,
+  ] =
+    useState(
+      "all",
+    );
+
+
+  const [
+    selectedType,
+    setSelectedType,
+  ] =
+    useState(
+      "all",
+    );
+
+
+  const [
+    selectedStatus,
+    setSelectedStatus,
+  ] =
+    useState(
+      "all",
+    );
+
+
+  const [
+    selectedSeverity,
+    setSelectedSeverity,
+  ] =
+    useState(
+      "all",
+    );
+
+
+  const load =
+    useCallback(
+      async () => {
+        try {
+          const {
+            data: {
+              session,
+            },
+          } =
+            await supabase.auth.getSession();
+
+
+          if (
+            !session
+          ) {
+            throw new Error(
+              "Session expiree.",
+            );
+          }
+
+
+          const response =
+            await fetch(
+              "/api/alerts",
+              {
+                cache:
+                  "no-store",
+
+                headers: {
+                  Authorization:
+                    `Bearer ${session.access_token}`,
+                },
+              },
+            );
+
+
+          const data =
+            await response.json();
+
+
+          if (
+            !response.ok
+          ) {
+            throw new Error(
+              data.error ??
+              "Alertes indisponibles.",
+            );
+          }
+
+
+          setPayload(
+            data as Payload,
+          );
+
+          setError(
+            null,
+          );
+
+        } catch (cause) {
+          setError(
+            cause instanceof Error
+              ? cause.message
+              : "Erreur.",
+          );
+
+        } finally {
+          setLoading(
+            false,
+          );
+        }
+      },
+      [],
+    );
+
+
+  useEffect(
+    () => {
+      void load();
+    },
+    [
+      load,
+    ],
+  );
+
+
+  const alertTypes =
+    useMemo(
+      () =>
+        Array.from(
+          new Set(
+            (
+              payload?.alerts ??
+              []
+            ).map(
+              (
+                alert,
+              ) =>
+                alert.alertType,
+            ),
+          ),
+        ).sort(),
+      [
+        payload,
+      ],
+    );
+
+
+  const filteredAlerts =
+    useMemo(
+      () => {
+        const query =
+          search
+            .trim()
+            .toLowerCase();
+
+
+        return (
+          payload?.alerts ??
+          []
+        ).filter(
+          (
+            alert,
+          ) => {
+            if (
+              selectedVehicle !==
+                "all" &&
+              alert.vehicleId !==
+                selectedVehicle
+            ) {
+              return false;
+            }
+
+
+            if (
+              selectedType !==
+                "all" &&
+              alert.alertType !==
+                selectedType
+            ) {
+              return false;
+            }
+
+
+            if (
+              selectedStatus !==
+                "all" &&
+              alert.lifecycle !==
+                selectedStatus
+            ) {
+              return false;
+            }
+
+
+            if (
+              selectedSeverity !==
+                "all" &&
+              alert.severity !==
+                selectedSeverity
+            ) {
+              return false;
+            }
+
+
+            if (
+              query
+            ) {
+              const haystack =
+                [
+                  alert.label,
+                  alert.message,
+                  alert.vehicleName,
+                  alert.registration,
+                  alert.companyName,
+                  alert.alertType,
+                ]
+                  .join(
+                    " ",
+                  )
+                  .toLowerCase();
+
+
+              if (
+                !haystack.includes(
+                  query,
+                )
+              ) {
+                return false;
+              }
+            }
+
+
+            return true;
+          },
+        );
+      },
+      [
+        payload,
+        search,
+        selectedVehicle,
+        selectedType,
+        selectedStatus,
+        selectedSeverity,
+      ],
+    );
+
+
+  async function postAction(
+    body:
+      Record<
+        string,
+        string
+      >,
+  ) {
+    const {
+      data: {
+        session,
+      },
+    } =
+      await supabase.auth.getSession();
+
+
+    if (
+      !session
+    ) {
+      throw new Error(
+        "Session expiree.",
+      );
+    }
+
+
+    const response =
+      await fetch(
+        "/api/alerts",
+        {
+          method:
+            "POST",
+
+          headers: {
+            Authorization:
+              `Bearer ${session.access_token}`,
+
+            "Content-Type":
+              "application/json",
+          },
+
+          body:
+            JSON.stringify(
+              body,
+            ),
+        },
+      );
+
+
+    const data =
+      await response.json();
+
+
+    if (
+      !response.ok
+    ) {
+      throw new Error(
+        data.error ??
+        "Action impossible.",
+      );
+    }
+
+
+    return data;
+  }
+
+
+  async function acknowledge(
+    alertId: string,
+  ) {
+    try {
+      setActionLoading(
+        alertId,
+      );
+
+      setError(
+        null,
+      );
+
+      setMessage(
+        null,
+      );
+
+
+      await postAction({
+        action:
+          "acknowledge",
+
+        alertId,
+      });
+
+
+      setMessage(
+        "Alerte acquittee.",
+      );
+
+
+      await load();
+
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : "Erreur.",
+      );
+
+    } finally {
+      setActionLoading(
+        null,
+      );
+    }
+  }
+
+
+  async function acknowledgeAll() {
+    try {
+      setActionLoading(
+        "__all__",
+      );
+
+      setError(
+        null,
+      );
+
+      setMessage(
+        null,
+      );
+
+
+      const result =
+        await postAction({
+          action:
+            "acknowledge_all",
+        });
+
+
+      setMessage(
+        `${result.updated ?? 0} alerte(s) acquittee(s).`,
+      );
+
+
+      await load();
+
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : "Erreur.",
+      );
+
+    } finally {
+      setActionLoading(
+        null,
+      );
+    }
+  }
+
+
+  if (
+    loading
+  ) {
+    return (
+      <div className="rounded-2xl border border-slate-800 bg-slate-900 p-8 text-sm text-slate-400">
+        Chargement des alertes...
+      </div>
+    );
+  }
+
+
+  return (
+    <div className="space-y-6">
+
+
+      <header className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+
+        <div className="flex items-center gap-3">
+
+          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-red-500/10">
+            <Bell className="h-5 w-5 text-red-400" />
+          </div>
+
+
+          <div>
+
+            <h1 className="text-2xl font-semibold text-white">
+              Centre des alertes
+            </h1>
+
+            <p className="mt-1 text-sm text-slate-400">
+              Evenements telematiques, diagnostics et securite de la flotte.
+            </p>
+
+          </div>
+
+        </div>
+
+
+        <div className="flex flex-wrap gap-2">
+
+          <button
+            type="button"
+            onClick={
+              () =>
+                void load()
+            }
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-4 py-2.5 text-sm text-slate-300 transition hover:bg-slate-800"
+          >
+            <RefreshCw className="h-4 w-4" />
+
+            Actualiser
+          </button>
+
+
+          <button
+            type="button"
+            disabled={
+              actionLoading !==
+              null
+            }
+            onClick={
+              () =>
+                void acknowledgeAll()
+            }
+            className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-blue-500 disabled:opacity-50"
+          >
+            <CheckCircle2 className="h-4 w-4" />
+
+            Tout acquitter
+          </button>
+
+        </div>
+
+      </header>
+
+
+      {error && (
+        <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-300">
+          {error}
+        </div>
+      )}
+
+
+      {message && (
+        <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4 text-sm text-emerald-300">
+          {message}
+        </div>
+      )}
+
+
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+
+        <MetricCard
+          label="Actives"
+          value={
+            payload?.metrics.active ??
+            0
+          }
+          icon="active"
+        />
+
+        <MetricCard
+          label="Critiques"
+          value={
+            payload?.metrics.critical ??
+            0
+          }
+          icon="critical"
+        />
+
+        <MetricCard
+          label="Acquittees"
+          value={
+            payload?.metrics.acknowledged ??
+            0
+          }
+          icon="ack"
+        />
+
+        <MetricCard
+          label="Resolues"
+          value={
+            payload?.metrics.resolved ??
+            0
+          }
+          icon="resolved"
+        />
+
+      </section>
+
+
+      <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
+
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+
+          <div className="relative">
+
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+
+            <input
+              value={
+                search
+              }
+              onChange={
+                (
+                  event,
+                ) =>
+                  setSearch(
+                    event.target.value,
+                  )
+              }
+              placeholder="Vehicule, alerte, DTC..."
+              className="w-full rounded-xl border border-slate-700 bg-slate-950 py-3 pl-10 pr-3 text-sm text-white outline-none"
+            />
+
+          </div>
+
+
+          <select
+            value={
+              selectedVehicle
+            }
+            onChange={
+              (
+                event,
+              ) =>
+                setSelectedVehicle(
+                  event.target.value,
+                )
+            }
+            className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-sm text-white"
+          >
+            <option value="all">
+              Tous les vehicules
+            </option>
+
+            {(payload?.vehicles ?? []).map(
+              (
+                vehicle,
+              ) => (
+                <option
+                  key={
+                    vehicle.id
+                  }
+                  value={
+                    vehicle.id
+                  }
+                >
+                  {vehicle.name} - {vehicle.registration}
+                </option>
+              ),
+            )}
+          </select>
+
+
+          <select
+            value={
+              selectedType
+            }
+            onChange={
+              (
+                event,
+              ) =>
+                setSelectedType(
+                  event.target.value,
+                )
+            }
+            className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-sm text-white"
+          >
+            <option value="all">
+              Tous les types
+            </option>
+
+            {alertTypes.map(
+              (
+                type,
+              ) => (
+                <option
+                  key={
+                    type
+                  }
+                  value={
+                    type
+                  }
+                >
+                  {type}
+                </option>
+              ),
+            )}
+          </select>
+
+
+          <select
+            value={
+              selectedStatus
+            }
+            onChange={
+              (
+                event,
+              ) =>
+                setSelectedStatus(
+                  event.target.value,
+                )
+            }
+            className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-sm text-white"
+          >
+            <option value="all">
+              Tous les statuts
+            </option>
+
+            <option value="active">
+              Actives
+            </option>
+
+            <option value="acknowledged">
+              Acquittees
+            </option>
+
+            <option value="resolved">
+              Resolues
+            </option>
+          </select>
+
+
+          <select
+            value={
+              selectedSeverity
+            }
+            onChange={
+              (
+                event,
+              ) =>
+                setSelectedSeverity(
+                  event.target.value,
+                )
+            }
+            className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-sm text-white"
+          >
+            <option value="all">
+              Toutes les gravites
+            </option>
+
+            <option value="critical">
+              Critique
+            </option>
+
+            <option value="high">
+              Majeure
+            </option>
+
+            <option value="medium">
+              Moderee
+            </option>
+
+            <option value="info">
+              Information
+            </option>
+          </select>
+
+        </div>
+
+
+        <p className="mt-4 text-xs text-slate-500">
+          {filteredAlerts.length} alerte(s) correspondant aux filtres.
+        </p>
+
+      </section>
+
+
+      <section className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900">
+
+        <div className="border-b border-slate-800 px-5 py-4">
+
+          <h2 className="font-semibold text-white">
+            Historique des alertes
+          </h2>
+
+          <p className="mt-1 text-xs text-slate-500">
+            Etat, priorite et recurrence des evenements de flotte.
+          </p>
+
+        </div>
+
+
+        <div className="overflow-x-auto">
+
+          <table className="min-w-full">
+
+            <thead>
+
+              <tr className="border-b border-slate-800 bg-slate-950/50">
+
+                <TableHeader>
+                  Alerte
+                </TableHeader>
+
+                <TableHeader>
+                  Vehicule
+                </TableHeader>
+
+                <TableHeader>
+                  Gravite
+                </TableHeader>
+
+                <TableHeader>
+                  Recidive
+                </TableHeader>
+
+                <TableHeader>
+                  Apparition
+                </TableHeader>
+
+                <TableHeader>
+                  Statut
+                </TableHeader>
+
+                <TableHeader>
+                  Actions
+                </TableHeader>
+
+              </tr>
+
+            </thead>
+
+
+            <tbody className="divide-y divide-slate-800">
+
+              {filteredAlerts.map(
+                (
+                  alert,
+                ) => (
+                  <tr
+                    key={
+                      alert.id
+                    }
+                    className="transition hover:bg-slate-800/40"
+                  >
+
+                    <td className="px-5 py-4">
+
+                      <div className="flex min-w-[260px] items-start gap-3">
+
+                        <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-950">
+                          <AlertIcon
+                            alert={
+                              alert
+                            }
+                          />
+                        </div>
+
+
+                        <div>
+
+                          <p className="text-sm font-semibold text-white">
+                            {alert.label}
+                          </p>
+
+                          <p className="mt-1 max-w-sm text-xs leading-5 text-slate-500">
+                            {alert.message}
+                          </p>
+
+                          <p className="mt-1 text-xs text-slate-600">
+                            {alert.alertType}
+                          </p>
+
+                        </div>
+
+                      </div>
+
+                    </td>
+
+
+                    <td className="px-5 py-4">
+
+                      <Link
+                        href={
+                          `/dashboard/vehicle/${alert.vehicleId}`
+                        }
+                        className="inline-flex items-start gap-2"
+                      >
+
+                        <Truck className="mt-0.5 h-4 w-4 text-blue-400" />
+
+                        <span>
+
+                          <span className="block text-sm font-medium text-white hover:text-blue-300">
+                            {alert.vehicleName}
+                          </span>
+
+                          <span className="block text-xs text-slate-500">
+                            {alert.registration}
+                          </span>
+
+                          <span className="block text-xs text-slate-600">
+                            {alert.companyName}
+                          </span>
+
+                        </span>
+
+                      </Link>
+
+                    </td>
+
+
+                    <td className="px-5 py-4">
+
+                      <span
+                        className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${severityClasses(
+                          alert.severity,
+                        )}`}
+                      >
+                        {severityLabel(
+                          alert.severity,
+                        )}
+                      </span>
+
+                    </td>
+
+
+                    <td className="px-5 py-4">
+
+                      <p className="text-sm font-semibold text-white">
+                        {alert.recurrenceCount}
+                      </p>
+
+                      <p className="mt-1 text-xs text-slate-500">
+                        premiere : {formatDate(alert.firstSeenAt)}
+                      </p>
+
+                    </td>
+
+
+                    <td className="px-5 py-4">
+
+                      <p className="text-sm text-slate-300">
+                        {formatDate(
+                          alert.triggeredAt,
+                        )}
+                      </p>
+
+                      <p className="mt-1 text-xs text-slate-500">
+                        derniere : {formatDate(alert.lastSeenAt)}
+                      </p>
+
+                    </td>
+
+
+                    <td className="px-5 py-4">
+
+                      <span
+                        className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${lifecycleClasses(
+                          alert.lifecycle,
+                        )}`}
+                      >
+                        {lifecycleLabel(
+                          alert.lifecycle,
+                        )}
+                      </span>
+
+
+                      {alert.acknowledgedAt && (
+                        <p className="mt-2 text-xs text-slate-500">
+                          {formatDate(
+                            alert.acknowledgedAt,
+                          )}
+                        </p>
+                      )}
+
+                    </td>
+
+
+                    <td className="px-5 py-4">
+
+                      <div className="flex min-w-[150px] flex-col gap-2">
+
+                        {alert.lifecycle ===
+                          "active" && (
+                          <button
+                            type="button"
+                            disabled={
+                              actionLoading ===
+                              alert.id
+                            }
+                            onClick={
+                              () =>
+                                void acknowledge(
+                                  alert.id,
+                                )
+                            }
+                            className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white transition hover:bg-blue-500 disabled:opacity-50"
+                          >
+                            Acquitter
+                          </button>
+                        )}
+
+
+                        {alert.diagnostic && (
+                          <Link
+                            href="/dashboard/diagnostics"
+                            className="rounded-lg border border-slate-700 px-3 py-2 text-center text-xs text-slate-300 transition hover:bg-slate-800"
+                          >
+                            Diagnostic
+                          </Link>
+                        )}
+
+
+                        <Link
+                          href={
+                            `/dashboard/vehicle/${alert.vehicleId}`
+                          }
+                          className="rounded-lg border border-slate-700 px-3 py-2 text-center text-xs text-slate-300 transition hover:bg-slate-800"
+                        >
+                          Fiche vehicule
+                        </Link>
+
+                      </div>
+
+                    </td>
+
+                  </tr>
+                ),
+              )}
+
+            </tbody>
+
+          </table>
+
+
+          {filteredAlerts.length ===
+            0 && (
+            <div className="px-6 py-14 text-center">
+
+              <CheckCircle2 className="mx-auto h-9 w-9 text-emerald-500" />
+
+              <p className="mt-4 font-medium text-white">
+                Aucune alerte
+              </p>
+
+              <p className="mt-1 text-sm text-slate-500">
+                Aucun evenement ne correspond aux filtres actuels.
+              </p>
+
+            </div>
+          )}
+
+        </div>
+
+      </section>
+
+
+      <section className="rounded-2xl border border-blue-500/20 bg-blue-500/5 p-5">
+
+        <div className="flex gap-3">
+
+          <Activity className="mt-0.5 h-5 w-5 shrink-0 text-blue-400" />
+
+          <div>
+
+            <p className="font-medium text-white">
+              Alert Engine V1
+            </p>
+
+            <p className="mt-1 text-sm leading-6 text-slate-400">
+              Cette page utilise maintenant les alertes Matelematics stockees en base. L'acquittement confirme la prise en charge sans forcer la resolution du defaut.
+            </p>
+
+          </div>
+
+        </div>
+
+      </section>
+
+    </div>
+  );
+}
+
+
+function TableHeader({
+  children,
+}: {
+  children:
+    React.ReactNode;
+}) {
+  return (
+    <th className="px-5 py-4 text-left text-xs font-medium uppercase tracking-wider text-slate-500">
+      {children}
+    </th>
+  );
+}
+
+
+function MetricCard({
+  label,
+  value,
+  icon,
+}: {
+  label:
+    string;
+
+  value:
+    number;
+
+  icon:
+    | "active"
+    | "critical"
+    | "ack"
+    | "resolved";
+}) {
+  const Icon =
+    icon ===
+      "critical"
+      ? XCircle
+      : icon ===
+          "ack"
+        ? Clock3
+        : icon ===
+            "resolved"
+          ? CheckCircle2
+          : AlertTriangle;
+
+
+  return (
+    <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
+
+      <div className="flex items-center justify-between">
+
+        <p className="text-sm text-slate-400">
+          {label}
+        </p>
+
+        <Icon className="h-5 w-5 text-red-400" />
+
+      </div>
+
+      <p className="mt-3 text-3xl font-bold text-white">
+        {value}
+      </p>
+
+    </div>
+  );
+}
+
+----- TARGETED MATCHES -----
+
+PATTERN : severity
+LINE    : 33
+import {
+  supabase,
+} from "../../components/supabase";
+
+
+type AlertSeverity =
+  | "critical"
+  | "high"
+  | "medium"
+  | "info";
+
+
+type AlertLifecycle =
+  | "active"
+  | "acknowledged"
+  | "resolved";
+
+PATTERN : severity
+LINE    : 80
+    string;
+
+  message:
+    string;
+
+  severity:
+    AlertSeverity;
+
+  lifecycle:
+    AlertLifecycle;
+
+  status:
+    string;
+
+  triggeredAt:
+    string;
+
+PATTERN : severity
+LINE    : 81
+
+  message:
+    string;
+
+  severity:
+    AlertSeverity;
+
+  lifecycle:
+    AlertLifecycle;
+
+  status:
+    string;
+
+  triggeredAt:
+    string;
+
+
+PATTERN : severity
+LINE    : 175
+    },
+  );
+}
+
+
+function severityLabel(
+  severity: AlertSeverity,
+) {
+  if (
+    severity ===
+    "critical"
+  ) {
+    return "Critique";
+  }
+
+
+
+PATTERN : severity
+LINE    : 176
+  );
+}
+
+
+function severityLabel(
+  severity: AlertSeverity,
+) {
+  if (
+    severity ===
+    "critical"
+  ) {
+    return "Critique";
+  }
+
+
+  if (
+
+PATTERN : severity
+LINE    : 179
+
+function severityLabel(
+  severity: AlertSeverity,
+) {
+  if (
+    severity ===
+    "critical"
+  ) {
+    return "Critique";
+  }
+
+
+  if (
+    severity ===
+    "high"
+  ) {
+
+PATTERN : severity
+LINE    : 187
+    return "Critique";
+  }
+
+
+  if (
+    severity ===
+    "high"
+  ) {
+    return "Majeure";
+  }
+
+
+  if (
+    severity ===
+    "medium"
+  ) {
+
+PATTERN : severity
+LINE    : 195
+    return "Majeure";
+  }
+
+
+  if (
+    severity ===
+    "medium"
+  ) {
+    return "Moderee";
+  }
+
+
+  return "Information";
+}
+
+
+
+PATTERN : severity
+LINE    : 206
+
+  return "Information";
+}
+
+
+function severityClasses(
+  severity: AlertSeverity,
+) {
+  if (
+    severity ===
+    "critical"
+  ) {
+    return "bg-red-500/10 text-red-300 ring-red-500/20";
+  }
+
+
+
+PATTERN : severity
+LINE    : 207
+  return "Information";
+}
+
+
+function severityClasses(
+  severity: AlertSeverity,
+) {
+  if (
+    severity ===
+    "critical"
+  ) {
+    return "bg-red-500/10 text-red-300 ring-red-500/20";
+  }
+
+
+  if (
+
+PATTERN : severity
+LINE    : 210
+
+function severityClasses(
+  severity: AlertSeverity,
+) {
+  if (
+    severity ===
+    "critical"
+  ) {
+    return "bg-red-500/10 text-red-300 ring-red-500/20";
+  }
+
+
+  if (
+    severity ===
+    "high"
+  ) {
+
+PATTERN : severity
+LINE    : 218
+    return "bg-red-500/10 text-red-300 ring-red-500/20";
+  }
+
+
+  if (
+    severity ===
+    "high"
+  ) {
+    return "bg-orange-500/10 text-orange-300 ring-orange-500/20";
+  }
+
+
+  if (
+    severity ===
+    "medium"
+  ) {
+
+PATTERN : severity
+LINE    : 226
+    return "bg-orange-500/10 text-orange-300 ring-orange-500/20";
+  }
+
+
+  if (
+    severity ===
+    "medium"
+  ) {
+    return "bg-amber-500/10 text-amber-300 ring-amber-500/20";
+  }
+
+
+  return "bg-blue-500/10 text-blue-300 ring-blue-500/20";
+}
+
+
+
+PATTERN : severity
+LINE    : 428
+      "all",
+    );
+
+
+  const [
+    selectedSeverity,
+    setSelectedSeverity,
+  ] =
+    useState(
+      "all",
+    );
+
+
+  const load =
+    useCallback(
+      async () => {
+
+PATTERN : severity
+LINE    : 429
+    );
+
+
+  const [
+    selectedSeverity,
+    setSelectedSeverity,
+  ] =
+    useState(
+      "all",
+    );
+
+
+  const load =
+    useCallback(
+      async () => {
+        try {
+
+PATTERN : severity
+LINE    : 590
+              return false;
+            }
+
+
+            if (
+              selectedSeverity !==
+                "all" &&
+              alert.severity !==
+                selectedSeverity
+            ) {
+              return false;
+            }
+
+
+            if (
+              query
+
+PATTERN : severity
+LINE    : 592
+
+
+            if (
+              selectedSeverity !==
+                "all" &&
+              alert.severity !==
+                selectedSeverity
+            ) {
+              return false;
+            }
+
+
+            if (
+              query
+            ) {
+              const haystack =
+
+PATTERN : severity
+LINE    : 593
+
+            if (
+              selectedSeverity !==
+                "all" &&
+              alert.severity !==
+                selectedSeverity
+            ) {
+              return false;
+            }
+
+
+            if (
+              query
+            ) {
+              const haystack =
+                [
+
+PATTERN : severity
+LINE    : 637
+        payload,
+        search,
+        selectedVehicle,
+        selectedType,
+        selectedStatus,
+        selectedSeverity,
+      ],
+    );
+
+
+  async function postAction(
+    body:
+      Record<
+        string,
+        string
+      >,
+
+PATTERN : severity
+LINE    : 1065
+          </select>
+
+
+          <select
+            value={
+              selectedSeverity
+            }
+            onChange={
+              (
+                event,
+              ) =>
+                setSelectedSeverity(
+                  event.target.value,
+                )
+            }
+            className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-sm text-white"
+
+PATTERN : severity
+LINE    : 1071
+            }
+            onChange={
+              (
+                event,
+              ) =>
+                setSelectedSeverity(
+                  event.target.value,
+                )
+            }
+            className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-sm text-white"
+          >
+            <option value="all">
+              Toutes les gravites
+            </option>
+
+            <option value="critical">
+
+PATTERN : severity
+LINE    : 1246
+
+
+                    <td className="px-5 py-4">
+
+                      <span
+                        className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${severityClasses(
+                          alert.severity,
+                        )}`}
+                      >
+                        {severityLabel(
+                          alert.severity,
+                        )}
+                      </span>
+
+                    </td>
+
+
+PATTERN : severity
+LINE    : 1247
+
+                    <td className="px-5 py-4">
+
+                      <span
+                        className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${severityClasses(
+                          alert.severity,
+                        )}`}
+                      >
+                        {severityLabel(
+                          alert.severity,
+                        )}
+                      </span>
+
+                    </td>
+
+
+
+PATTERN : severity
+LINE    : 1250
+                      <span
+                        className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${severityClasses(
+                          alert.severity,
+                        )}`}
+                      >
+                        {severityLabel(
+                          alert.severity,
+                        )}
+                      </span>
+
+                    </td>
+
+
+                    <td className="px-5 py-4">
+
+                      <p className="text-sm font-semibold text-white">
+
+PATTERN : severity
+LINE    : 1251
+                        className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${severityClasses(
+                          alert.severity,
+                        )}`}
+                      >
+                        {severityLabel(
+                          alert.severity,
+                        )}
+                      </span>
+
+                    </td>
+
+
+                    <td className="px-5 py-4">
+
+                      <p className="text-sm font-semibold text-white">
+                        {alert.recurrenceCount}
+
+PATTERN : Centre des alertes
+LINE    : 825
+
+
+          <div>
+
+            <h1 className="text-2xl font-semibold text-white">
+              Centre des alertes
+            </h1>
+
+            <p className="mt-1 text-sm text-slate-400">
+              Evenements telematiques, diagnostics et securite de la flotte.
+            </p>
+
+          </div>
+
+        </div>
+
+
+PATTERN : Historique des alertes
+LINE    : 1113
+      <section className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900">
+
+        <div className="border-b border-slate-800 px-5 py-4">
+
+          <h2 className="font-semibold text-white">
+            Historique des alertes
+          </h2>
+
+          <p className="mt-1 text-xs text-slate-500">
+            Etat, priorite et recurrence des evenements de flotte.
+          </p>
+
+        </div>
+
+
+        <div className="overflow-x-auto">
+
+============================================================
+ V1.2E TARGET
+============================================================
+
+VEHICLE SETTINGS:
+ - afficher source du seuil
+ - afficher source de enabled
+ - afficher source de severity
+ - plateforme / client / vehicule
+
+ALERT HISTORY:
+ - rule_version
+ - alert_engine_version
+ - config_resolution_version
+ - metadata_version
+ - threshold_source
+ - enabled_source
+ - severity_source
+ - can_mapping_version
+
+NO SQL MIGRATION
+NO CAN/J1939/SIMULATOR/DTC CLEAR CHANGE

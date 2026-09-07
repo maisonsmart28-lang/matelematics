@@ -1,0 +1,522 @@
+﻿============================================================
+ ALERT ENGINE V1.2A STEP 1 PREFLIGHT
+============================================================
+
+FILE : .\server\teltonika\can\alert-engine.ts
+TOTAL LINES : 479
+
+0001: import type {
+0002:   NormalizedCanV2,
+0003: } from "./types-v2";
+0004: 
+0005: 
+0006: export type CanAlertCandidate = {
+0007:   alertType: string;
+0008: 
+0009:   active: boolean;
+0010: 
+0011:   severity:
+0012:     | "info"
+0013:     | "warning"
+0014:     | "critical";
+0015: 
+0016:   title: string;
+0017: 
+0018:   message: string;
+0019: 
+0020:   metadata:
+0021:     Record<
+0022:       string,
+0023:       unknown
+0024:     >;
+0025: };
+0026: 
+0027: 
+0028: /*
+0029:  * Alert Engine V1.1 default thresholds.
+0030:  *
+0031:  * These are platform defaults only.
+0032:  * They will later become configurable per company / vehicle.
+0033:  */
+0034: const DEFAULT_COOLANT_HIGH_C =
+0035:   105;
+0036: 
+0037: const DEFAULT_OVERSPEED_KPH =
+0038:   120;
+0039: 
+0040: const DEFAULT_LOW_VOLTAGE_12V =
+0041:   11.8;
+0042: 
+0043: const DEFAULT_LOW_VOLTAGE_24V =
+0044:   22.0;
+0045: 
+0046: 
+0047: function anyDoorOpen(
+0048:   can: NormalizedCanV2,
+0049: ) {
+0050:   return [
+0051:     can.doors.frontLeft,
+0052:     can.doors.frontRight,
+0053:     can.doors.rearLeft,
+0054:     can.doors.rearRight,
+0055:     can.doors.hood,
+0056:     can.doors.trunk,
+0057:   ].some(
+0058:     (
+0059:       value,
+0060:     ) =>
+0061:       value ===
+0062:       true,
+0063:   );
+0064: }
+0065: 
+0066: 
+0067: function detectElectricalSystem(
+0068:   voltage:
+0069:     number |
+0070:     null,
+0071: ) {
+0072:   if (
+0073:     voltage ===
+0074:     null
+0075:   ) {
+0076:     return null;
+0077:   }
+0078: 
+0079: 
+0080:   /*
+0081:    * Simple V1 heuristic:
+0082:    *
+0083:    * >= 18 V -> 24 V platform
+0084:    * < 18 V  -> 12 V platform
+0085:    *
+0086:    * This is deliberately conservative and will later
+0087:    * be replaced by explicit per-vehicle configuration.
+0088:    */
+0089:   return voltage >=
+0090:     18
+0091:     ? "24v"
+0092:     : "12v";
+0093: }
+0094: 
+0095: 
+0096: function lowVoltageThreshold(
+0097:   voltage:
+0098:     number |
+0099:     null,
+0100: ) {
+0101:   const system =
+0102:     detectElectricalSystem(
+0103:       voltage,
+0104:     );
+0105: 
+0106: 
+0107:   if (
+0108:     system ===
+0109:     "24v"
+0110:   ) {
+0111:     return {
+0112:       system,
+0113:       threshold:
+0114:         DEFAULT_LOW_VOLTAGE_24V,
+0115:     };
+0116:   }
+0117: 
+0118: 
+0119:   if (
+0120:     system ===
+0121:     "12v"
+0122:   ) {
+0123:     return {
+0124:       system,
+0125:       threshold:
+0126:         DEFAULT_LOW_VOLTAGE_12V,
+0127:     };
+0128:   }
+0129: 
+0130: 
+0131:   return null;
+0132: }
+0133: 
+0134: 
+0135: export function buildAlertCandidates(
+0136:   can: NormalizedCanV2,
+0137: ): CanAlertCandidate[] {
+0138:   const result:
+0139:     CanAlertCandidate[] =
+0140:     [];
+0141: 
+0142: 
+0143:   /*
+0144:    * ---------------------------------------------------------
+0145:    * CHECK ENGINE
+0146:    * ---------------------------------------------------------
+0147:    */
+0148:   if (
+0149:     can.warnings.checkEngine !==
+0150:     null
+0151:   ) {
+0152:     result.push({
+0153:       alertType:
+0154:         "check_engine",
+0155: 
+0156:       active:
+0157:         can.warnings.checkEngine,
+0158: 
+0159:       severity:
+0160:         "warning",
+0161: 
+0162:       title:
+0163:         "Voyant moteur",
+0164: 
+0165:       message:
+0166:         can.warnings.checkEngine
+0167:           ? "Le systÃ¨me CAN signale un dÃ©faut moteur."
+0168:           : "Le voyant moteur n'est plus actif.",
+0169: 
+0170:       metadata: {
+0171:         can_version:
+0172:           2,
+0173:       },
+0174:     });
+0175:   }
+0176: 
+0177: 
+0178:   /*
+0179:    * ---------------------------------------------------------
+0180:    * DOOR OPEN WHILE MOVING
+0181:    * ---------------------------------------------------------
+0182:    */
+0183:   const doorOpen =
+0184:     anyDoorOpen(
+0185:       can,
+0186:     );
+0187: 
+0188: 
+0189:   const moving =
+0190:     can.vehicle.movement ===
+0191:       true ||
+0192:     (
+0193:       can.vehicle.speedKph !==
+0194:         null &&
+0195:       can.vehicle.speedKph >
+0196:         0
+0197:     );
+0198: 
+0199: 
+0200:   result.push({
+0201:     alertType:
+0202:       "door_open_moving",
+0203: 
+0204:     active:
+0205:       doorOpen &&
+0206:       moving,
+0207: 
+0208:     severity:
+0209:       "critical",
+0210: 
+0211:     title:
+0212:       "Ouverture dÃ©tectÃ©e en mouvement",
+0213: 
+0214:     message:
+0215:       "Une porte, le capot ou le coffre est ouvert alors que le vÃ©hicule est en mouvement.",
+0216: 
+0217:     metadata: {
+0218:       doors:
+0219:         can.doors,
+0220: 
+0221:       speed_kph:
+0222:         can.vehicle.speedKph,
+0223:     },
+0224:   });
+0225: 
+0226: 
+0227:   /*
+0228:    * ---------------------------------------------------------
+0229:    * COOLANT TEMPERATURE
+0230:    *
+0231:    * Normalized canonical name:
+0232:    * coolant_temperature_high
+0233:    * ---------------------------------------------------------
+0234:    */
+0235:   if (
+0236:     can.engine.coolantTemperatureC !==
+0237:     null
+0238:   ) {
+0239:     const temperature =
+0240:       can.engine.coolantTemperatureC;
+0241: 
+0242: 
+0243:     result.push({
+0244:       alertType:
+0245:         "coolant_temperature_high",
+0246: 
+0247:       active:
+0248:         temperature >=
+0249:         DEFAULT_COOLANT_HIGH_C,
+0250: 
+0251:       severity:
+0252:         "critical",
+0253: 
+0254:       title:
+0255:         "TempÃ©rature moteur Ã©levÃ©e",
+0256: 
+0257:       message:
+0258:         `TempÃ©rature moteur : ${temperature.toFixed(
+0259:           1,
+0260:         )} Â°C.`,
+0261: 
+0262:       metadata: {
+0263:         temperature_c:
+0264:           temperature,
+0265: 
+0266:         threshold_c:
+0267:           DEFAULT_COOLANT_HIGH_C,
+0268: 
+0269:         rule_version:
+0270:           "1.1",
+0271:       },
+0272:     });
+0273:   }
+0274: 
+0275: 
+0276:   /*
+0277:    * ---------------------------------------------------------
+0278:    * BATTERY / EXTERNAL VOLTAGE
+0279:    *
+0280:    * Use the tracker external supply voltage.
+0281:    * Internal tracker battery is deliberately ignored.
+0282:    * ---------------------------------------------------------
+0283:    */
+0284:   if (
+0285:     can.tracker.externalVoltage !==
+0286:     null
+0287:   ) {
+0288:     const voltage =
+0289:       can.tracker.externalVoltage;
+0290: 
+0291: 
+0292:     const voltageProfile =
+0293:       lowVoltageThreshold(
+0294:         voltage,
+0295:       );
+0296: 
+0297: 
+0298:     if (
+0299:       voltageProfile
+0300:     ) {
+0301:       result.push({
+0302:         alertType:
+0303:           "battery_voltage_low",
+0304: 
+0305:         active:
+0306:           voltage <
+0307:           voltageProfile.threshold,
+0308: 
+0309:         severity:
+0310:           "warning",
+0311: 
+0312:         title:
+0313:           "Tension batterie faible",
+0314: 
+0315:         message:
+0316:           `Tension externe : ${voltage.toFixed(
+0317:             2,
+0318:           )} V.`,
+0319: 
+0320:         metadata: {
+0321:           voltage_v:
+0322:             voltage,
+0323: 
+0324:           electrical_system:
+0325:             voltageProfile.system,
+0326: 
+0327:           threshold_v:
+0328:             voltageProfile.threshold,
+0329: 
+0330:           source:
+0331:             "tracker_external_voltage",
+0332: 
+0333:           rule_version:
+0334:             "1.1",
+0335:         },
+0336:       });
+0337:     }
+0338:   }
+0339: 
+0340: 
+0341:   /*
+0342:    * ---------------------------------------------------------
+0343:    * OVERSPEED
+0344:    * ---------------------------------------------------------
+0345:    */
+0346:   if (
+0347:     can.vehicle.speedKph !==
+0348:     null
+0349:   ) {
+0350:     const speed =
+0351:       can.vehicle.speedKph;
+0352: 
+0353: 
+0354:     result.push({
+0355:       alertType:
+0356:         "overspeed",
+0357: 
+0358:       active:
+0359:         speed >
+0360:         DEFAULT_OVERSPEED_KPH,
+0361: 
+0362:       severity:
+0363:         "warning",
+0364: 
+0365:       title:
+0366:         "ExcÃ¨s de vitesse",
+0367: 
+0368:       message:
+0369:         `Vitesse dÃ©tectÃ©e : ${speed.toFixed(
+0370:           0,
+0371:         )} km/h.`,
+0372: 
+0373:       metadata: {
+0374:         speed_kph:
+0375:           speed,
+0376: 
+0377:         threshold_kph:
+0378:           DEFAULT_OVERSPEED_KPH,
+0379: 
+0380:         rule_version:
+0381:           "1.1",
+0382:       },
+0383:     });
+0384:   }
+0385: 
+0386: 
+0387:   /*
+0388:    * ---------------------------------------------------------
+0389:    * LOW FUEL
+0390:    * Existing rule preserved.
+0391:    * ---------------------------------------------------------
+0392:    */
+0393:   if (
+0394:     can.fuel.levelPercent !==
+0395:     null
+0396:   ) {
+0397:     result.push({
+0398:       alertType:
+0399:         "low_fuel",
+0400: 
+0401:       active:
+0402:         can.fuel.levelPercent <=
+0403:         15,
+0404: 
+0405:       severity:
+0406:         "warning",
+0407: 
+0408:       title:
+0409:         "Niveau carburant faible",
+0410: 
+0411:       message:
+0412:         `Niveau carburant : ${can.fuel.levelPercent.toFixed(
+0413:           0,
+0414:         )} %.`,
+0415: 
+0416:       metadata: {
+0417:         fuel_level_percent:
+0418:           can.fuel.levelPercent,
+0419: 
+0420:         threshold_percent:
+0421:           15,
+0422: 
+0423:         rule_version:
+0424:           "1.1",
+0425:       },
+0426:     });
+0427:   }
+0428: 
+0429: 
+0430:   /*
+0431:    * ---------------------------------------------------------
+0432:    * ACTIVE DTC
+0433:    * Existing DTC lifecycle preserved.
+0434:    * ---------------------------------------------------------
+0435:    */
+0436:   for (
+0437:     const diagnostic of
+0438:     can.diagnostics.active
+0439:   ) {
+0440:     const safeCode =
+0441:       diagnostic.code
+0442:         .replace(
+0443:           /[^A-Za-z0-9_-]/g,
+0444:           "_",
+0445:         )
+0446:         .slice(
+0447:           0,
+0448:           50,
+0449:         );
+0450: 
+0451: 
+0452:     result.push({
+0453:       alertType:
+0454:         `diagnostic_dtc_${safeCode}`,
+0455: 
+0456:       active:
+0457:         true,
+0458: 
+0459:       severity:
+0460:         "warning",
+0461: 
+0462:       title:
+0463:         `DÃ©faut diagnostic ${diagnostic.code}`,
+0464: 
+0465:       message:
+0466:         `Un dÃ©faut vÃ©hicule actif a Ã©tÃ© dÃ©tectÃ© : ${diagnostic.code}.`,
+0467: 
+0468:       metadata: {
+0469:         diagnostic,
+0470: 
+0471:         rule_version:
+0472:           "1.1",
+0473:       },
+0474:     });
+0475:   }
+0476: 
+0477: 
+0478:   return result;
+0479: }
+
+============================================================
+ TARGET REFERENCES
+============================================================
+
+34: const DEFAULT_COOLANT_HIGH_C =
+249: DEFAULT_COOLANT_HIGH_C,
+267: DEFAULT_COOLANT_HIGH_C,
+37: const DEFAULT_OVERSPEED_KPH =
+360: DEFAULT_OVERSPEED_KPH,
+378: DEFAULT_OVERSPEED_KPH,
+40: const DEFAULT_LOW_VOLTAGE_12V =
+126: DEFAULT_LOW_VOLTAGE_12V,
+43: const DEFAULT_LOW_VOLTAGE_24V =
+114: DEFAULT_LOW_VOLTAGE_24V,
+135: export function buildAlertCandidates(
+232: * coolant_temperature_high
+245: "coolant_temperature_high",
+303: "battery_voltage_low",
+37: const DEFAULT_OVERSPEED_KPH =
+343: * OVERSPEED
+356: "overspeed",
+360: DEFAULT_OVERSPEED_KPH,
+378: DEFAULT_OVERSPEED_KPH,
+399: "low_fuel",
+154: "check_engine",
+202: "door_open_moving",
+454: `diagnostic_dtc_${safeCode}`,
+11: severity:
+159: severity:
+208: severity:
+251: severity:
+309: severity:
+362: severity:
+405: severity:
+459: severity:

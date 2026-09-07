@@ -1,0 +1,759 @@
+﻿============================================================
+ V1.2D-1 SEVERITY DIAGNOSTIC
+============================================================
+
+
+============================================================
+ FILE : .\server\teltonika\can\alert-engine.ts
+============================================================
+    6: export type CanAlertCandidate = {
+    7:   alertType: string;
+    8: 
+    9:   active: boolean;
+   10: 
+   11:   severity:
+   12:     | "critical"
+   13:     | "high"
+   14:     | "medium"
+   15:     | "info";
+   16: 
+   17:   title: string;
+   18: 
+   19:   message: string;
+-----
+  237:         "check_engine",
+  238: 
+  239:       active:
+  240:         can.warnings.checkEngine,
+  241: 
+  242:       severity:
+  243:         "high",
+  244: 
+  245:       title:
+  246:         "Voyant moteur",
+  247: 
+  248:       message:
+  249:         can.warnings.checkEngine
+  250:           ? "Le systÃ¨me CAN signale un dÃ©faut moteur."
+-----
+  286: 
+  287:     active:
+  288:       doorOpen &&
+  289:       moving,
+  290: 
+  291:     severity:
+  292:       "critical",
+  293: 
+  294:     title:
+  295:       "Ouverture dÃ©tectÃ©e en mouvement",
+  296: 
+  297:     message:
+  298:       "Une porte, le capot ou le coffre est ouvert alors que le vÃ©hicule est en mouvement.",
+  299: 
+-----
+  330:       active:
+  331:         config.coolantTemperatureHighEnabled &&
+  332:         temperature >=
+  333:           config.coolantHighC,
+  334: 
+  335:       severity:
+  336:         "critical",
+  337: 
+  338:       title:
+  339:         "TempÃ©rature moteur Ã©levÃ©e",
+  340: 
+  341:       message:
+  342:         `TempÃ©rature moteur : ${temperature.toFixed(
+  343:           1,
+-----
+  390:         active:
+  391:           voltageProfile.enabled &&
+  392:           voltage <
+  393:             voltageProfile.threshold,
+  394: 
+  395:         severity:
+  396:           "medium",
+  397: 
+  398:         title:
+  399:           "Tension batterie faible",
+  400: 
+  401:         message:
+  402:           `Tension externe : ${voltage.toFixed(
+  403:             2,
+-----
+  444:       active:
+  445:         config.overspeedEnabled &&
+  446:         speed >
+  447:           config.overspeedKph,
+  448: 
+  449:       severity:
+  450:         "high",
+  451: 
+  452:       title:
+  453:         "ExcÃ¨s de vitesse",
+  454: 
+  455:       message:
+  456:         `Vitesse dÃ©tectÃ©e : ${speed.toFixed(
+  457:           0,
+-----
+  488:       active:
+  489:         config.lowFuelEnabled &&
+  490:         can.fuel.levelPercent <=
+  491:           config.lowFuelPercent,
+  492: 
+  493:       severity:
+  494:         "medium",
+  495: 
+  496:       title:
+  497:         "Niveau carburant faible",
+  498: 
+  499:       message:
+  500:         `Niveau carburant : ${can.fuel.levelPercent.toFixed(
+  501:           0,
+-----
+  542:         `diagnostic_dtc_${safeCode}`,
+  543: 
+  544:       active:
+  545:         true,
+  546: 
+  547:       severity:
+  548:         "high",
+  549: 
+  550:       title:
+  551:         `DÃ©faut diagnostic ${diagnostic.code}`,
+  552: 
+  553:       message:
+  554:         `Un dÃ©faut vÃ©hicule actif a Ã©tÃ© dÃ©tectÃ© : ${diagnostic.code}.`,
+  555: 
+-----
+
+============================================================
+ FILE : .\server\teltonika\storage.ts
+============================================================
+   45: 
+   46:   threshold_secondary:
+   47:     number |
+   48:     null;
+   49: 
+   50:   severity:
+   51:     string |
+   52:     null;
+   53: };
+   54: 
+   55: 
+   56: function requiredEnv(name: string) {
+   57:   const value = process.env[name];
+   58: 
+-----
+  559:     await getSupabase()
+  560:       .from(
+  561:         "alert_settings",
+  562:       )
+  563:       .select(
+  564:         "company_id,vehicle_id,rule_key,enabled,threshold_value,threshold_secondary,severity",
+  565:       )
+  566:       .eq(
+  567:         "company_id",
+  568:         companyId,
+  569:       )
+  570:       .or(
+  571:         `vehicle_id.is.null,vehicle_id.eq.${vehicleId}`,
+  572:       );
+-----
+  897:               deviceId,
+  898: 
+  899:             alert_type:
+  900:               candidate.alertType,
+  901: 
+  902:             severity:
+  903:               candidate.severity,
+  904: 
+  905:             title:
+  906:               candidate.title,
+  907: 
+  908:             message:
+  909:               candidate.message,
+  910: 
+-----
+  898: 
+  899:             alert_type:
+  900:               candidate.alertType,
+  901: 
+  902:             severity:
+  903:               candidate.severity,
+  904: 
+  905:             title:
+  906:               candidate.title,
+  907: 
+  908:             message:
+  909:               candidate.message,
+  910: 
+  911:             latitude:
+-----
+
+============================================================
+ FILE : .\app\api\alert-settings\route.ts
+============================================================
+   42:   key: RuleKey;
+   43:   label: string;
+   44:   description: string;
+   45:   unit: string;
+   46:   platformValue: number;
+   47:   platformEnabled: boolean;
+   48:   min: number;
+   49:   max: number;
+   50:   step: number;
+   51: };
+   52: 
+   53: 
+   54: type AlertSettingRow = {
+   55:   id?: string;
+-----
+   81:         "Â°C",
+   82: 
+   83:       platformValue:
+   84:         105,
+   85: 
+   86:       platformEnabled:
+   87:         true,
+   88: 
+   89:       min:
+   90:         60,
+   91: 
+   92:       max:
+   93:         130,
+   94: 
+-----
+  110:         "km/h",
+  111: 
+  112:       platformValue:
+  113:         120,
+  114: 
+  115:       platformEnabled:
+  116:         true,
+  117: 
+  118:       min:
+  119:         10,
+  120: 
+  121:       max:
+  122:         250,
+  123: 
+-----
+  139:         "V",
+  140: 
+  141:       platformValue:
+  142:         11.8,
+  143: 
+  144:       platformEnabled:
+  145:         true,
+  146: 
+  147:       min:
+  148:         5,
+  149: 
+  150:       max:
+  151:         18,
+  152: 
+-----
+  168:         "V",
+  169: 
+  170:       platformValue:
+  171:         22,
+  172: 
+  173:       platformEnabled:
+  174:         true,
+  175: 
+  176:       min:
+  177:         10,
+  178: 
+  179:       max:
+  180:         36,
+  181: 
+-----
+  197:         "%",
+  198: 
+  199:       platformValue:
+  200:         15,
+  201: 
+  202:       platformEnabled:
+  203:         true,
+  204: 
+  205:       min:
+  206:         1,
+  207: 
+  208:       max:
+  209:         100,
+  210: 
+-----
+  704: 
+  705:   return value;
+  706: }
+  707: 
+  708: 
+  709: async function writeSetting({
+  710:   admin,
+  711:   companyId,
+  712:   vehicleId,
+  713:   key,
+  714:   value,
+  715:   enabled,
+  716: }: {
+  717:   admin:
+-----
+ 1037: 
+ 1038:             const inheritedValue =
+ 1039:               companyThreshold ??
+ 1040:               rule.platformValue;
+ 1041: 
+ 1042:             const inheritedEnabled =
+ 1043:               companyRow
+ 1044:                 ? companyRow.enabled
+ 1045:                 : rule.platformEnabled;
+ 1046: 
+ 1047:             const inheritedSource =
+ 1048:               companyRow
+ 1049:                 ? "company"
+ 1050:                 : "platform";
+-----
+ 1040:               rule.platformValue;
+ 1041: 
+ 1042:             const inheritedEnabled =
+ 1043:               companyRow
+ 1044:                 ? companyRow.enabled
+ 1045:                 : rule.platformEnabled;
+ 1046: 
+ 1047:             const inheritedSource =
+ 1048:               companyRow
+ 1049:                 ? "company"
+ 1050:                 : "platform";
+ 1051: 
+ 1052:             const mode =
+ 1053:               vehicleRow
+-----
+ 1055:                 : "inherit";
+ 1056: 
+ 1057:             const vehicleValue =
+ 1058:               vehicleThreshold;
+ 1059: 
+ 1060:             const vehicleEnabled =
+ 1061:               vehicleRow
+ 1062:                 ? vehicleRow.enabled
+ 1063:                 : null;
+ 1064: 
+ 1065:             return {
+ 1066:               ...rule,
+ 1067: 
+ 1068:               inheritedValue,
+-----
+ 1065:             return {
+ 1066:               ...rule,
+ 1067: 
+ 1068:               inheritedValue,
+ 1069: 
+ 1070:               inheritedEnabled,
+ 1071: 
+ 1072:               inheritedSource,
+ 1073: 
+ 1074:               vehicleValue,
+ 1075: 
+ 1076:               vehicleEnabled,
+ 1077: 
+ 1078:               mode,
+-----
+ 1071: 
+ 1072:               inheritedSource,
+ 1073: 
+ 1074:               vehicleValue,
+ 1075: 
+ 1076:               vehicleEnabled,
+ 1077: 
+ 1078:               mode,
+ 1079: 
+ 1080:               effectiveValue:
+ 1081:                 vehicleRow
+ 1082:                   ? (
+ 1083:                       vehicleThreshold ??
+ 1084:                       inheritedValue
+-----
+ 1086:                   : inheritedValue,
+ 1087: 
+ 1088:               effectiveEnabled:
+ 1089:                 vehicleRow
+ 1090:                   ? vehicleRow.enabled
+ 1091:                   : inheritedEnabled,
+ 1092:             };
+ 1093:           },
+ 1094:         );
+ 1095: 
+ 1096:       return NextResponse.json({
+ 1097:         mode:
+ 1098:           "vehicle",
+ 1099: 
+-----
+ 1209:               rule.platformValue,
+ 1210: 
+ 1211:             enabled:
+ 1212:               row
+ 1213:                 ? row.enabled
+ 1214:                 : rule.platformEnabled,
+ 1215: 
+ 1216:             source:
+ 1217:               row
+ 1218:                 ? "company"
+ 1219:                 : "platform",
+ 1220: 
+ 1221:             enabledSource:
+ 1222:               row
+-----
+ 1295:     /*
+ 1296:      * VEHICLE SAVE
+ 1297:      */
+ 1298:     if (
+ 1299:       body.action ===
+ 1300:       "vehicle-save"
+ 1301:     ) {
+ 1302:       const vehicleId =
+ 1303:         typeof body.vehicleId ===
+ 1304:           "string"
+ 1305:           ? body.vehicleId
+ 1306:           : "";
+ 1307: 
+ 1308:       if (!vehicleId) {
+-----
+ 1343:           Record<
+ 1344:             string,
+ 1345:             unknown
+ 1346:           >;
+ 1347: 
+ 1348:       const validated:
+ 1349:         {
+ 1350:           key:
+ 1351:             RuleKey;
+ 1352: 
+ 1353:           mode:
+ 1354:             "inherit" |
+ 1355:             "vehicle";
+ 1356: 
+-----
+ 1401: 
+ 1402:         if (
+ 1403:           object.mode ===
+ 1404:           "inherit"
+ 1405:         ) {
+ 1406:           validated.push({
+ 1407:             key:
+ 1408:               rule.key,
+ 1409: 
+ 1410:             mode:
+ 1411:               "inherit",
+ 1412: 
+ 1413:             value:
+ 1414:               null,
+-----
+ 1456:           validateValue(
+ 1457:             rule.key,
+ 1458:             object.value,
+ 1459:           );
+ 1460: 
+ 1461:         validated.push({
+ 1462:           key:
+ 1463:             rule.key,
+ 1464: 
+ 1465:           mode:
+ 1466:             "vehicle",
+ 1467: 
+ 1468:           value,
+ 1469: 
+-----
+ 1473:       }
+ 1474: 
+ 1475: 
+ 1476:       for (
+ 1477:         const item of
+ 1478:         validated
+ 1479:       ) {
+ 1480:         if (
+ 1481:           item.mode ===
+ 1482:           "inherit"
+ 1483:         ) {
+ 1484:           await deleteVehicleSetting({
+ 1485:             admin,
+ 1486: 
+-----
+ 1495:           });
+ 1496: 
+ 1497:           continue;
+ 1498:         }
+ 1499: 
+ 1500:         await writeSetting({
+ 1501:           admin,
+ 1502: 
+ 1503:           companyId:
+ 1504:             vehicle.company_id,
+ 1505: 
+ 1506:           vehicleId:
+ 1507:             vehicle.id,
+ 1508: 
+-----
+ 1622:         Record<
+ 1623:           string,
+ 1624:           unknown
+ 1625:         >;
+ 1626: 
+ 1627:     const validated:
+ 1628:       {
+ 1629:         key:
+ 1630:           RuleKey;
+ 1631: 
+ 1632:         value:
+ 1633:           number;
+ 1634: 
+ 1635:         enabled:
+-----
+ 1651:        */
+ 1652:       if (
+ 1653:         typeof raw ===
+ 1654:         "number"
+ 1655:       ) {
+ 1656:         validated.push({
+ 1657:           key:
+ 1658:             rule.key,
+ 1659: 
+ 1660:           value:
+ 1661:             validateValue(
+ 1662:               rule.key,
+ 1663:               raw,
+ 1664:             ),
+-----
+ 1711:               400,
+ 1712:           },
+ 1713:         );
+ 1714:       }
+ 1715: 
+ 1716:       validated.push({
+ 1717:         key:
+ 1718:           rule.key,
+ 1719: 
+ 1720:         value:
+ 1721:           validateValue(
+ 1722:             rule.key,
+ 1723:             object.value,
+ 1724:           ),
+-----
+ 1729:     }
+ 1730: 
+ 1731: 
+ 1732:     for (
+ 1733:       const item of
+ 1734:       validated
+ 1735:     ) {
+ 1736:       await writeSetting({
+ 1737:         admin,
+ 1738: 
+ 1739:         companyId,
+ 1740: 
+ 1741:         vehicleId:
+ 1742:           null,
+-----
+ 1731: 
+ 1732:     for (
+ 1733:       const item of
+ 1734:       validated
+ 1735:     ) {
+ 1736:       await writeSetting({
+ 1737:         admin,
+ 1738: 
+ 1739:         companyId,
+ 1740: 
+ 1741:         vehicleId:
+ 1742:           null,
+ 1743: 
+ 1744:         key:
+-----
+
+============================================================
+ FILE : .\app\dashboard\parametres\AlertSettingsPanel.tsx
+============================================================
+   32:   unit: string;
+   33: 
+   34:   platformValue:
+   35:     number;
+   36: 
+   37:   platformEnabled:
+   38:     boolean;
+   39: 
+   40:   value:
+   41:     number;
+   42: 
+   43:   enabled:
+   44:     boolean;
+   45: 
+-----
+  792: 
+  793:                     </div>
+  794: 
+  795: 
+  796:                     <div className="mt-3 text-xs text-slate-600">
+  797:                       Plateforme : {rule.platformEnabled ? "ActivÃ©e" : "DÃ©sactivÃ©e"} Â· {rule.platformValue} {rule.unit}
+  798:                     </div>
+  799: 
+  800:                   </div>
+  801:                 );
+  802:               },
+  803:             )}
+  804: 
+  805:           </div>
+-----
+
+============================================================
+ FILE : .\app\dashboard\vehicle\[id]\VehicleAlertSettingsPanel.tsx
+============================================================
+   31:   unit: string;
+   32: 
+   33:   platformValue:
+   34:     number;
+   35: 
+   36:   platformEnabled:
+   37:     boolean;
+   38: 
+   39:   inheritedValue:
+   40:     number;
+   41: 
+   42:   inheritedEnabled:
+   43:     boolean;
+   44: 
+-----
+   37:     boolean;
+   38: 
+   39:   inheritedValue:
+   40:     number;
+   41: 
+   42:   inheritedEnabled:
+   43:     boolean;
+   44: 
+   45:   inheritedSource:
+   46:     "company" |
+   47:     "platform";
+   48: 
+   49:   vehicleValue:
+   50:     number |
+-----
+   48: 
+   49:   vehicleValue:
+   50:     number |
+   51:     null;
+   52: 
+   53:   vehicleEnabled:
+   54:     boolean |
+   55:     null;
+   56: 
+   57:   effectiveValue:
+   58:     number;
+   59: 
+   60:   effectiveEnabled:
+   61:     boolean;
+-----
+  284:                   rule.vehicleValue ??
+  285:                   rule.inheritedValue,
+  286:                 ),
+  287: 
+  288:               enabled:
+  289:                 rule.vehicleEnabled ??
+  290:                 rule.inheritedEnabled,
+  291:             };
+  292:           }
+  293: 
+  294:           setLocal(
+  295:             nextLocal,
+  296:           );
+  297: 
+-----
+  285:                   rule.inheritedValue,
+  286:                 ),
+  287: 
+  288:               enabled:
+  289:                 rule.vehicleEnabled ??
+  290:                 rule.inheritedEnabled,
+  291:             };
+  292:           }
+  293: 
+  294:           setLocal(
+  295:             nextLocal,
+  296:           );
+  297: 
+  298:         } catch (cause) {
+-----
+  438:             },
+  439: 
+  440:             body:
+  441:               JSON.stringify({
+  442:                 action:
+  443:                   "vehicle-save",
+  444: 
+  445:                 vehicleId,
+  446: 
+  447:                 settings,
+  448:               }),
+  449:           },
+  450:         );
+  451: 
+-----
+  588:                       HÃ©ritÃ© :
+  589:                       {" "}
+  590: 
+  591:                       <span
+  592:                         className={
+  593:                           rule.inheritedEnabled
+  594:                             ? "font-semibold text-emerald-300"
+  595:                             : "font-semibold text-slate-300"
+  596:                         }
+  597:                       >
+  598:                         {rule.inheritedEnabled
+  599:                           ? "ActivÃ©e"
+  600:                           : "DÃ©sactivÃ©e"}
+  601:                       </span>
+-----
+  593:                           rule.inheritedEnabled
+  594:                             ? "font-semibold text-emerald-300"
+  595:                             : "font-semibold text-slate-300"
+  596:                         }
+  597:                       >
+  598:                         {rule.inheritedEnabled
+  599:                           ? "ActivÃ©e"
+  600:                           : "DÃ©sactivÃ©e"}
+  601:                       </span>
+  602: 
+  603:                       {" Â· "}
+  604: 
+  605:                       {rule.inheritedValue} {rule.unit}
+  606: 
+-----
+  646: 
+  647:                                     mode:
+  648:                                       "inherit",
+  649: 
+  650:                                     enabled:
+  651:                                       rule.inheritedEnabled,
+  652: 
+  653:                                     value:
+  654:                                       String(
+  655:                                         rule.inheritedValue,
+  656:                                       ),
+  657:                                   },
+  658:                                 }),
+  659:                               )
+-----
+  666:                           <span className="block text-sm font-medium text-slate-200">
+  667:                             HÃ©riter du client
+  668:                           </span>
+  669: 
+  670:                           <span className="text-xs text-slate-500">
+  671:                             Valeur effective : {rule.inheritedEnabled ? "ActivÃ©e" : "DÃ©sactivÃ©e"} Â· {rule.inheritedValue} {rule.unit}
+  672:                           </span>
+  673: 
+  674:                         </span>
+  675: 
+  676:                       </label>
+  677: 
+  678: 
+  679:                       <label className="flex cursor-pointer items-start gap-3">
+-----

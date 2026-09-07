@@ -1,0 +1,4084 @@
+﻿============================================================
+ MATELEMATICS - ALERT ENGINE V1.3A0 SIGNAL MATRIX PREFLIGHT
+============================================================
+
+DATE    : 2026-09-05 23:44:26
+PROJECT : C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine
+
+
+============================================================
+ FILE : .\server\teltonika\can\light-vehicle.ts
+============================================================
+
+----- FULL FILE -----
+import type {
+  NormalizedTelemetry,
+} from "../types";
+
+import {
+  numericIo,
+  signed16,
+  simulatorDiagnostics,
+} from "./diagnostics";
+
+import type {
+  NormalizedCanV2,
+} from "./types-v2";
+
+
+function opened(
+  flags: number | null,
+  mask: number,
+) {
+  if (flags === null) {
+    return null;
+  }
+
+  return (
+    flags & mask
+  ) !== 0;
+}
+
+
+export function normalizeLightVehicle(
+  telemetry: NormalizedTelemetry,
+): NormalizedCanV2 {
+  const io = telemetry.io;
+
+  /*
+   * Official Teltonika CAN adapter AVL IDs:
+   *
+   * 14  Engine Worktime (minutes)
+   * 16  Total Mileage Counted (m)
+   * 17  Fuel Consumed Counted (0.1 L)
+   * 18  Fuel Rate (0.1 L/h)
+   * 19  AdBlue %
+   * 20  AdBlue liters (0.1 L)
+   * 23  Engine Load %
+   * 25  Engine Temperature (0.1 C)
+   * 33  Fuel Consumed (0.1 L)
+   * 34  Fuel Level Liters (0.1 L)
+   * 35  Engine RPM
+   * 36  Total Mileage (m)
+   * 37  Fuel Level %
+   * 38  Control State Flags / doors
+   * 81  Vehicle Speed
+   * 82  Accelerator Pedal
+   * 176 DTC Errors count/state
+   *
+   * Permanent tracker IO:
+   *
+   * 21  GSM signal
+   * 66  External voltage mV
+   * 67  Internal battery voltage mV
+   * 239 Ignition
+   * 240 Movement
+   */
+
+  const rpm =
+    numericIo(io, 35) ??
+    numericIo(io, 85);
+
+  const speed =
+    numericIo(io, 81) ??
+    telemetry.speedKph;
+
+  const temperatureRaw =
+    signed16(
+      numericIo(io, 25) ??
+      numericIo(io, 115),
+    );
+
+  const temperature =
+    temperatureRaw === null
+      ? null
+      : temperatureRaw / 10;
+
+  const throttle =
+    numericIo(io, 82);
+
+  const engineLoad =
+    numericIo(io, 23);
+
+  const workMinutes =
+    numericIo(io, 14);
+
+  const engineHours =
+    workMinutes === null
+      ? null
+      : workMinutes / 60;
+
+  const odometerMetres =
+    numericIo(io, 36) ??
+    numericIo(io, 16);
+
+  const odometerKm =
+    odometerMetres === null
+      ? null
+      : odometerMetres / 1000;
+
+  const fuelLevelPercent =
+    numericIo(io, 37);
+
+  const fuelLevelLitersRaw =
+    numericIo(io, 34);
+
+  const fuelLevelLiters =
+    fuelLevelLitersRaw === null
+      ? null
+      : fuelLevelLitersRaw / 10;
+
+  const fuelConsumedRaw =
+    numericIo(io, 33) ??
+    numericIo(io, 17);
+
+  const fuelConsumed =
+    fuelConsumedRaw === null
+      ? null
+      : fuelConsumedRaw / 10;
+
+  const fuelRateRaw =
+    numericIo(io, 18);
+
+  const fuelRate =
+    fuelRateRaw === null
+      ? null
+      : fuelRateRaw / 10;
+
+  const adBluePercent =
+    numericIo(io, 19);
+
+  const adBlueLitersRaw =
+    numericIo(io, 20);
+
+  const adBlueLiters =
+    adBlueLitersRaw === null
+      ? null
+      : adBlueLitersRaw / 10;
+
+  const ignitionRaw =
+    numericIo(io, 239);
+
+  const movementRaw =
+    numericIo(io, 240);
+
+  const ignition =
+    ignitionRaw === null
+      ? null
+      : ignitionRaw === 1;
+
+  const movement =
+    movementRaw === null
+      ? speed > 0
+      : movementRaw === 1;
+
+  const doorFlags =
+    numericIo(io, 38);
+
+  const dtcCount =
+    numericIo(io, 176);
+
+  const simDiagnostics =
+    simulatorDiagnostics(io);
+
+  const checkEngine =
+    dtcCount === null &&
+    simDiagnostics.active.length === 0
+      ? null
+      : (
+          (dtcCount ?? 0) > 0 ||
+          simDiagnostics.active.length > 0
+        );
+
+  const externalMv =
+    numericIo(io, 66);
+
+  const internalMv =
+    numericIo(io, 67);
+
+  const simulator =
+    io.io_9005 !== undefined;
+
+  const result: NormalizedCanV2 = {
+    version: 2,
+
+    source: {
+      manufacturer: "teltonika",
+      profile: "light_vehicle_can",
+      simulator,
+      mappingVersion: "2.0",
+    },
+
+    engine: {
+      rpm,
+      coolantTemperatureC:
+        temperature,
+      loadPercent:
+        engineLoad,
+      throttlePercent:
+        throttle,
+      engineHours,
+    },
+
+    vehicle: {
+      speedKph:
+        speed,
+      odometerKm,
+      ignition,
+      movement,
+    },
+
+    fuel: {
+      levelPercent:
+        fuelLevelPercent,
+      levelLiters:
+        fuelLevelLiters,
+      consumedLiters:
+        fuelConsumed,
+      rateLph:
+        fuelRate,
+      averageL100km:
+        null,
+      adBluePercent,
+      adBlueLiters,
+    },
+
+    doors: {
+      frontLeft:
+        opened(
+          doorFlags,
+          0x100,
+        ),
+
+      frontRight:
+        opened(
+          doorFlags,
+          0x200,
+        ),
+
+      rearLeft:
+        opened(
+          doorFlags,
+          0x400,
+        ),
+
+      rearRight:
+        opened(
+          doorFlags,
+          0x800,
+        ),
+
+      hood:
+        opened(
+          doorFlags,
+          0x1000,
+        ),
+
+      trunk:
+        opened(
+          doorFlags,
+          0x2000,
+        ),
+    },
+
+    safety: {
+      seatbelt: null,
+      handbrake: null,
+    },
+
+    warnings: {
+      checkEngine,
+      abs: null,
+      airbag: null,
+      esp: null,
+      oilPressure: null,
+      tpms: null,
+    },
+
+    diagnostics: {
+      dtcCount,
+      active:
+        simDiagnostics.active,
+      stored:
+        simDiagnostics.stored,
+    },
+
+    tracker: {
+      gsmSignal:
+        numericIo(io, 21),
+
+      externalVoltage:
+        externalMv === null
+          ? null
+          : externalMv / 1000,
+
+      internalBatteryVoltage:
+        internalMv === null
+          ? null
+          : internalMv / 1000,
+
+      satellites:
+        telemetry.satellites,
+    },
+
+    rpm,
+    speed_kph:
+      speed,
+
+    fuel_level_percent:
+      fuelLevelPercent,
+
+    fuel_used_litres:
+      fuelConsumed,
+
+    coolant_temperature_c:
+      temperature,
+
+    throttle_percent:
+      throttle,
+
+    odometer_km:
+      odometerKm,
+
+    simulator,
+  };
+
+  return result;
+}
+
+============================================================
+ FILE : .\server\teltonika\can\j1939.ts
+============================================================
+
+----- FULL FILE -----
+import type {
+  NormalizedTelemetry,
+} from "../types";
+
+import {
+  numericIo,
+  simulatorDiagnostics,
+} from "./diagnostics";
+
+import type {
+  NormalizedCanV2,
+} from "./types-v2";
+
+
+export function normalizeJ1939(
+  telemetry: NormalizedTelemetry,
+): NormalizedCanV2 {
+  const io =
+    telemetry.io;
+
+  /*
+   * FMC650 FMS/J1939 relevant AVL elements:
+   *
+   * 80    Wheel Based Speed
+   * 84    Accelerator Pedal Position
+   * 85    Engine Current Load
+   * 86    Engine Total Fuel Used
+   * 87    Fuel Level
+   * 88    Engine Speed
+   * 10349 MIL indicator
+   *
+   * Permanent tracker IO remains shared:
+   * 21 / 66 / 67 / 239 / 240
+   */
+
+  const rpm =
+    numericIo(io, 88);
+
+  const speed =
+    numericIo(io, 80) ??
+    telemetry.speedKph;
+
+  const throttle =
+    numericIo(io, 84);
+
+  const engineLoad =
+    numericIo(io, 85);
+
+  const fuelUsed =
+    numericIo(io, 86);
+
+  const fuelLevel =
+    numericIo(io, 87);
+
+  const mil =
+    numericIo(io, 10349);
+
+  const ignitionRaw =
+    numericIo(io, 239);
+
+  const movementRaw =
+    numericIo(io, 240);
+
+  const ignition =
+    ignitionRaw === null
+      ? null
+      : ignitionRaw === 1;
+
+  const movement =
+    movementRaw === null
+      ? speed > 0
+      : movementRaw === 1;
+
+  /*
+   * FMC650 may also receive CAN adapter values.
+   * Use mileage if present.
+   */
+  const odometerMetres =
+    numericIo(io, 36) ??
+    numericIo(io, 16);
+
+  const odometerKm =
+    odometerMetres === null
+      ? null
+      : odometerMetres / 1000;
+
+  const externalMv =
+    numericIo(io, 66);
+
+  const internalMv =
+    numericIo(io, 67);
+
+  const simDiagnostics =
+    simulatorDiagnostics(io);
+
+  const checkEngine =
+    mil === null &&
+    simDiagnostics.active.length === 0
+      ? null
+      : (
+          (
+            mil !== null &&
+            mil !== 0 &&
+            mil !== 7
+          ) ||
+          simDiagnostics.active.length > 0
+        );
+
+  const simulator =
+    io.io_9005 !== undefined;
+
+  return {
+    version: 2,
+
+    source: {
+      manufacturer: "teltonika",
+      profile: "j1939_fms",
+      simulator,
+      mappingVersion: "2.0",
+    },
+
+    engine: {
+      rpm,
+      coolantTemperatureC:
+        null,
+      loadPercent:
+        engineLoad,
+      throttlePercent:
+        throttle,
+      engineHours:
+        null,
+    },
+
+    vehicle: {
+      speedKph:
+        speed,
+      odometerKm,
+      ignition,
+      movement,
+    },
+
+    fuel: {
+      levelPercent:
+        fuelLevel,
+      levelLiters:
+        null,
+      consumedLiters:
+        fuelUsed,
+      rateLph:
+        null,
+      averageL100km:
+        null,
+      adBluePercent:
+        numericIo(io, 19),
+      adBlueLiters:
+        numericIo(io, 20) === null
+          ? null
+          : (
+              numericIo(io, 20)! /
+              10
+            ),
+    },
+
+    doors: {
+      frontLeft: null,
+      frontRight: null,
+      rearLeft: null,
+      rearRight: null,
+      hood: null,
+      trunk: null,
+    },
+
+    safety: {
+      seatbelt: null,
+      handbrake: null,
+    },
+
+    warnings: {
+      checkEngine,
+      abs: null,
+      airbag: null,
+      esp: null,
+      oilPressure: null,
+      tpms: null,
+    },
+
+    diagnostics: {
+      dtcCount:
+        simDiagnostics.active.length,
+
+      active:
+        simDiagnostics.active,
+
+      stored:
+        simDiagnostics.stored,
+    },
+
+    tracker: {
+      gsmSignal:
+        numericIo(io, 21),
+
+      externalVoltage:
+        externalMv === null
+          ? null
+          : externalMv / 1000,
+
+      internalBatteryVoltage:
+        internalMv === null
+          ? null
+          : internalMv / 1000,
+
+      satellites:
+        telemetry.satellites,
+    },
+
+    /*
+     * V1 compatibility
+     */
+
+    rpm,
+
+    speed_kph:
+      speed,
+
+    fuel_level_percent:
+      fuelLevel,
+
+    fuel_used_litres:
+      fuelUsed,
+
+    coolant_temperature_c:
+      null,
+
+    throttle_percent:
+      throttle,
+
+    odometer_km:
+      odometerKm,
+
+    simulator,
+  };
+}
+
+============================================================
+ SIGNAL MATCHES : .\server\teltonika\can\light-vehicle.ts
+============================================================
+
+------------------------------------------------------------
+ SIGNAL : rpm
+------------------------------------------------------------
+
+LINE : 48
+   * 23  Engine Load %
+   * 25  Engine Temperature (0.1 C)
+   * 33  Fuel Consumed (0.1 L)
+   * 34  Fuel Level Liters (0.1 L)
+   * 35  Engine RPM
+   * 36  Total Mileage (m)
+   * 37  Fuel Level %
+   * 38  Control State Flags / doors
+   * 81  Vehicle Speed
+   * 82  Accelerator Pedal
+   * 176 DTC Errors count/state
+   *
+   * Permanent tracker IO:
+   *
+   * 21  GSM signal
+
+LINE : 65
+   * 239 Ignition
+   * 240 Movement
+   */
+
+  const rpm =
+    numericIo(io, 35) ??
+    numericIo(io, 85);
+
+  const speed =
+    numericIo(io, 81) ??
+    telemetry.speedKph;
+
+  const temperatureRaw =
+    signed16(
+      numericIo(io, 25) ??
+
+LINE : 200
+      mappingVersion: "2.0",
+    },
+
+    engine: {
+      rpm,
+      coolantTemperatureC:
+        temperature,
+      loadPercent:
+        engineLoad,
+      throttlePercent:
+        throttle,
+      engineHours,
+    },
+
+    vehicle: {
+
+LINE : 311
+      satellites:
+        telemetry.satellites,
+    },
+
+    rpm,
+    speed_kph:
+      speed,
+
+    fuel_level_percent:
+      fuelLevelPercent,
+
+    fuel_used_litres:
+      fuelConsumed,
+
+    coolant_temperature_c:
+
+------------------------------------------------------------
+ SIGNAL : loadPercent
+------------------------------------------------------------
+
+LINE : 203
+    engine: {
+      rpm,
+      coolantTemperatureC:
+        temperature,
+      loadPercent:
+        engineLoad,
+      throttlePercent:
+        throttle,
+      engineHours,
+    },
+
+    vehicle: {
+      speedKph:
+        speed,
+      odometerKm,
+
+------------------------------------------------------------
+ SIGNAL : throttlePercent
+------------------------------------------------------------
+
+LINE : 205
+      coolantTemperatureC:
+        temperature,
+      loadPercent:
+        engineLoad,
+      throttlePercent:
+        throttle,
+      engineHours,
+    },
+
+    vehicle: {
+      speedKph:
+        speed,
+      odometerKm,
+      ignition,
+      movement,
+
+------------------------------------------------------------
+ SIGNAL : engineHours
+------------------------------------------------------------
+
+LINE : 93
+
+  const workMinutes =
+    numericIo(io, 14);
+
+  const engineHours =
+    workMinutes === null
+      ? null
+      : workMinutes / 60;
+
+  const odometerMetres =
+    numericIo(io, 36) ??
+    numericIo(io, 16);
+
+  const odometerKm =
+    odometerMetres === null
+
+LINE : 207
+      loadPercent:
+        engineLoad,
+      throttlePercent:
+        throttle,
+      engineHours,
+    },
+
+    vehicle: {
+      speedKph:
+        speed,
+      odometerKm,
+      ignition,
+      movement,
+    },
+
+
+------------------------------------------------------------
+ SIGNAL : speedKph
+------------------------------------------------------------
+
+LINE : 71
+    numericIo(io, 85);
+
+  const speed =
+    numericIo(io, 81) ??
+    telemetry.speedKph;
+
+  const temperatureRaw =
+    signed16(
+      numericIo(io, 25) ??
+      numericIo(io, 115),
+    );
+
+  const temperature =
+    temperatureRaw === null
+      ? null
+
+LINE : 211
+      engineHours,
+    },
+
+    vehicle: {
+      speedKph:
+        speed,
+      odometerKm,
+      ignition,
+      movement,
+    },
+
+    fuel: {
+      levelPercent:
+        fuelLevelPercent,
+      levelLiters:
+
+------------------------------------------------------------
+ SIGNAL : odometerKm
+------------------------------------------------------------
+
+LINE : 102
+  const odometerMetres =
+    numericIo(io, 36) ??
+    numericIo(io, 16);
+
+  const odometerKm =
+    odometerMetres === null
+      ? null
+      : odometerMetres / 1000;
+
+  const fuelLevelPercent =
+    numericIo(io, 37);
+
+  const fuelLevelLitersRaw =
+    numericIo(io, 34);
+
+
+LINE : 213
+
+    vehicle: {
+      speedKph:
+        speed,
+      odometerKm,
+      ignition,
+      movement,
+    },
+
+    fuel: {
+      levelPercent:
+        fuelLevelPercent,
+      levelLiters:
+        fuelLevelLiters,
+      consumedLiters:
+
+LINE : 328
+    throttle_percent:
+      throttle,
+
+    odometer_km:
+      odometerKm,
+
+    simulator,
+  };
+
+  return result;
+}
+
+------------------------------------------------------------
+ SIGNAL : ignition
+------------------------------------------------------------
+
+LINE : 61
+   *
+   * 21  GSM signal
+   * 66  External voltage mV
+   * 67  Internal battery voltage mV
+   * 239 Ignition
+   * 240 Movement
+   */
+
+  const rpm =
+    numericIo(io, 35) ??
+    numericIo(io, 85);
+
+  const speed =
+    numericIo(io, 81) ??
+    telemetry.speedKph;
+
+LINE : 146
+    adBlueLitersRaw === null
+      ? null
+      : adBlueLitersRaw / 10;
+
+  const ignitionRaw =
+    numericIo(io, 239);
+
+  const movementRaw =
+    numericIo(io, 240);
+
+  const ignition =
+    ignitionRaw === null
+      ? null
+      : ignitionRaw === 1;
+
+
+LINE : 152
+
+  const movementRaw =
+    numericIo(io, 240);
+
+  const ignition =
+    ignitionRaw === null
+      ? null
+      : ignitionRaw === 1;
+
+  const movement =
+    movementRaw === null
+      ? speed > 0
+      : movementRaw === 1;
+
+  const doorFlags =
+
+LINE : 153
+  const movementRaw =
+    numericIo(io, 240);
+
+  const ignition =
+    ignitionRaw === null
+      ? null
+      : ignitionRaw === 1;
+
+  const movement =
+    movementRaw === null
+      ? speed > 0
+      : movementRaw === 1;
+
+  const doorFlags =
+    numericIo(io, 38);
+
+LINE : 155
+
+  const ignition =
+    ignitionRaw === null
+      ? null
+      : ignitionRaw === 1;
+
+  const movement =
+    movementRaw === null
+      ? speed > 0
+      : movementRaw === 1;
+
+  const doorFlags =
+    numericIo(io, 38);
+
+  const dtcCount =
+
+LINE : 214
+    vehicle: {
+      speedKph:
+        speed,
+      odometerKm,
+      ignition,
+      movement,
+    },
+
+    fuel: {
+      levelPercent:
+        fuelLevelPercent,
+      levelLiters:
+        fuelLevelLiters,
+      consumedLiters:
+        fuelConsumed,
+
+------------------------------------------------------------
+ SIGNAL : movement
+------------------------------------------------------------
+
+LINE : 62
+   * 21  GSM signal
+   * 66  External voltage mV
+   * 67  Internal battery voltage mV
+   * 239 Ignition
+   * 240 Movement
+   */
+
+  const rpm =
+    numericIo(io, 35) ??
+    numericIo(io, 85);
+
+  const speed =
+    numericIo(io, 81) ??
+    telemetry.speedKph;
+
+
+LINE : 149
+
+  const ignitionRaw =
+    numericIo(io, 239);
+
+  const movementRaw =
+    numericIo(io, 240);
+
+  const ignition =
+    ignitionRaw === null
+      ? null
+      : ignitionRaw === 1;
+
+  const movement =
+    movementRaw === null
+      ? speed > 0
+
+LINE : 157
+    ignitionRaw === null
+      ? null
+      : ignitionRaw === 1;
+
+  const movement =
+    movementRaw === null
+      ? speed > 0
+      : movementRaw === 1;
+
+  const doorFlags =
+    numericIo(io, 38);
+
+  const dtcCount =
+    numericIo(io, 176);
+
+
+LINE : 158
+      ? null
+      : ignitionRaw === 1;
+
+  const movement =
+    movementRaw === null
+      ? speed > 0
+      : movementRaw === 1;
+
+  const doorFlags =
+    numericIo(io, 38);
+
+  const dtcCount =
+    numericIo(io, 176);
+
+  const simDiagnostics =
+
+LINE : 160
+
+  const movement =
+    movementRaw === null
+      ? speed > 0
+      : movementRaw === 1;
+
+  const doorFlags =
+    numericIo(io, 38);
+
+  const dtcCount =
+    numericIo(io, 176);
+
+  const simDiagnostics =
+    simulatorDiagnostics(io);
+
+
+LINE : 215
+      speedKph:
+        speed,
+      odometerKm,
+      ignition,
+      movement,
+    },
+
+    fuel: {
+      levelPercent:
+        fuelLevelPercent,
+      levelLiters:
+        fuelLevelLiters,
+      consumedLiters:
+        fuelConsumed,
+      rateLph:
+
+------------------------------------------------------------
+ SIGNAL : levelPercent
+------------------------------------------------------------
+
+LINE : 107
+    odometerMetres === null
+      ? null
+      : odometerMetres / 1000;
+
+  const fuelLevelPercent =
+    numericIo(io, 37);
+
+  const fuelLevelLitersRaw =
+    numericIo(io, 34);
+
+  const fuelLevelLiters =
+    fuelLevelLitersRaw === null
+      ? null
+      : fuelLevelLitersRaw / 10;
+
+
+LINE : 219
+      movement,
+    },
+
+    fuel: {
+      levelPercent:
+        fuelLevelPercent,
+      levelLiters:
+        fuelLevelLiters,
+      consumedLiters:
+        fuelConsumed,
+      rateLph:
+        fuelRate,
+      averageL100km:
+        null,
+      adBluePercent,
+
+LINE : 220
+    },
+
+    fuel: {
+      levelPercent:
+        fuelLevelPercent,
+      levelLiters:
+        fuelLevelLiters,
+      consumedLiters:
+        fuelConsumed,
+      rateLph:
+        fuelRate,
+      averageL100km:
+        null,
+      adBluePercent,
+      adBlueLiters,
+
+LINE : 316
+    speed_kph:
+      speed,
+
+    fuel_level_percent:
+      fuelLevelPercent,
+
+    fuel_used_litres:
+      fuelConsumed,
+
+    coolant_temperature_c:
+      temperature,
+
+    throttle_percent:
+      throttle,
+
+
+------------------------------------------------------------
+ SIGNAL : levelLiters
+------------------------------------------------------------
+
+LINE : 110
+
+  const fuelLevelPercent =
+    numericIo(io, 37);
+
+  const fuelLevelLitersRaw =
+    numericIo(io, 34);
+
+  const fuelLevelLiters =
+    fuelLevelLitersRaw === null
+      ? null
+      : fuelLevelLitersRaw / 10;
+
+  const fuelConsumedRaw =
+    numericIo(io, 33) ??
+    numericIo(io, 17);
+
+LINE : 113
+
+  const fuelLevelLitersRaw =
+    numericIo(io, 34);
+
+  const fuelLevelLiters =
+    fuelLevelLitersRaw === null
+      ? null
+      : fuelLevelLitersRaw / 10;
+
+  const fuelConsumedRaw =
+    numericIo(io, 33) ??
+    numericIo(io, 17);
+
+  const fuelConsumed =
+    fuelConsumedRaw === null
+
+LINE : 114
+  const fuelLevelLitersRaw =
+    numericIo(io, 34);
+
+  const fuelLevelLiters =
+    fuelLevelLitersRaw === null
+      ? null
+      : fuelLevelLitersRaw / 10;
+
+  const fuelConsumedRaw =
+    numericIo(io, 33) ??
+    numericIo(io, 17);
+
+  const fuelConsumed =
+    fuelConsumedRaw === null
+      ? null
+
+LINE : 116
+
+  const fuelLevelLiters =
+    fuelLevelLitersRaw === null
+      ? null
+      : fuelLevelLitersRaw / 10;
+
+  const fuelConsumedRaw =
+    numericIo(io, 33) ??
+    numericIo(io, 17);
+
+  const fuelConsumed =
+    fuelConsumedRaw === null
+      ? null
+      : fuelConsumedRaw / 10;
+
+
+LINE : 221
+
+    fuel: {
+      levelPercent:
+        fuelLevelPercent,
+      levelLiters:
+        fuelLevelLiters,
+      consumedLiters:
+        fuelConsumed,
+      rateLph:
+        fuelRate,
+      averageL100km:
+        null,
+      adBluePercent,
+      adBlueLiters,
+    },
+
+LINE : 222
+    fuel: {
+      levelPercent:
+        fuelLevelPercent,
+      levelLiters:
+        fuelLevelLiters,
+      consumedLiters:
+        fuelConsumed,
+      rateLph:
+        fuelRate,
+      averageL100km:
+        null,
+      adBluePercent,
+      adBlueLiters,
+    },
+
+
+------------------------------------------------------------
+ SIGNAL : consumedLiters
+------------------------------------------------------------
+
+LINE : 223
+      levelPercent:
+        fuelLevelPercent,
+      levelLiters:
+        fuelLevelLiters,
+      consumedLiters:
+        fuelConsumed,
+      rateLph:
+        fuelRate,
+      averageL100km:
+        null,
+      adBluePercent,
+      adBlueLiters,
+    },
+
+    doors: {
+
+------------------------------------------------------------
+ SIGNAL : rateLph
+------------------------------------------------------------
+
+LINE : 225
+      levelLiters:
+        fuelLevelLiters,
+      consumedLiters:
+        fuelConsumed,
+      rateLph:
+        fuelRate,
+      averageL100km:
+        null,
+      adBluePercent,
+      adBlueLiters,
+    },
+
+    doors: {
+      frontLeft:
+        opened(
+
+------------------------------------------------------------
+ SIGNAL : averageL100km
+------------------------------------------------------------
+
+LINE : 227
+      consumedLiters:
+        fuelConsumed,
+      rateLph:
+        fuelRate,
+      averageL100km:
+        null,
+      adBluePercent,
+      adBlueLiters,
+    },
+
+    doors: {
+      frontLeft:
+        opened(
+          doorFlags,
+          0x100,
+
+------------------------------------------------------------
+ SIGNAL : adBluePercent
+------------------------------------------------------------
+
+LINE : 135
+    fuelRateRaw === null
+      ? null
+      : fuelRateRaw / 10;
+
+  const adBluePercent =
+    numericIo(io, 19);
+
+  const adBlueLitersRaw =
+    numericIo(io, 20);
+
+  const adBlueLiters =
+    adBlueLitersRaw === null
+      ? null
+      : adBlueLitersRaw / 10;
+
+
+LINE : 229
+      rateLph:
+        fuelRate,
+      averageL100km:
+        null,
+      adBluePercent,
+      adBlueLiters,
+    },
+
+    doors: {
+      frontLeft:
+        opened(
+          doorFlags,
+          0x100,
+        ),
+
+
+------------------------------------------------------------
+ SIGNAL : adBlueLiters
+------------------------------------------------------------
+
+LINE : 138
+
+  const adBluePercent =
+    numericIo(io, 19);
+
+  const adBlueLitersRaw =
+    numericIo(io, 20);
+
+  const adBlueLiters =
+    adBlueLitersRaw === null
+      ? null
+      : adBlueLitersRaw / 10;
+
+  const ignitionRaw =
+    numericIo(io, 239);
+
+
+LINE : 141
+
+  const adBlueLitersRaw =
+    numericIo(io, 20);
+
+  const adBlueLiters =
+    adBlueLitersRaw === null
+      ? null
+      : adBlueLitersRaw / 10;
+
+  const ignitionRaw =
+    numericIo(io, 239);
+
+  const movementRaw =
+    numericIo(io, 240);
+
+
+LINE : 142
+  const adBlueLitersRaw =
+    numericIo(io, 20);
+
+  const adBlueLiters =
+    adBlueLitersRaw === null
+      ? null
+      : adBlueLitersRaw / 10;
+
+  const ignitionRaw =
+    numericIo(io, 239);
+
+  const movementRaw =
+    numericIo(io, 240);
+
+  const ignition =
+
+LINE : 144
+
+  const adBlueLiters =
+    adBlueLitersRaw === null
+      ? null
+      : adBlueLitersRaw / 10;
+
+  const ignitionRaw =
+    numericIo(io, 239);
+
+  const movementRaw =
+    numericIo(io, 240);
+
+  const ignition =
+    ignitionRaw === null
+      ? null
+
+LINE : 230
+        fuelRate,
+      averageL100km:
+        null,
+      adBluePercent,
+      adBlueLiters,
+    },
+
+    doors: {
+      frontLeft:
+        opened(
+          doorFlags,
+          0x100,
+        ),
+
+      frontRight:
+
+------------------------------------------------------------
+ SIGNAL : frontLeft
+------------------------------------------------------------
+
+LINE : 234
+      adBlueLiters,
+    },
+
+    doors: {
+      frontLeft:
+        opened(
+          doorFlags,
+          0x100,
+        ),
+
+      frontRight:
+        opened(
+          doorFlags,
+          0x200,
+        ),
+
+------------------------------------------------------------
+ SIGNAL : frontRight
+------------------------------------------------------------
+
+LINE : 240
+          doorFlags,
+          0x100,
+        ),
+
+      frontRight:
+        opened(
+          doorFlags,
+          0x200,
+        ),
+
+      rearLeft:
+        opened(
+          doorFlags,
+          0x400,
+        ),
+
+------------------------------------------------------------
+ SIGNAL : rearLeft
+------------------------------------------------------------
+
+LINE : 246
+          doorFlags,
+          0x200,
+        ),
+
+      rearLeft:
+        opened(
+          doorFlags,
+          0x400,
+        ),
+
+      rearRight:
+        opened(
+          doorFlags,
+          0x800,
+        ),
+
+------------------------------------------------------------
+ SIGNAL : rearRight
+------------------------------------------------------------
+
+LINE : 252
+          doorFlags,
+          0x400,
+        ),
+
+      rearRight:
+        opened(
+          doorFlags,
+          0x800,
+        ),
+
+      hood:
+        opened(
+          doorFlags,
+          0x1000,
+        ),
+
+------------------------------------------------------------
+ SIGNAL : hood
+------------------------------------------------------------
+
+LINE : 258
+          doorFlags,
+          0x800,
+        ),
+
+      hood:
+        opened(
+          doorFlags,
+          0x1000,
+        ),
+
+      trunk:
+        opened(
+          doorFlags,
+          0x2000,
+        ),
+
+------------------------------------------------------------
+ SIGNAL : trunk
+------------------------------------------------------------
+
+LINE : 264
+          doorFlags,
+          0x1000,
+        ),
+
+      trunk:
+        opened(
+          doorFlags,
+          0x2000,
+        ),
+    },
+
+    safety: {
+      seatbelt: null,
+      handbrake: null,
+    },
+
+------------------------------------------------------------
+ SIGNAL : seatbelt
+------------------------------------------------------------
+
+LINE : 272
+        ),
+    },
+
+    safety: {
+      seatbelt: null,
+      handbrake: null,
+    },
+
+    warnings: {
+      checkEngine,
+      abs: null,
+      airbag: null,
+      esp: null,
+      oilPressure: null,
+      tpms: null,
+
+------------------------------------------------------------
+ SIGNAL : handbrake
+------------------------------------------------------------
+
+LINE : 273
+    },
+
+    safety: {
+      seatbelt: null,
+      handbrake: null,
+    },
+
+    warnings: {
+      checkEngine,
+      abs: null,
+      airbag: null,
+      esp: null,
+      oilPressure: null,
+      tpms: null,
+    },
+
+------------------------------------------------------------
+ SIGNAL : checkEngine
+------------------------------------------------------------
+
+LINE : 171
+
+  const simDiagnostics =
+    simulatorDiagnostics(io);
+
+  const checkEngine =
+    dtcCount === null &&
+    simDiagnostics.active.length === 0
+      ? null
+      : (
+          (dtcCount ?? 0) > 0 ||
+          simDiagnostics.active.length > 0
+        );
+
+  const externalMv =
+    numericIo(io, 66);
+
+LINE : 277
+      handbrake: null,
+    },
+
+    warnings: {
+      checkEngine,
+      abs: null,
+      airbag: null,
+      esp: null,
+      oilPressure: null,
+      tpms: null,
+    },
+
+    diagnostics: {
+      dtcCount,
+      active:
+
+------------------------------------------------------------
+ SIGNAL : abs
+------------------------------------------------------------
+
+LINE : 278
+    },
+
+    warnings: {
+      checkEngine,
+      abs: null,
+      airbag: null,
+      esp: null,
+      oilPressure: null,
+      tpms: null,
+    },
+
+    diagnostics: {
+      dtcCount,
+      active:
+        simDiagnostics.active,
+
+------------------------------------------------------------
+ SIGNAL : airbag
+------------------------------------------------------------
+
+LINE : 279
+
+    warnings: {
+      checkEngine,
+      abs: null,
+      airbag: null,
+      esp: null,
+      oilPressure: null,
+      tpms: null,
+    },
+
+    diagnostics: {
+      dtcCount,
+      active:
+        simDiagnostics.active,
+      stored:
+
+------------------------------------------------------------
+ SIGNAL : esp
+------------------------------------------------------------
+
+LINE : 280
+    warnings: {
+      checkEngine,
+      abs: null,
+      airbag: null,
+      esp: null,
+      oilPressure: null,
+      tpms: null,
+    },
+
+    diagnostics: {
+      dtcCount,
+      active:
+        simDiagnostics.active,
+      stored:
+        simDiagnostics.stored,
+
+------------------------------------------------------------
+ SIGNAL : oilPressure
+------------------------------------------------------------
+
+LINE : 281
+      checkEngine,
+      abs: null,
+      airbag: null,
+      esp: null,
+      oilPressure: null,
+      tpms: null,
+    },
+
+    diagnostics: {
+      dtcCount,
+      active:
+        simDiagnostics.active,
+      stored:
+        simDiagnostics.stored,
+    },
+
+------------------------------------------------------------
+ SIGNAL : tpms
+------------------------------------------------------------
+
+LINE : 282
+      abs: null,
+      airbag: null,
+      esp: null,
+      oilPressure: null,
+      tpms: null,
+    },
+
+    diagnostics: {
+      dtcCount,
+      active:
+        simDiagnostics.active,
+      stored:
+        simDiagnostics.stored,
+    },
+
+
+------------------------------------------------------------
+ SIGNAL : gsmSignal
+------------------------------------------------------------
+
+LINE : 294
+        simDiagnostics.stored,
+    },
+
+    tracker: {
+      gsmSignal:
+        numericIo(io, 21),
+
+      externalVoltage:
+        externalMv === null
+          ? null
+          : externalMv / 1000,
+
+      internalBatteryVoltage:
+        internalMv === null
+          ? null
+
+------------------------------------------------------------
+ SIGNAL : externalVoltage
+------------------------------------------------------------
+
+LINE : 297
+    tracker: {
+      gsmSignal:
+        numericIo(io, 21),
+
+      externalVoltage:
+        externalMv === null
+          ? null
+          : externalMv / 1000,
+
+      internalBatteryVoltage:
+        internalMv === null
+          ? null
+          : internalMv / 1000,
+
+      satellites:
+
+------------------------------------------------------------
+ SIGNAL : internalBatteryVoltage
+------------------------------------------------------------
+
+LINE : 302
+        externalMv === null
+          ? null
+          : externalMv / 1000,
+
+      internalBatteryVoltage:
+        internalMv === null
+          ? null
+          : internalMv / 1000,
+
+      satellites:
+        telemetry.satellites,
+    },
+
+    rpm,
+    speed_kph:
+
+------------------------------------------------------------
+ SIGNAL : satellites
+------------------------------------------------------------
+
+LINE : 307
+        internalMv === null
+          ? null
+          : internalMv / 1000,
+
+      satellites:
+        telemetry.satellites,
+    },
+
+    rpm,
+    speed_kph:
+      speed,
+
+    fuel_level_percent:
+      fuelLevelPercent,
+
+
+LINE : 308
+          ? null
+          : internalMv / 1000,
+
+      satellites:
+        telemetry.satellites,
+    },
+
+    rpm,
+    speed_kph:
+      speed,
+
+    fuel_level_percent:
+      fuelLevelPercent,
+
+    fuel_used_litres:
+
+------------------------------------------------------------
+ SIGNAL : dtcCount
+------------------------------------------------------------
+
+LINE : 165
+
+  const doorFlags =
+    numericIo(io, 38);
+
+  const dtcCount =
+    numericIo(io, 176);
+
+  const simDiagnostics =
+    simulatorDiagnostics(io);
+
+  const checkEngine =
+    dtcCount === null &&
+    simDiagnostics.active.length === 0
+      ? null
+      : (
+
+LINE : 172
+  const simDiagnostics =
+    simulatorDiagnostics(io);
+
+  const checkEngine =
+    dtcCount === null &&
+    simDiagnostics.active.length === 0
+      ? null
+      : (
+          (dtcCount ?? 0) > 0 ||
+          simDiagnostics.active.length > 0
+        );
+
+  const externalMv =
+    numericIo(io, 66);
+
+
+LINE : 176
+    dtcCount === null &&
+    simDiagnostics.active.length === 0
+      ? null
+      : (
+          (dtcCount ?? 0) > 0 ||
+          simDiagnostics.active.length > 0
+        );
+
+  const externalMv =
+    numericIo(io, 66);
+
+  const internalMv =
+    numericIo(io, 67);
+
+  const simulator =
+
+LINE : 286
+      tpms: null,
+    },
+
+    diagnostics: {
+      dtcCount,
+      active:
+        simDiagnostics.active,
+      stored:
+        simDiagnostics.stored,
+    },
+
+    tracker: {
+      gsmSignal:
+        numericIo(io, 21),
+
+
+------------------------------------------------------------
+ SIGNAL : active:
+------------------------------------------------------------
+
+LINE : 287
+    },
+
+    diagnostics: {
+      dtcCount,
+      active:
+        simDiagnostics.active,
+      stored:
+        simDiagnostics.stored,
+    },
+
+    tracker: {
+      gsmSignal:
+        numericIo(io, 21),
+
+      externalVoltage:
+
+------------------------------------------------------------
+ SIGNAL : stored:
+------------------------------------------------------------
+
+LINE : 289
+    diagnostics: {
+      dtcCount,
+      active:
+        simDiagnostics.active,
+      stored:
+        simDiagnostics.stored,
+    },
+
+    tracker: {
+      gsmSignal:
+        numericIo(io, 21),
+
+      externalVoltage:
+        externalMv === null
+          ? null
+
+============================================================
+ SIGNAL MATCHES : .\server\teltonika\can\j1939.ts
+============================================================
+
+------------------------------------------------------------
+ SIGNAL : rpm
+------------------------------------------------------------
+
+LINE : 36
+   * Permanent tracker IO remains shared:
+   * 21 / 66 / 67 / 239 / 240
+   */
+
+  const rpm =
+    numericIo(io, 88);
+
+  const speed =
+    numericIo(io, 80) ??
+    telemetry.speedKph;
+
+  const throttle =
+    numericIo(io, 84);
+
+  const engineLoad =
+
+LINE : 123
+      mappingVersion: "2.0",
+    },
+
+    engine: {
+      rpm,
+      coolantTemperatureC:
+        null,
+      loadPercent:
+        engineLoad,
+      throttlePercent:
+        throttle,
+      engineHours:
+        null,
+    },
+
+
+LINE : 220
+    /*
+     * V1 compatibility
+     */
+
+    rpm,
+
+    speed_kph:
+      speed,
+
+    fuel_level_percent:
+      fuelLevel,
+
+    fuel_used_litres:
+      fuelUsed,
+
+
+------------------------------------------------------------
+ SIGNAL : loadPercent
+------------------------------------------------------------
+
+LINE : 126
+    engine: {
+      rpm,
+      coolantTemperatureC:
+        null,
+      loadPercent:
+        engineLoad,
+      throttlePercent:
+        throttle,
+      engineHours:
+        null,
+    },
+
+    vehicle: {
+      speedKph:
+        speed,
+
+------------------------------------------------------------
+ SIGNAL : throttlePercent
+------------------------------------------------------------
+
+LINE : 128
+      coolantTemperatureC:
+        null,
+      loadPercent:
+        engineLoad,
+      throttlePercent:
+        throttle,
+      engineHours:
+        null,
+    },
+
+    vehicle: {
+      speedKph:
+        speed,
+      odometerKm,
+      ignition,
+
+------------------------------------------------------------
+ SIGNAL : engineHours
+------------------------------------------------------------
+
+LINE : 130
+      loadPercent:
+        engineLoad,
+      throttlePercent:
+        throttle,
+      engineHours:
+        null,
+    },
+
+    vehicle: {
+      speedKph:
+        speed,
+      odometerKm,
+      ignition,
+      movement,
+    },
+
+------------------------------------------------------------
+ SIGNAL : speedKph
+------------------------------------------------------------
+
+LINE : 41
+    numericIo(io, 88);
+
+  const speed =
+    numericIo(io, 80) ??
+    telemetry.speedKph;
+
+  const throttle =
+    numericIo(io, 84);
+
+  const engineLoad =
+    numericIo(io, 85);
+
+  const fuelUsed =
+    numericIo(io, 86);
+
+
+LINE : 135
+        null,
+    },
+
+    vehicle: {
+      speedKph:
+        speed,
+      odometerKm,
+      ignition,
+      movement,
+    },
+
+    fuel: {
+      levelPercent:
+        fuelLevel,
+      levelLiters:
+
+------------------------------------------------------------
+ SIGNAL : odometerKm
+------------------------------------------------------------
+
+LINE : 82
+  const odometerMetres =
+    numericIo(io, 36) ??
+    numericIo(io, 16);
+
+  const odometerKm =
+    odometerMetres === null
+      ? null
+      : odometerMetres / 1000;
+
+  const externalMv =
+    numericIo(io, 66);
+
+  const internalMv =
+    numericIo(io, 67);
+
+
+LINE : 137
+
+    vehicle: {
+      speedKph:
+        speed,
+      odometerKm,
+      ignition,
+      movement,
+    },
+
+    fuel: {
+      levelPercent:
+        fuelLevel,
+      levelLiters:
+        null,
+      consumedLiters:
+
+LINE : 238
+    throttle_percent:
+      throttle,
+
+    odometer_km:
+      odometerKm,
+
+    simulator,
+  };
+}
+
+------------------------------------------------------------
+ SIGNAL : ignition
+------------------------------------------------------------
+
+LINE : 58
+
+  const mil =
+    numericIo(io, 10349);
+
+  const ignitionRaw =
+    numericIo(io, 239);
+
+  const movementRaw =
+    numericIo(io, 240);
+
+  const ignition =
+    ignitionRaw === null
+      ? null
+      : ignitionRaw === 1;
+
+
+LINE : 64
+
+  const movementRaw =
+    numericIo(io, 240);
+
+  const ignition =
+    ignitionRaw === null
+      ? null
+      : ignitionRaw === 1;
+
+  const movement =
+    movementRaw === null
+      ? speed > 0
+      : movementRaw === 1;
+
+  /*
+
+LINE : 65
+  const movementRaw =
+    numericIo(io, 240);
+
+  const ignition =
+    ignitionRaw === null
+      ? null
+      : ignitionRaw === 1;
+
+  const movement =
+    movementRaw === null
+      ? speed > 0
+      : movementRaw === 1;
+
+  /*
+   * FMC650 may also receive CAN adapter values.
+
+LINE : 67
+
+  const ignition =
+    ignitionRaw === null
+      ? null
+      : ignitionRaw === 1;
+
+  const movement =
+    movementRaw === null
+      ? speed > 0
+      : movementRaw === 1;
+
+  /*
+   * FMC650 may also receive CAN adapter values.
+   * Use mileage if present.
+   */
+
+LINE : 138
+    vehicle: {
+      speedKph:
+        speed,
+      odometerKm,
+      ignition,
+      movement,
+    },
+
+    fuel: {
+      levelPercent:
+        fuelLevel,
+      levelLiters:
+        null,
+      consumedLiters:
+        fuelUsed,
+
+------------------------------------------------------------
+ SIGNAL : movement
+------------------------------------------------------------
+
+LINE : 61
+
+  const ignitionRaw =
+    numericIo(io, 239);
+
+  const movementRaw =
+    numericIo(io, 240);
+
+  const ignition =
+    ignitionRaw === null
+      ? null
+      : ignitionRaw === 1;
+
+  const movement =
+    movementRaw === null
+      ? speed > 0
+
+LINE : 69
+    ignitionRaw === null
+      ? null
+      : ignitionRaw === 1;
+
+  const movement =
+    movementRaw === null
+      ? speed > 0
+      : movementRaw === 1;
+
+  /*
+   * FMC650 may also receive CAN adapter values.
+   * Use mileage if present.
+   */
+  const odometerMetres =
+    numericIo(io, 36) ??
+
+LINE : 70
+      ? null
+      : ignitionRaw === 1;
+
+  const movement =
+    movementRaw === null
+      ? speed > 0
+      : movementRaw === 1;
+
+  /*
+   * FMC650 may also receive CAN adapter values.
+   * Use mileage if present.
+   */
+  const odometerMetres =
+    numericIo(io, 36) ??
+    numericIo(io, 16);
+
+LINE : 72
+
+  const movement =
+    movementRaw === null
+      ? speed > 0
+      : movementRaw === 1;
+
+  /*
+   * FMC650 may also receive CAN adapter values.
+   * Use mileage if present.
+   */
+  const odometerMetres =
+    numericIo(io, 36) ??
+    numericIo(io, 16);
+
+  const odometerKm =
+
+LINE : 139
+      speedKph:
+        speed,
+      odometerKm,
+      ignition,
+      movement,
+    },
+
+    fuel: {
+      levelPercent:
+        fuelLevel,
+      levelLiters:
+        null,
+      consumedLiters:
+        fuelUsed,
+      rateLph:
+
+------------------------------------------------------------
+ SIGNAL : levelPercent
+------------------------------------------------------------
+
+LINE : 143
+      movement,
+    },
+
+    fuel: {
+      levelPercent:
+        fuelLevel,
+      levelLiters:
+        null,
+      consumedLiters:
+        fuelUsed,
+      rateLph:
+        null,
+      averageL100km:
+        null,
+      adBluePercent:
+
+------------------------------------------------------------
+ SIGNAL : levelLiters
+------------------------------------------------------------
+
+LINE : 145
+
+    fuel: {
+      levelPercent:
+        fuelLevel,
+      levelLiters:
+        null,
+      consumedLiters:
+        fuelUsed,
+      rateLph:
+        null,
+      averageL100km:
+        null,
+      adBluePercent:
+        numericIo(io, 19),
+      adBlueLiters:
+
+------------------------------------------------------------
+ SIGNAL : consumedLiters
+------------------------------------------------------------
+
+LINE : 147
+      levelPercent:
+        fuelLevel,
+      levelLiters:
+        null,
+      consumedLiters:
+        fuelUsed,
+      rateLph:
+        null,
+      averageL100km:
+        null,
+      adBluePercent:
+        numericIo(io, 19),
+      adBlueLiters:
+        numericIo(io, 20) === null
+          ? null
+
+------------------------------------------------------------
+ SIGNAL : rateLph
+------------------------------------------------------------
+
+LINE : 149
+      levelLiters:
+        null,
+      consumedLiters:
+        fuelUsed,
+      rateLph:
+        null,
+      averageL100km:
+        null,
+      adBluePercent:
+        numericIo(io, 19),
+      adBlueLiters:
+        numericIo(io, 20) === null
+          ? null
+          : (
+              numericIo(io, 20)! /
+
+------------------------------------------------------------
+ SIGNAL : averageL100km
+------------------------------------------------------------
+
+LINE : 151
+      consumedLiters:
+        fuelUsed,
+      rateLph:
+        null,
+      averageL100km:
+        null,
+      adBluePercent:
+        numericIo(io, 19),
+      adBlueLiters:
+        numericIo(io, 20) === null
+          ? null
+          : (
+              numericIo(io, 20)! /
+              10
+            ),
+
+------------------------------------------------------------
+ SIGNAL : adBluePercent
+------------------------------------------------------------
+
+LINE : 153
+      rateLph:
+        null,
+      averageL100km:
+        null,
+      adBluePercent:
+        numericIo(io, 19),
+      adBlueLiters:
+        numericIo(io, 20) === null
+          ? null
+          : (
+              numericIo(io, 20)! /
+              10
+            ),
+    },
+
+
+------------------------------------------------------------
+ SIGNAL : adBlueLiters
+------------------------------------------------------------
+
+LINE : 155
+      averageL100km:
+        null,
+      adBluePercent:
+        numericIo(io, 19),
+      adBlueLiters:
+        numericIo(io, 20) === null
+          ? null
+          : (
+              numericIo(io, 20)! /
+              10
+            ),
+    },
+
+    doors: {
+      frontLeft: null,
+
+------------------------------------------------------------
+ SIGNAL : frontLeft
+------------------------------------------------------------
+
+LINE : 165
+            ),
+    },
+
+    doors: {
+      frontLeft: null,
+      frontRight: null,
+      rearLeft: null,
+      rearRight: null,
+      hood: null,
+      trunk: null,
+    },
+
+    safety: {
+      seatbelt: null,
+      handbrake: null,
+
+------------------------------------------------------------
+ SIGNAL : frontRight
+------------------------------------------------------------
+
+LINE : 166
+    },
+
+    doors: {
+      frontLeft: null,
+      frontRight: null,
+      rearLeft: null,
+      rearRight: null,
+      hood: null,
+      trunk: null,
+    },
+
+    safety: {
+      seatbelt: null,
+      handbrake: null,
+    },
+
+------------------------------------------------------------
+ SIGNAL : rearLeft
+------------------------------------------------------------
+
+LINE : 167
+
+    doors: {
+      frontLeft: null,
+      frontRight: null,
+      rearLeft: null,
+      rearRight: null,
+      hood: null,
+      trunk: null,
+    },
+
+    safety: {
+      seatbelt: null,
+      handbrake: null,
+    },
+
+
+------------------------------------------------------------
+ SIGNAL : rearRight
+------------------------------------------------------------
+
+LINE : 168
+    doors: {
+      frontLeft: null,
+      frontRight: null,
+      rearLeft: null,
+      rearRight: null,
+      hood: null,
+      trunk: null,
+    },
+
+    safety: {
+      seatbelt: null,
+      handbrake: null,
+    },
+
+    warnings: {
+
+------------------------------------------------------------
+ SIGNAL : hood
+------------------------------------------------------------
+
+LINE : 169
+      frontLeft: null,
+      frontRight: null,
+      rearLeft: null,
+      rearRight: null,
+      hood: null,
+      trunk: null,
+    },
+
+    safety: {
+      seatbelt: null,
+      handbrake: null,
+    },
+
+    warnings: {
+      checkEngine,
+
+------------------------------------------------------------
+ SIGNAL : trunk
+------------------------------------------------------------
+
+LINE : 170
+      frontRight: null,
+      rearLeft: null,
+      rearRight: null,
+      hood: null,
+      trunk: null,
+    },
+
+    safety: {
+      seatbelt: null,
+      handbrake: null,
+    },
+
+    warnings: {
+      checkEngine,
+      abs: null,
+
+------------------------------------------------------------
+ SIGNAL : seatbelt
+------------------------------------------------------------
+
+LINE : 174
+      trunk: null,
+    },
+
+    safety: {
+      seatbelt: null,
+      handbrake: null,
+    },
+
+    warnings: {
+      checkEngine,
+      abs: null,
+      airbag: null,
+      esp: null,
+      oilPressure: null,
+      tpms: null,
+
+------------------------------------------------------------
+ SIGNAL : handbrake
+------------------------------------------------------------
+
+LINE : 175
+    },
+
+    safety: {
+      seatbelt: null,
+      handbrake: null,
+    },
+
+    warnings: {
+      checkEngine,
+      abs: null,
+      airbag: null,
+      esp: null,
+      oilPressure: null,
+      tpms: null,
+    },
+
+------------------------------------------------------------
+ SIGNAL : checkEngine
+------------------------------------------------------------
+
+LINE : 96
+
+  const simDiagnostics =
+    simulatorDiagnostics(io);
+
+  const checkEngine =
+    mil === null &&
+    simDiagnostics.active.length === 0
+      ? null
+      : (
+          (
+            mil !== null &&
+            mil !== 0 &&
+            mil !== 7
+          ) ||
+          simDiagnostics.active.length > 0
+
+LINE : 179
+      handbrake: null,
+    },
+
+    warnings: {
+      checkEngine,
+      abs: null,
+      airbag: null,
+      esp: null,
+      oilPressure: null,
+      tpms: null,
+    },
+
+    diagnostics: {
+      dtcCount:
+        simDiagnostics.active.length,
+
+------------------------------------------------------------
+ SIGNAL : abs
+------------------------------------------------------------
+
+LINE : 180
+    },
+
+    warnings: {
+      checkEngine,
+      abs: null,
+      airbag: null,
+      esp: null,
+      oilPressure: null,
+      tpms: null,
+    },
+
+    diagnostics: {
+      dtcCount:
+        simDiagnostics.active.length,
+
+
+------------------------------------------------------------
+ SIGNAL : airbag
+------------------------------------------------------------
+
+LINE : 181
+
+    warnings: {
+      checkEngine,
+      abs: null,
+      airbag: null,
+      esp: null,
+      oilPressure: null,
+      tpms: null,
+    },
+
+    diagnostics: {
+      dtcCount:
+        simDiagnostics.active.length,
+
+      active:
+
+------------------------------------------------------------
+ SIGNAL : esp
+------------------------------------------------------------
+
+LINE : 182
+    warnings: {
+      checkEngine,
+      abs: null,
+      airbag: null,
+      esp: null,
+      oilPressure: null,
+      tpms: null,
+    },
+
+    diagnostics: {
+      dtcCount:
+        simDiagnostics.active.length,
+
+      active:
+        simDiagnostics.active,
+
+------------------------------------------------------------
+ SIGNAL : oilPressure
+------------------------------------------------------------
+
+LINE : 183
+      checkEngine,
+      abs: null,
+      airbag: null,
+      esp: null,
+      oilPressure: null,
+      tpms: null,
+    },
+
+    diagnostics: {
+      dtcCount:
+        simDiagnostics.active.length,
+
+      active:
+        simDiagnostics.active,
+
+
+------------------------------------------------------------
+ SIGNAL : tpms
+------------------------------------------------------------
+
+LINE : 184
+      abs: null,
+      airbag: null,
+      esp: null,
+      oilPressure: null,
+      tpms: null,
+    },
+
+    diagnostics: {
+      dtcCount:
+        simDiagnostics.active.length,
+
+      active:
+        simDiagnostics.active,
+
+      stored:
+
+------------------------------------------------------------
+ SIGNAL : gsmSignal
+------------------------------------------------------------
+
+LINE : 199
+        simDiagnostics.stored,
+    },
+
+    tracker: {
+      gsmSignal:
+        numericIo(io, 21),
+
+      externalVoltage:
+        externalMv === null
+          ? null
+          : externalMv / 1000,
+
+      internalBatteryVoltage:
+        internalMv === null
+          ? null
+
+------------------------------------------------------------
+ SIGNAL : externalVoltage
+------------------------------------------------------------
+
+LINE : 202
+    tracker: {
+      gsmSignal:
+        numericIo(io, 21),
+
+      externalVoltage:
+        externalMv === null
+          ? null
+          : externalMv / 1000,
+
+      internalBatteryVoltage:
+        internalMv === null
+          ? null
+          : internalMv / 1000,
+
+      satellites:
+
+------------------------------------------------------------
+ SIGNAL : internalBatteryVoltage
+------------------------------------------------------------
+
+LINE : 207
+        externalMv === null
+          ? null
+          : externalMv / 1000,
+
+      internalBatteryVoltage:
+        internalMv === null
+          ? null
+          : internalMv / 1000,
+
+      satellites:
+        telemetry.satellites,
+    },
+
+    /*
+     * V1 compatibility
+
+------------------------------------------------------------
+ SIGNAL : satellites
+------------------------------------------------------------
+
+LINE : 212
+        internalMv === null
+          ? null
+          : internalMv / 1000,
+
+      satellites:
+        telemetry.satellites,
+    },
+
+    /*
+     * V1 compatibility
+     */
+
+    rpm,
+
+    speed_kph:
+
+LINE : 213
+          ? null
+          : internalMv / 1000,
+
+      satellites:
+        telemetry.satellites,
+    },
+
+    /*
+     * V1 compatibility
+     */
+
+    rpm,
+
+    speed_kph:
+      speed,
+
+------------------------------------------------------------
+ SIGNAL : dtcCount
+------------------------------------------------------------
+
+LINE : 188
+      tpms: null,
+    },
+
+    diagnostics: {
+      dtcCount:
+        simDiagnostics.active.length,
+
+      active:
+        simDiagnostics.active,
+
+      stored:
+        simDiagnostics.stored,
+    },
+
+    tracker: {
+
+------------------------------------------------------------
+ SIGNAL : active:
+------------------------------------------------------------
+
+LINE : 191
+    diagnostics: {
+      dtcCount:
+        simDiagnostics.active.length,
+
+      active:
+        simDiagnostics.active,
+
+      stored:
+        simDiagnostics.stored,
+    },
+
+    tracker: {
+      gsmSignal:
+        numericIo(io, 21),
+
+
+------------------------------------------------------------
+ SIGNAL : stored:
+------------------------------------------------------------
+
+LINE : 194
+
+      active:
+        simDiagnostics.active,
+
+      stored:
+        simDiagnostics.stored,
+    },
+
+    tracker: {
+      gsmSignal:
+        numericIo(io, 21),
+
+      externalVoltage:
+        externalMv === null
+          ? null
+
+============================================================
+ NULL / DEFAULT / FALLBACK ANALYSIS
+============================================================
+
+FILE : .\server\teltonika\can\light-vehicle.ts
+
+PATTERN : : null
+LINE    : 272
+
+    safety: {
+      seatbelt: null,
+      handbrake: null,
+    },
+
+    warnings: {
+      checkEngine,
+
+PATTERN : : null
+LINE    : 273
+    safety: {
+      seatbelt: null,
+      handbrake: null,
+    },
+
+    warnings: {
+      checkEngine,
+      abs: null,
+
+PATTERN : : null
+LINE    : 278
+    warnings: {
+      checkEngine,
+      abs: null,
+      airbag: null,
+      esp: null,
+      oilPressure: null,
+      tpms: null,
+    },
+
+PATTERN : : null
+LINE    : 279
+      checkEngine,
+      abs: null,
+      airbag: null,
+      esp: null,
+      oilPressure: null,
+      tpms: null,
+    },
+
+
+PATTERN : : null
+LINE    : 280
+      abs: null,
+      airbag: null,
+      esp: null,
+      oilPressure: null,
+      tpms: null,
+    },
+
+    diagnostics: {
+
+PATTERN : : null
+LINE    : 281
+      airbag: null,
+      esp: null,
+      oilPressure: null,
+      tpms: null,
+    },
+
+    diagnostics: {
+      dtcCount,
+
+PATTERN : : null
+LINE    : 282
+      esp: null,
+      oilPressure: null,
+      tpms: null,
+    },
+
+    diagnostics: {
+      dtcCount,
+      active:
+
+PATTERN : null,
+LINE    : 17
+
+function opened(
+  flags: number | null,
+  mask: number,
+) {
+  if (flags === null) {
+    return null;
+  }
+
+PATTERN : null,
+LINE    : 228
+        fuelRate,
+      averageL100km:
+        null,
+      adBluePercent,
+      adBlueLiters,
+    },
+
+    doors: {
+
+PATTERN : null,
+LINE    : 272
+
+    safety: {
+      seatbelt: null,
+      handbrake: null,
+    },
+
+    warnings: {
+      checkEngine,
+
+PATTERN : null,
+LINE    : 273
+    safety: {
+      seatbelt: null,
+      handbrake: null,
+    },
+
+    warnings: {
+      checkEngine,
+      abs: null,
+
+PATTERN : null,
+LINE    : 278
+    warnings: {
+      checkEngine,
+      abs: null,
+      airbag: null,
+      esp: null,
+      oilPressure: null,
+      tpms: null,
+    },
+
+PATTERN : null,
+LINE    : 279
+      checkEngine,
+      abs: null,
+      airbag: null,
+      esp: null,
+      oilPressure: null,
+      tpms: null,
+    },
+
+
+PATTERN : null,
+LINE    : 280
+      abs: null,
+      airbag: null,
+      esp: null,
+      oilPressure: null,
+      tpms: null,
+    },
+
+    diagnostics: {
+
+PATTERN : null,
+LINE    : 281
+      airbag: null,
+      esp: null,
+      oilPressure: null,
+      tpms: null,
+    },
+
+    diagnostics: {
+      dtcCount,
+
+PATTERN : null,
+LINE    : 282
+      esp: null,
+      oilPressure: null,
+      tpms: null,
+    },
+
+    diagnostics: {
+      dtcCount,
+      active:
+
+PATTERN : return null
+LINE    : 21
+) {
+  if (flags === null) {
+    return null;
+  }
+
+  return (
+    flags & mask
+  ) !== 0;
+
+PATTERN : simulator
+LINE    : 8
+  numericIo,
+  signed16,
+  simulatorDiagnostics,
+} from "./diagnostics";
+
+import type {
+  NormalizedCanV2,
+} from "./types-v2";
+
+PATTERN : simulator
+LINE    : 169
+
+  const simDiagnostics =
+    simulatorDiagnostics(io);
+
+  const checkEngine =
+    dtcCount === null &&
+    simDiagnostics.active.length === 0
+      ? null
+
+PATTERN : simulator
+LINE    : 186
+    numericIo(io, 67);
+
+  const simulator =
+    io.io_9005 !== undefined;
+
+  const result: NormalizedCanV2 = {
+    version: 2,
+
+
+PATTERN : simulator
+LINE    : 195
+      manufacturer: "teltonika",
+      profile: "light_vehicle_can",
+      simulator,
+      mappingVersion: "2.0",
+    },
+
+    engine: {
+      rpm,
+
+PATTERN : simulator
+LINE    : 330
+      odometerKm,
+
+    simulator,
+  };
+
+  return result;
+}
+
+PATTERN : io_
+LINE    : 187
+
+  const simulator =
+    io.io_9005 !== undefined;
+
+  const result: NormalizedCanV2 = {
+    version: 2,
+
+    source: {
+
+PATTERN : === 1
+LINE    : 155
+    ignitionRaw === null
+      ? null
+      : ignitionRaw === 1;
+
+  const movement =
+    movementRaw === null
+      ? speed > 0
+      : movementRaw === 1;
+
+PATTERN : === 1
+LINE    : 160
+    movementRaw === null
+      ? speed > 0
+      : movementRaw === 1;
+
+  const doorFlags =
+    numericIo(io, 38);
+
+  const dtcCount =
+
+PATTERN : !== 0
+LINE    : 26
+  return (
+    flags & mask
+  ) !== 0;
+}
+
+
+export function normalizeLightVehicle(
+  telemetry: NormalizedTelemetry,
+
+FILE : .\server\teltonika\can\j1939.ts
+
+PATTERN : : null
+LINE    : 165
+
+    doors: {
+      frontLeft: null,
+      frontRight: null,
+      rearLeft: null,
+      rearRight: null,
+      hood: null,
+      trunk: null,
+
+PATTERN : : null
+LINE    : 166
+    doors: {
+      frontLeft: null,
+      frontRight: null,
+      rearLeft: null,
+      rearRight: null,
+      hood: null,
+      trunk: null,
+    },
+
+PATTERN : : null
+LINE    : 167
+      frontLeft: null,
+      frontRight: null,
+      rearLeft: null,
+      rearRight: null,
+      hood: null,
+      trunk: null,
+    },
+
+
+PATTERN : : null
+LINE    : 168
+      frontRight: null,
+      rearLeft: null,
+      rearRight: null,
+      hood: null,
+      trunk: null,
+    },
+
+    safety: {
+
+PATTERN : : null
+LINE    : 169
+      rearLeft: null,
+      rearRight: null,
+      hood: null,
+      trunk: null,
+    },
+
+    safety: {
+      seatbelt: null,
+
+PATTERN : : null
+LINE    : 170
+      rearRight: null,
+      hood: null,
+      trunk: null,
+    },
+
+    safety: {
+      seatbelt: null,
+      handbrake: null,
+
+PATTERN : : null
+LINE    : 174
+
+    safety: {
+      seatbelt: null,
+      handbrake: null,
+    },
+
+    warnings: {
+      checkEngine,
+
+PATTERN : : null
+LINE    : 175
+    safety: {
+      seatbelt: null,
+      handbrake: null,
+    },
+
+    warnings: {
+      checkEngine,
+      abs: null,
+
+PATTERN : : null
+LINE    : 180
+    warnings: {
+      checkEngine,
+      abs: null,
+      airbag: null,
+      esp: null,
+      oilPressure: null,
+      tpms: null,
+    },
+
+PATTERN : : null
+LINE    : 181
+      checkEngine,
+      abs: null,
+      airbag: null,
+      esp: null,
+      oilPressure: null,
+      tpms: null,
+    },
+
+
+PATTERN : : null
+LINE    : 182
+      abs: null,
+      airbag: null,
+      esp: null,
+      oilPressure: null,
+      tpms: null,
+    },
+
+    diagnostics: {
+
+PATTERN : : null
+LINE    : 183
+      airbag: null,
+      esp: null,
+      oilPressure: null,
+      tpms: null,
+    },
+
+    diagnostics: {
+      dtcCount:
+
+PATTERN : : null
+LINE    : 184
+      esp: null,
+      oilPressure: null,
+      tpms: null,
+    },
+
+    diagnostics: {
+      dtcCount:
+        simDiagnostics.active.length,
+
+PATTERN : null,
+LINE    : 125
+      rpm,
+      coolantTemperatureC:
+        null,
+      loadPercent:
+        engineLoad,
+      throttlePercent:
+        throttle,
+      engineHours:
+
+PATTERN : null,
+LINE    : 131
+        throttle,
+      engineHours:
+        null,
+    },
+
+    vehicle: {
+      speedKph:
+        speed,
+
+PATTERN : null,
+LINE    : 146
+        fuelLevel,
+      levelLiters:
+        null,
+      consumedLiters:
+        fuelUsed,
+      rateLph:
+        null,
+      averageL100km:
+
+PATTERN : null,
+LINE    : 150
+        fuelUsed,
+      rateLph:
+        null,
+      averageL100km:
+        null,
+      adBluePercent:
+        numericIo(io, 19),
+      adBlueLiters:
+
+PATTERN : null,
+LINE    : 152
+        null,
+      averageL100km:
+        null,
+      adBluePercent:
+        numericIo(io, 19),
+      adBlueLiters:
+        numericIo(io, 20) === null
+          ? null
+
+PATTERN : null,
+LINE    : 165
+
+    doors: {
+      frontLeft: null,
+      frontRight: null,
+      rearLeft: null,
+      rearRight: null,
+      hood: null,
+      trunk: null,
+
+PATTERN : null,
+LINE    : 166
+    doors: {
+      frontLeft: null,
+      frontRight: null,
+      rearLeft: null,
+      rearRight: null,
+      hood: null,
+      trunk: null,
+    },
+
+PATTERN : null,
+LINE    : 167
+      frontLeft: null,
+      frontRight: null,
+      rearLeft: null,
+      rearRight: null,
+      hood: null,
+      trunk: null,
+    },
+
+
+PATTERN : null,
+LINE    : 168
+      frontRight: null,
+      rearLeft: null,
+      rearRight: null,
+      hood: null,
+      trunk: null,
+    },
+
+    safety: {
+
+PATTERN : null,
+LINE    : 169
+      rearLeft: null,
+      rearRight: null,
+      hood: null,
+      trunk: null,
+    },
+
+    safety: {
+      seatbelt: null,
+
+PATTERN : null,
+LINE    : 170
+      rearRight: null,
+      hood: null,
+      trunk: null,
+    },
+
+    safety: {
+      seatbelt: null,
+      handbrake: null,
+
+PATTERN : null,
+LINE    : 174
+
+    safety: {
+      seatbelt: null,
+      handbrake: null,
+    },
+
+    warnings: {
+      checkEngine,
+
+PATTERN : null,
+LINE    : 175
+    safety: {
+      seatbelt: null,
+      handbrake: null,
+    },
+
+    warnings: {
+      checkEngine,
+      abs: null,
+
+PATTERN : null,
+LINE    : 180
+    warnings: {
+      checkEngine,
+      abs: null,
+      airbag: null,
+      esp: null,
+      oilPressure: null,
+      tpms: null,
+    },
+
+PATTERN : null,
+LINE    : 181
+      checkEngine,
+      abs: null,
+      airbag: null,
+      esp: null,
+      oilPressure: null,
+      tpms: null,
+    },
+
+
+PATTERN : null,
+LINE    : 182
+      abs: null,
+      airbag: null,
+      esp: null,
+      oilPressure: null,
+      tpms: null,
+    },
+
+    diagnostics: {
+
+PATTERN : null,
+LINE    : 183
+      airbag: null,
+      esp: null,
+      oilPressure: null,
+      tpms: null,
+    },
+
+    diagnostics: {
+      dtcCount:
+
+PATTERN : null,
+LINE    : 184
+      esp: null,
+      oilPressure: null,
+      tpms: null,
+    },
+
+    diagnostics: {
+      dtcCount:
+        simDiagnostics.active.length,
+
+PATTERN : null,
+LINE    : 232
+
+    coolant_temperature_c:
+      null,
+
+    throttle_percent:
+      throttle,
+
+    odometer_km:
+
+PATTERN : simulator
+LINE    : 7
+import {
+  numericIo,
+  simulatorDiagnostics,
+} from "./diagnostics";
+
+import type {
+  NormalizedCanV2,
+} from "./types-v2";
+
+PATTERN : simulator
+LINE    : 94
+
+  const simDiagnostics =
+    simulatorDiagnostics(io);
+
+  const checkEngine =
+    mil === null &&
+    simDiagnostics.active.length === 0
+      ? null
+
+PATTERN : simulator
+LINE    : 109
+        );
+
+  const simulator =
+    io.io_9005 !== undefined;
+
+  return {
+    version: 2,
+
+
+PATTERN : simulator
+LINE    : 118
+      manufacturer: "teltonika",
+      profile: "j1939_fms",
+      simulator,
+      mappingVersion: "2.0",
+    },
+
+    engine: {
+      rpm,
+
+PATTERN : simulator
+LINE    : 240
+      odometerKm,
+
+    simulator,
+  };
+}
+
+PATTERN : io_
+LINE    : 110
+
+  const simulator =
+    io.io_9005 !== undefined;
+
+  return {
+    version: 2,
+
+    source: {
+
+PATTERN : === 1
+LINE    : 67
+    ignitionRaw === null
+      ? null
+      : ignitionRaw === 1;
+
+  const movement =
+    movementRaw === null
+      ? speed > 0
+      : movementRaw === 1;
+
+PATTERN : === 1
+LINE    : 72
+    movementRaw === null
+      ? speed > 0
+      : movementRaw === 1;
+
+  /*
+   * FMC650 may also receive CAN adapter values.
+   * Use mileage if present.
+   */
+
+PATTERN : !== 0
+LINE    : 103
+          (
+            mil !== null &&
+            mil !== 0 &&
+            mil !== 7
+          ) ||
+          simDiagnostics.active.length > 0
+        );
+
+
+============================================================
+ RAW IO / J1939 ELEMENT REFERENCES
+============================================================
+
+FILE : .\server\teltonika\can\light-vehicle.ts
+
+PATTERN : io_
+LINE    : 187
+    numericIo(io, 67);
+
+  const simulator =
+    io.io_9005 !== undefined;
+
+  const result: NormalizedCanV2 = {
+    version: 2,
+
+    source: {
+      manufacturer: "teltonika",
+      profile: "light_vehicle_can",
+
+PATTERN : 80
+LINE    : 255
+      rearRight:
+        opened(
+          doorFlags,
+          0x800,
+        ),
+
+      hood:
+        opened(
+          doorFlags,
+          0x1000,
+        ),
+
+PATTERN : CAN
+LINE    : 12
+} from "./diagnostics";
+
+import type {
+  NormalizedCanV2,
+} from "./types-v2";
+
+
+function opened(
+  flags: number | null,
+  mask: number,
+) {
+
+PATTERN : CAN
+LINE    : 32
+
+export function normalizeLightVehicle(
+  telemetry: NormalizedTelemetry,
+): NormalizedCanV2 {
+  const io = telemetry.io;
+
+  /*
+   * Official Teltonika CAN adapter AVL IDs:
+   *
+   * 14  Engine Worktime (minutes)
+   * 16  Total Mileage Counted (m)
+
+PATTERN : CAN
+LINE    : 36
+  const io = telemetry.io;
+
+  /*
+   * Official Teltonika CAN adapter AVL IDs:
+   *
+   * 14  Engine Worktime (minutes)
+   * 16  Total Mileage Counted (m)
+   * 17  Fuel Consumed Counted (0.1 L)
+   * 18  Fuel Rate (0.1 L/h)
+   * 19  AdBlue %
+   * 20  AdBlue liters (0.1 L)
+
+PATTERN : CAN
+LINE    : 189
+  const simulator =
+    io.io_9005 !== undefined;
+
+  const result: NormalizedCanV2 = {
+    version: 2,
+
+    source: {
+      manufacturer: "teltonika",
+      profile: "light_vehicle_can",
+      simulator,
+      mappingVersion: "2.0",
+
+PATTERN : CAN
+LINE    : 194
+
+    source: {
+      manufacturer: "teltonika",
+      profile: "light_vehicle_can",
+      simulator,
+      mappingVersion: "2.0",
+    },
+
+    engine: {
+      rpm,
+      coolantTemperatureC:
+
+FILE : .\server\teltonika\can\j1939.ts
+
+PATTERN : io_
+LINE    : 110
+        );
+
+  const simulator =
+    io.io_9005 !== undefined;
+
+  return {
+    version: 2,
+
+    source: {
+      manufacturer: "teltonika",
+      profile: "j1939_fms",
+
+PATTERN : 10349
+LINE    : 30
+   * 86    Engine Total Fuel Used
+   * 87    Fuel Level
+   * 88    Engine Speed
+   * 10349 MIL indicator
+   *
+   * Permanent tracker IO remains shared:
+   * 21 / 66 / 67 / 239 / 240
+   */
+
+  const rpm =
+    numericIo(io, 88);
+
+PATTERN : 10349
+LINE    : 56
+    numericIo(io, 87);
+
+  const mil =
+    numericIo(io, 10349);
+
+  const ignitionRaw =
+    numericIo(io, 239);
+
+  const movementRaw =
+    numericIo(io, 240);
+
+
+PATTERN : 88
+LINE    : 29
+   * 85    Engine Current Load
+   * 86    Engine Total Fuel Used
+   * 87    Fuel Level
+   * 88    Engine Speed
+   * 10349 MIL indicator
+   *
+   * Permanent tracker IO remains shared:
+   * 21 / 66 / 67 / 239 / 240
+   */
+
+  const rpm =
+
+PATTERN : 88
+LINE    : 37
+   */
+
+  const rpm =
+    numericIo(io, 88);
+
+  const speed =
+    numericIo(io, 80) ??
+    telemetry.speedKph;
+
+  const throttle =
+    numericIo(io, 84);
+
+PATTERN : 80
+LINE    : 24
+  /*
+   * FMC650 FMS/J1939 relevant AVL elements:
+   *
+   * 80    Wheel Based Speed
+   * 84    Accelerator Pedal Position
+   * 85    Engine Current Load
+   * 86    Engine Total Fuel Used
+   * 87    Fuel Level
+   * 88    Engine Speed
+   * 10349 MIL indicator
+   *
+
+PATTERN : 80
+LINE    : 40
+    numericIo(io, 88);
+
+  const speed =
+    numericIo(io, 80) ??
+    telemetry.speedKph;
+
+  const throttle =
+    numericIo(io, 84);
+
+  const engineLoad =
+    numericIo(io, 85);
+
+PATTERN : CAN
+LINE    : 11
+} from "./diagnostics";
+
+import type {
+  NormalizedCanV2,
+} from "./types-v2";
+
+
+export function normalizeJ1939(
+  telemetry: NormalizedTelemetry,
+): NormalizedCanV2 {
+  const io =
+
+PATTERN : CAN
+LINE    : 17
+
+export function normalizeJ1939(
+  telemetry: NormalizedTelemetry,
+): NormalizedCanV2 {
+  const io =
+    telemetry.io;
+
+  /*
+   * FMC650 FMS/J1939 relevant AVL elements:
+   *
+   * 80    Wheel Based Speed
+
+PATTERN : CAN
+LINE    : 75
+      : movementRaw === 1;
+
+  /*
+   * FMC650 may also receive CAN adapter values.
+   * Use mileage if present.
+   */
+  const odometerMetres =
+    numericIo(io, 36) ??
+    numericIo(io, 16);
+
+  const odometerKm =
+
+PATTERN : FMS
+LINE    : 22
+    telemetry.io;
+
+  /*
+   * FMC650 FMS/J1939 relevant AVL elements:
+   *
+   * 80    Wheel Based Speed
+   * 84    Accelerator Pedal Position
+   * 85    Engine Current Load
+   * 86    Engine Total Fuel Used
+   * 87    Fuel Level
+   * 88    Engine Speed
+
+PATTERN : FMS
+LINE    : 117
+
+    source: {
+      manufacturer: "teltonika",
+      profile: "j1939_fms",
+      simulator,
+      mappingVersion: "2.0",
+    },
+
+    engine: {
+      rpm,
+      coolantTemperatureC:
+
+PATTERN : J1939
+LINE    : 15
+} from "./types-v2";
+
+
+export function normalizeJ1939(
+  telemetry: NormalizedTelemetry,
+): NormalizedCanV2 {
+  const io =
+    telemetry.io;
+
+  /*
+   * FMC650 FMS/J1939 relevant AVL elements:
+
+PATTERN : J1939
+LINE    : 22
+    telemetry.io;
+
+  /*
+   * FMC650 FMS/J1939 relevant AVL elements:
+   *
+   * 80    Wheel Based Speed
+   * 84    Accelerator Pedal Position
+   * 85    Engine Current Load
+   * 86    Engine Total Fuel Used
+   * 87    Fuel Level
+   * 88    Engine Speed
+
+PATTERN : J1939
+LINE    : 117
+
+    source: {
+      manufacturer: "teltonika",
+      profile: "j1939_fms",
+      simulator,
+      mappingVersion: "2.0",
+    },
+
+    engine: {
+      rpm,
+      coolantTemperatureC:
+
+============================================================
+ AUTOMATIC SIGNAL PRESENCE MATRIX
+============================================================
+
+SIGNAL                         LIGHT VEHICLE    J1939           
+----------------------------   --------------   --------------  
+rpm                            PRESENT          PRESENT         
+loadPercent                    PRESENT          PRESENT         
+throttlePercent                PRESENT          PRESENT         
+engineHours                    PRESENT          PRESENT         
+speedKph                       PRESENT          PRESENT         
+odometerKm                     PRESENT          PRESENT         
+ignition                       PRESENT          PRESENT         
+movement                       PRESENT          PRESENT         
+levelPercent                   PRESENT          PRESENT         
+levelLiters                    PRESENT          PRESENT         
+consumedLiters                 PRESENT          PRESENT         
+rateLph                        PRESENT          PRESENT         
+averageL100km                  PRESENT          PRESENT         
+adBluePercent                  PRESENT          PRESENT         
+adBlueLiters                   PRESENT          PRESENT         
+frontLeft                      PRESENT          PRESENT         
+frontRight                     PRESENT          PRESENT         
+rearLeft                       PRESENT          PRESENT         
+rearRight                      PRESENT          PRESENT         
+hood                           PRESENT          PRESENT         
+trunk                          PRESENT          PRESENT         
+seatbelt                       PRESENT          PRESENT         
+handbrake                      PRESENT          PRESENT         
+checkEngine                    PRESENT          PRESENT         
+abs                            PRESENT          PRESENT         
+airbag                         PRESENT          PRESENT         
+esp                            PRESENT          PRESENT         
+oilPressure                    PRESENT          PRESENT         
+tpms                           PRESENT          PRESENT         
+gsmSignal                      PRESENT          PRESENT         
+externalVoltage                PRESENT          PRESENT         
+internalBatteryVoltage         PRESENT          PRESENT         
+satellites                     PRESENT          PRESENT         
+dtcCount                       PRESENT          PRESENT         
+active:                        PRESENT          PRESENT         
+stored:                        PRESENT          PRESENT         
+
+============================================================
+ V1.3A TARGET CANDIDATES
+============================================================
+
+CANDIDATE : engine_rpm_high
+CANDIDATE : engine_load_high
+CANDIDATE : adblue_low
+CANDIDATE : parking_brake_moving
+CANDIDATE : seatbelt_unfastened_moving
+CANDIDATE : abs_warning
+CANDIDATE : airbag_warning
+CANDIDATE : esp_warning
+CANDIDATE : oil_pressure_warning
+CANDIDATE : tpms_warning
+
+============================================================
+ SAFETY / SCOPE
+============================================================
+
+READ ONLY
+NO PROJECT FILE MODIFICATION
+NO SQL MIGRATION
+NO ALERT ENGINE PATCH
+NO CAN V2 PATCH
+NO J1939 PATCH
+NO LIGHT VEHICLE PATCH
+NO SIMULATOR PATCH
+NO DTC CLEAR PATCH

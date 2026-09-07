@@ -1,0 +1,4544 @@
+﻿============================================================
+ MATELEMATICS - DIAGNOSTICS V2 PHASE 2 PREFLIGHT
+============================================================
+
+============================================================
+FILE : .\app\api\diagnostics\route.ts
+EXISTS : True
+============================================================
+import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
+
+import {
+  getJ1939RealClearProfile,
+  canTransmitRealJ1939Clear,
+} from "../../../server/teltonika/can/j1939-real-clear-profile";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+type Role =
+  | "matelematics_admin"
+  | "partner_admin"
+  | "client_admin"
+  | "user";
+
+type Profile = {
+  id: string;
+  role: Role;
+  company_id: string | null;
+  partner_id: string | null;
+};
+
+type JsonMap = Record<string, unknown>;
+
+const supabaseUrl =
+  process.env.SUPABASE_URL ??
+  process.env.NEXT_PUBLIC_SUPABASE_URL;
+
+const secretKey =
+  process.env.SUPABASE_SECRET_KEY;
+
+function getAdmin() {
+  if (!supabaseUrl || !secretKey) {
+    throw new Error("SUPABASE_CONFIG");
+  }
+
+  return createClient(
+    supabaseUrl,
+    secretKey,
+    {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+      },
+    },
+  );
+}
+
+async function authenticate(request: NextRequest) {
+  const authorization =
+    request.headers.get("authorization");
+
+  const token =
+    authorization?.startsWith("Bearer ")
+      ? authorization.slice(7)
+      : null;
+
+  if (!token) {
+    throw new Error("AUTH_REQUIRED");
+  }
+
+  const admin = getAdmin();
+
+  const {
+    data: userData,
+    error: userError,
+  } =
+    await admin.auth.getUser(token);
+
+  if (userError || !userData.user) {
+    throw new Error("AUTH_REQUIRED");
+  }
+
+  const {
+    data: profile,
+    error: profileError,
+  } =
+    await admin
+      .from("profiles")
+      .select(
+        "id,role,company_id,partner_id",
+      )
+      .eq("id", userData.user.id)
+      .single();
+
+  if (profileError || !profile) {
+    throw new Error("PROFILE_REQUIRED");
+  }
+
+  return {
+    admin,
+    profile: profile as Profile,
+  };
+}
+
+async function getAllowedCompanyIds(
+  admin: ReturnType<typeof getAdmin>,
+  profile: Profile,
+) {
+  if (
+    profile.role === "client_admin" ||
+    profile.role === "user"
+  ) {
+    return profile.company_id
+      ? [profile.company_id]
+      : [];
+  }
+
+  if (profile.role === "partner_admin") {
+    if (!profile.partner_id) {
+      return [];
+    }
+
+    const {
+      data,
+      error,
+    } =
+      await admin
+        .from("companies")
+        .select("id")
+        .eq(
+          "partner_id",
+          profile.partner_id,
+        );
+
+    if (error) {
+      throw error;
+    }
+
+    return (data ?? []).map(
+      (row) => row.id,
+    );
+  }
+
+  return null;
+}
+
+async function getVisibleVehicles(
+  admin: ReturnType<typeof getAdmin>,
+  profile: Profile,
+) {
+  const allowedCompanyIds =
+    await getAllowedCompanyIds(
+      admin,
+      profile,
+    );
+
+  let query =
+    admin
+      .from("vehicles")
+      .select(
+        "id,company_id,name,registration,brand,model,status",
+      )
+      .order("name");
+
+  if (allowedCompanyIds !== null) {
+    if (allowedCompanyIds.length === 0) {
+      return [];
+    }
+
+    query =
+      query.in(
+        "company_id",
+        allowedCompanyIds,
+      );
+  }
+
+  const {
+    data,
+    error,
+  } =
+    await query;
+
+  if (error) {
+    throw error;
+  }
+
+  return data ?? [];
+}
+
+function asObject(
+  value: unknown,
+): JsonMap | null {
+  if (
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value)
+  ) {
+    return value as JsonMap;
+  }
+
+  return null;
+}
+
+function isHidden(
+  metadata: unknown,
+) {
+  const object =
+    asObject(metadata);
+
+  return (
+    typeof object?.matelematics_hidden_at ===
+    "string"
+  );
+}
+
+function diagnosticArray(
+  payload: unknown,
+  key: "active" | "stored",
+) {
+  const can =
+    asObject(payload);
+
+  const diagnostics =
+    asObject(
+      can?.diagnostics,
+    );
+
+  const value =
+    diagnostics?.[key];
+
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((entry) => {
+      const item =
+        asObject(entry);
+
+      if (
+        !item ||
+        typeof item.code !== "string"
+      ) {
+        return null;
+      }
+
+      return {
+        code:
+          item.code,
+
+        source:
+          typeof item.source === "string"
+            ? item.source
+            : null,
+
+        status:
+          typeof item.status === "string"
+            ? item.status
+            : key,
+      };
+    })
+    .filter(
+      (
+        item,
+      ): item is {
+        code: string;
+        source: string | null;
+        status: string;
+      } =>
+        item !== null,
+    );
+}
+
+function getProfile(
+  payload: unknown,
+) {
+  const can =
+    asObject(payload);
+
+  const source =
+    asObject(can?.source);
+
+  return typeof source?.profile ===
+    "string"
+    ? source.profile
+    : null;
+}
+
+function getCheckEngine(
+  payload: unknown,
+) {
+  const can =
+    asObject(payload);
+
+  const warnings =
+    asObject(can?.warnings);
+
+  return typeof warnings?.checkEngine ===
+    "boolean"
+    ? warnings.checkEngine
+    : null;
+}
+
+function getSimulatorFlag(
+  payload: unknown,
+) {
+  const can =
+    asObject(
+      payload,
+    );
+
+  const source =
+    asObject(
+      can?.source,
+    );
+
+  return source?.simulator ===
+    true;
+}
+
+function wait(
+  ms: number,
+) {
+  return new Promise<void>(
+    (
+      resolve,
+    ) => {
+      setTimeout(
+        resolve,
+        ms,
+      );
+    },
+  );
+}
+
+
+function diagnosticCodes(
+  payload: unknown,
+) {
+  const active =
+    diagnosticArray(
+      payload,
+      "active",
+    );
+
+  const stored =
+    diagnosticArray(
+      payload,
+      "stored",
+    );
+
+  return {
+    active,
+
+    stored,
+
+    all:
+      Array.from(
+        new Set(
+          [
+            ...active.map(
+              (
+                item,
+              ) =>
+                item.code,
+            ),
+
+            ...stored.map(
+              (
+                item,
+              ) =>
+                item.code,
+            ),
+          ],
+        ),
+      ),
+  };
+}
+
+
+async function waitForCleanTelemetry(
+  admin: ReturnType<typeof getAdmin>,
+  input: {
+    vehicleId: string;
+    after: string;
+    timeoutMs?: number;
+  },
+) {
+  const timeoutMs =
+    input.timeoutMs ??
+    15_000;
+
+  const deadline =
+    Date.now() +
+    timeoutMs;
+
+  let lastSeen:
+    {
+      recordedAt: string;
+      activeCodes: string[];
+      storedCodes: string[];
+      checkEngine: boolean | null;
+    } |
+    null =
+      null;
+
+
+  while (
+    Date.now() <
+    deadline
+  ) {
+    const {
+      data,
+      error,
+    } =
+      await admin
+        .from("telemetry")
+        .select(
+          "recorded_at,can_payload",
+        )
+        .eq(
+          "vehicle_id",
+          input.vehicleId,
+        )
+        .gt(
+          "recorded_at",
+          input.after,
+        )
+        .order(
+          "recorded_at",
+          {
+            ascending:
+              false,
+          },
+        )
+        .limit(1)
+        .maybeSingle();
+
+
+    if (
+      error
+    ) {
+      throw error;
+    }
+
+
+    if (
+      data
+    ) {
+      const diagnostics =
+        diagnosticCodes(
+          data.can_payload,
+        );
+
+      const checkEngine =
+        getCheckEngine(
+          data.can_payload,
+        );
+
+
+      lastSeen = {
+        recordedAt:
+          data.recorded_at,
+
+        activeCodes:
+          diagnostics.active.map(
+            (
+              item,
+            ) =>
+              item.code,
+          ),
+
+        storedCodes:
+          diagnostics.stored.map(
+            (
+              item,
+            ) =>
+              item.code,
+          ),
+
+        checkEngine,
+      };
+
+
+      const clean =
+        diagnostics.active.length ===
+          0 &&
+        diagnostics.stored.length ===
+          0 &&
+        checkEngine !==
+          true;
+
+
+      if (
+        clean
+      ) {
+        return {
+          verified:
+            true as const,
+
+          recordedAt:
+            data.recorded_at,
+
+          activeCodes:
+            [] as string[],
+
+          storedCodes:
+            [] as string[],
+
+          checkEngine,
+        };
+      }
+    }
+
+
+    await wait(
+      750,
+    );
+  }
+
+
+  return {
+    verified:
+      false as const,
+
+    recordedAt:
+      lastSeen?.recordedAt ??
+      null,
+
+    activeCodes:
+      lastSeen?.activeCodes ??
+      [],
+
+    storedCodes:
+      lastSeen?.storedCodes ??
+      [],
+
+    checkEngine:
+      lastSeen?.checkEngine ??
+      null,
+  };
+}
+
+export async function GET(
+  request: NextRequest,
+) {
+  try {
+    const {
+      admin,
+      profile,
+    } =
+      await authenticate(request);
+
+    const vehicles =
+      await getVisibleVehicles(
+        admin,
+        profile,
+      );
+
+    if (vehicles.length === 0) {
+      return NextResponse.json({
+        vehicles: [],
+        events: [],
+        metrics: {
+          activeDtc: 0,
+          activeCheckEngine: 0,
+          storedDtc: 0,
+          affectedVehicles: 0,
+        },
+      });
+    }
+
+    const vehicleIds =
+      vehicles.map(
+        (vehicle) => vehicle.id,
+      );
+
+    const companyIds =
+      Array.from(
+        new Set(
+          vehicles.map(
+            (vehicle) =>
+              vehicle.company_id,
+          ),
+        ),
+      );
+
+    const [
+      companiesResult,
+      devicesResult,
+      alertsResult,
+      telemetryResult,
+    ] =
+      await Promise.all([
+        admin
+          .from("companies")
+          .select("id,name")
+          .in("id", companyIds),
+
+        admin
+          .from("devices")
+          .select(
+            "id,vehicle_id,imei,manufacturer,model,status,last_seen_at",
+          )
+          .in(
+            "vehicle_id",
+            vehicleIds,
+          ),
+
+        admin
+          .from("alerts")
+          .select(
+            "id,vehicle_id,alert_type,severity,title,message,status,triggered_at,resolved_at,metadata",
+          )
+          .in(
+            "vehicle_id",
+            vehicleIds,
+          )
+          .order(
+            "triggered_at",
+            {
+              ascending: false,
+            },
+          )
+          .limit(1500),
+
+        admin
+          .from("telemetry")
+          .select(
+            "vehicle_id,recorded_at,can_payload",
+          )
+          .in(
+            "vehicle_id",
+            vehicleIds,
+          )
+          .order(
+            "recorded_at",
+            {
+              ascending: false,
+            },
+          )
+          .limit(1500),
+      ]);
+
+    if (companiesResult.error) {
+      throw companiesResult.error;
+    }
+
+    if (devicesResult.error) {
+      throw devicesResult.error;
+    }
+
+    if (alertsResult.error) {
+      throw alertsResult.error;
+    }
+
+    if (telemetryResult.error) {
+      throw telemetryResult.error;
+    }
+
+    const companyMap =
+      new Map(
+        (companiesResult.data ?? []).map(
+          (company) => [
+            company.id,
+            company.name,
+          ],
+        ),
+      );
+
+    const deviceMap =
+      new Map(
+        (devicesResult.data ?? []).map(
+          (device) => [
+            device.vehicle_id,
+            device,
+          ],
+        ),
+      );
+
+    const latestTelemetry =
+      new Map<
+        string,
+        {
+          recorded_at: string;
+          can_payload: unknown;
+        }
+      >();
+
+    for (
+      const row of
+      telemetryResult.data ?? []
+    ) {
+      if (
+        !latestTelemetry.has(
+          row.vehicle_id,
+        )
+      ) {
+        latestTelemetry.set(
+          row.vehicle_id,
+          {
+            recorded_at:
+              row.recorded_at,
+
+            can_payload:
+              row.can_payload,
+          },
+        );
+      }
+    }
+
+    const diagnosticAlerts =
+      (
+        alertsResult.data ??
+        []
+      ).filter(
+        (alert) =>
+          (
+            alert.alert_type ===
+              "check_engine" ||
+            alert.alert_type.startsWith(
+              "diagnostic_dtc_",
+            )
+          ) &&
+          !isHidden(
+            alert.metadata,
+          ),
+      );
+
+    const recurrence =
+      new Map<string, number>();
+
+    for (
+      const alert of
+      diagnosticAlerts
+    ) {
+      const key =
+        `${alert.vehicle_id}:${alert.alert_type}`;
+
+      recurrence.set(
+        key,
+        (
+          recurrence.get(key) ??
+          0
+        ) + 1,
+      );
+    }
+
+    const vehicleMap =
+      new Map(
+        vehicles.map(
+          (vehicle) => [
+            vehicle.id,
+            vehicle,
+          ],
+        ),
+      );
+
+    const events =
+      diagnosticAlerts.map(
+        (alert) => {
+          const vehicle =
+            vehicleMap.get(
+              alert.vehicle_id,
+            );
+
+          const latest =
+            latestTelemetry.get(
+              alert.vehicle_id,
+            );
+
+          const isDtc =
+            alert.alert_type.startsWith(
+              "diagnostic_dtc_",
+            );
+
+          return {
+            id:
+              alert.id,
+
+            vehicleId:
+              alert.vehicle_id,
+
+            vehicleName:
+              vehicle?.name ??
+              "Vehicle",
+
+            registration:
+              vehicle?.registration ??
+              "-",
+
+            companyName:
+              vehicle
+                ? companyMap.get(
+                    vehicle.company_id,
+                  ) ??
+                  "Client"
+                : "Client",
+
+            kind:
+              isDtc
+                ? "dtc"
+                : "check_engine",
+
+            code:
+              isDtc
+                ? alert.alert_type.replace(
+                    "diagnostic_dtc_",
+                    "",
+                  )
+                : null,
+
+            title:
+              alert.title,
+
+            message:
+              alert.message,
+
+            severity:
+              alert.severity,
+
+            status:
+              alert.status,
+
+            triggeredAt:
+              alert.triggered_at,
+
+            resolvedAt:
+              alert.resolved_at,
+
+            recurrenceCount:
+              recurrence.get(
+                `${alert.vehicle_id}:${alert.alert_type}`,
+              ) ??
+              1,
+
+            profile:
+              latest
+                ? getProfile(
+                    latest.can_payload,
+                  )
+                : null,
+          };
+        },
+      );
+
+    type DtcHistoryItem = {
+      vehicleId: string;
+      code: string;
+      title: string | null;
+      firstSeenAt: string;
+      lastSeenAt: string;
+      recurrenceCount: number;
+      lastClearAt: string | null;
+      returnedAfterClear: boolean;
+      returnedAt: string | null;
+      returnDelaySeconds: number | null;
+      currentStatus: "active" | "resolved";
+    };
+
+
+    const dtcHistoryMap =
+      new Map<
+        string,
+        {
+          vehicleId: string;
+          code: string;
+          title: string | null;
+          alerts: typeof diagnosticAlerts;
+        }
+      >();
+
+
+    for (
+      const alert of diagnosticAlerts
+    ) {
+      if (
+        !alert.alert_type.startsWith(
+          "diagnostic_dtc_",
+        )
+      ) {
+        continue;
+      }
+
+      const code =
+        alert.alert_type.replace(
+          "diagnostic_dtc_",
+          "",
+        );
+
+      const key =
+        `${alert.vehicle_id}:${code}`;
+
+      const current =
+        dtcHistoryMap.get(
+          key,
+        );
+
+      if (
+        current
+      ) {
+        current.alerts.push(
+          alert,
+        );
+      } else {
+        dtcHistoryMap.set(
+          key,
+          {
+            vehicleId:
+              alert.vehicle_id,
+
+            code,
+
+            title:
+              alert.title ??
+              null,
+
+            alerts: [
+              alert,
+            ],
+          },
+        );
+      }
+    }
+
+
+    const dtcHistory: DtcHistoryItem[] =
+      Array.from(
+        dtcHistoryMap.values(),
+      ).map(
+        (
+          group,
+        ) => {
+          const sorted =
+            [...group.alerts].sort(
+              (
+                a,
+                b,
+              ) =>
+                new Date(
+                  a.triggered_at,
+                ).getTime() -
+                new Date(
+                  b.triggered_at,
+                ).getTime(),
+            );
+
+          const first =
+            sorted[0];
+
+          const last =
+            sorted[
+              sorted.length - 1
+            ];
+
+          let lastClearAt:
+            string |
+            null =
+              null;
+
+          for (
+            const alert of sorted
+          ) {
+            const metadata =
+              asObject(
+                alert.metadata,
+              );
+
+            const dtcClear =
+              asObject(
+                metadata?.dtc_clear,
+              );
+
+            const verifiedAt =
+              typeof dtcClear?.verified_at ===
+                "string"
+                ? dtcClear.verified_at
+                : typeof dtcClear?.verification_recorded_at ===
+                    "string"
+                  ? dtcClear.verification_recorded_at
+                  : null;
+
+            if (
+              verifiedAt &&
+              (
+                !lastClearAt ||
+                new Date(
+                  verifiedAt,
+                ).getTime() >
+                new Date(
+                  lastClearAt,
+                ).getTime()
+              )
+            ) {
+              lastClearAt =
+                verifiedAt;
+            }
+          }
+
+
+          const returnedAlert =
+            lastClearAt
+              ? sorted.find(
+                  (
+                    alert,
+                  ) =>
+                    new Date(
+                      alert.triggered_at,
+                    ).getTime() >
+                    new Date(
+                      lastClearAt as string,
+                    ).getTime(),
+                )
+              : undefined;
+
+
+          const returnedAfterClear =
+            Boolean(
+              returnedAlert,
+            );
+
+
+          const returnDelaySeconds =
+            returnedAlert &&
+            lastClearAt
+              ? Math.max(
+                  0,
+                  Math.round(
+                    (
+                      new Date(
+                        returnedAlert.triggered_at,
+                      ).getTime() -
+                      new Date(
+                        lastClearAt,
+                      ).getTime()
+                    ) /
+                    1000,
+                  ),
+                )
+              : null;
+
+
+          const hasActive =
+            sorted.some(
+              (
+                alert,
+              ) =>
+                alert.status ===
+                "active",
+            );
+
+
+          return {
+            vehicleId:
+              group.vehicleId,
+
+            code:
+              group.code,
+
+            title:
+              group.title,
+
+            firstSeenAt:
+              first.triggered_at,
+
+            lastSeenAt:
+              last.triggered_at,
+
+            recurrenceCount:
+              sorted.length,
+
+            lastClearAt,
+
+            returnedAfterClear,
+
+            returnedAt:
+              returnedAlert?.triggered_at ??
+              null,
+
+            returnDelaySeconds,
+
+            currentStatus:
+              hasActive
+                ? "active"
+                : "resolved",
+          };
+        },
+      );
+    const vehicleStates =
+      vehicles.map(
+        (vehicle) => {
+          const latest =
+            latestTelemetry.get(
+              vehicle.id,
+            );
+
+          const device =
+            deviceMap.get(
+              vehicle.id,
+            );
+
+          const profileName =
+            latest
+              ? getProfile(
+                  latest.can_payload,
+                )
+              : null;
+
+          const trackerModel =
+            (
+              device?.model ??
+              ""
+            ).toUpperCase();
+
+          const supportedLightClearModels =
+            [
+              "FMC125",
+              "FMM125",
+              "FMB125",
+            ];
+
+          const simulatorFlag =
+            latest
+              ? getSimulatorFlag(
+                  latest.can_payload,
+                )
+              : false;
+
+          const j1939SimulatorImei =
+            process.env
+              .TELTONIKA_J1939_SIM_IMEI ??
+            "356307042441650";
+
+          const lightClearSupported =
+            Boolean(
+              device &&
+              profileName !==
+                "j1939_fms" &&
+              supportedLightClearModels.includes(
+                trackerModel,
+              ),
+            );
+
+          /*
+           * J1939 button is enabled ONLY on
+           * our dedicated FMC650 simulator.
+           */
+          const j1939SimulatorClearSupported =
+            Boolean(
+              device &&
+              trackerModel ===
+                "FMC650" &&
+              profileName ===
+                "j1939_fms" &&
+              simulatorFlag ===
+                true &&
+              device.imei ===
+                j1939SimulatorImei,
+            );
+
+          /*
+           * REAL FMC650 profile.
+           *
+           * Simulator is deliberately excluded.
+           */
+          const j1939RealProfile =
+            device &&
+            trackerModel ===
+              "FMC650" &&
+            profileName ===
+              "j1939_fms" &&
+            simulatorFlag ===
+              false
+              ? getJ1939RealClearProfile(
+                  device.imei,
+                )
+              : null;
+
+
+          /*
+           * HARD LOCK V1 means a real profile
+           * can NEVER enable the clear button yet.
+           */
+          const realJ1939ClearAllowed =
+            j1939RealProfile
+              ? canTransmitRealJ1939Clear(
+                  j1939RealProfile,
+                )
+              : false;
+
+
+          const clearSupported =
+            lightClearSupported ||
+            j1939SimulatorClearSupported ||
+            realJ1939ClearAllowed;
+
+          return {
+            id:
+              vehicle.id,
+
+            companyId:
+              vehicle.company_id,
+
+            companyName:
+              companyMap.get(
+                vehicle.company_id,
+              ) ??
+              "Client",
+
+            name:
+              vehicle.name,
+
+            registration:
+              vehicle.registration,
+
+            brand:
+              vehicle.brand,
+
+            model:
+              vehicle.model,
+
+            device:
+              device
+                ? {
+                    id:
+                      device.id,
+
+                    imei:
+                      device.imei,
+
+                    manufacturer:
+                      device.manufacturer,
+
+                    model:
+                      device.model,
+
+                    status:
+                      device.status,
+
+                    lastSeenAt:
+                      device.last_seen_at,
+                  }
+                : null,
+
+            telemetryAt:
+              latest?.recorded_at ??
+              null,
+
+            profile:
+              latest
+                ? getProfile(
+                    latest.can_payload,
+                  )
+                : null,
+
+            checkEngine:
+              latest
+                ? getCheckEngine(
+                    latest.can_payload,
+                  )
+                : null,
+
+            activeDtc:
+              latest
+                ? diagnosticArray(
+                    latest.can_payload,
+                    "active",
+                  )
+                : [],
+
+            storedDtc:
+              latest
+                ? diagnosticArray(
+                    latest.can_payload,
+                    "stored",
+                  )
+                : [],
+
+            j1939RealProfile,
+
+            clearCapability: {
+              supported:
+                clearSupported,
+
+              reason:
+                !device
+                  ? "NO_TRACKER"
+                  : j1939SimulatorClearSupported
+                    ? "READY_J1939_SIMULATOR"
+                    : j1939RealProfile
+                      ? "J1939_REAL_HARD_LOCK_V1"
+                      : profileName === "j1939_fms"
+                        ? "J1939_CLEAR_PROFILE_NOT_VERIFIED"
+                        : clearSupported
+                          ? "READY"
+                          : "TRACKER_CLEAR_NOT_SUPPORTED",
+            },
+          };
+        },
+      );
+
+    const activeDtc =
+      vehicleStates.reduce(
+        (
+          total,
+          vehicle,
+        ) =>
+          total +
+          vehicle.activeDtc.length,
+        0,
+      );
+
+    const activeCheckEngine =
+      vehicleStates.filter(
+        (vehicle) =>
+          vehicle.checkEngine === true,
+      ).length;
+
+    const storedDtc =
+      vehicleStates.reduce(
+        (
+          total,
+          vehicle,
+        ) =>
+          total +
+          vehicle.storedDtc.length,
+        0,
+      );
+
+    const affectedVehicles =
+      new Set(
+        events.map(
+          (event) =>
+            event.vehicleId,
+        ),
+      ).size;
+
+    return NextResponse.json({
+      vehicles:
+        vehicleStates,
+
+      events,
+
+      dtcHistory,
+
+      metrics: {
+        activeDtc,
+        activeCheckEngine,
+        storedDtc,
+        affectedVehicles,
+      },
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "SERVER_ERROR";
+
+    if (
+      message ===
+      "AUTH_REQUIRED"
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Authentication required.",
+        },
+        {
+          status: 401,
+        },
+      );
+    }
+
+    if (
+      message ===
+      "PROFILE_REQUIRED"
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "User profile unavailable.",
+        },
+        {
+          status: 403,
+        },
+      );
+    }
+
+    console.error(
+      "[Diagnostics GET]",
+      error,
+    );
+
+    return NextResponse.json(
+      {
+        error:
+          message,
+      },
+      {
+        status: 500,
+      },
+    );
+  }
+}
+
+export async function POST(
+  request: NextRequest,
+) {
+  try {
+    const {
+      admin,
+      profile,
+    } =
+      await authenticate(
+        request,
+      );
+
+
+    const body =
+      await request.json() as {
+        action?: string;
+        vehicleId?: string;
+      };
+
+
+    if (
+      body.action !==
+        "clear_dtc" ||
+      !body.vehicleId
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Invalid action.",
+        },
+        {
+          status: 400,
+        },
+      );
+    }
+
+
+    const vehicles =
+      await getVisibleVehicles(
+        admin,
+        profile,
+      );
+
+
+    const vehicle =
+      vehicles.find(
+        (
+          item,
+        ) =>
+          item.id ===
+          body.vehicleId,
+      );
+
+
+    if (
+      !vehicle
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Vehicle unavailable.",
+        },
+        {
+          status: 404,
+        },
+      );
+    }
+
+
+    const {
+      data: device,
+      error: deviceError,
+    } =
+      await admin
+        .from("devices")
+        .select(
+          "id,imei,model,status,vehicle_id",
+        )
+        .eq(
+          "vehicle_id",
+          vehicle.id,
+        )
+        .maybeSingle();
+
+
+    if (
+      deviceError
+    ) {
+      throw deviceError;
+    }
+
+
+    if (
+      !device
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Aucun tracker affecte a ce vehicule.",
+        },
+        {
+          status: 409,
+        },
+      );
+    }
+
+
+    /*
+     * Snapshot diagnostic BEFORE clear.
+     */
+    const {
+      data: beforeTelemetry,
+      error: beforeTelemetryError,
+    } =
+      await admin
+        .from("telemetry")
+        .select(
+          "recorded_at,can_payload",
+        )
+        .eq(
+          "vehicle_id",
+          vehicle.id,
+        )
+        .order(
+          "recorded_at",
+          {
+            ascending:
+              false,
+          },
+        )
+        .limit(1)
+        .maybeSingle();
+
+
+    if (
+      beforeTelemetryError
+    ) {
+      throw beforeTelemetryError;
+    }
+
+
+    if (
+      !beforeTelemetry
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Aucune telemetrie disponible pour verifier le diagnostic.",
+        },
+        {
+          status: 409,
+        },
+      );
+    }
+
+
+    const profileName =
+      getProfile(
+        beforeTelemetry.can_payload,
+      );
+
+
+    const simulatorFlag =
+      getSimulatorFlag(
+        beforeTelemetry.can_payload,
+      );
+
+
+    const trackerModel =
+      (
+        device.model ??
+        ""
+      ).toUpperCase();
+
+
+    const beforeDiagnostics =
+      diagnosticCodes(
+        beforeTelemetry.can_payload,
+      );
+
+
+    const beforeCheckEngine =
+      getCheckEngine(
+        beforeTelemetry.can_payload,
+      );
+
+
+    if (
+      beforeDiagnostics.all.length ===
+        0 &&
+      beforeCheckEngine !==
+        true
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Aucun code defaut a effacer.",
+        },
+        {
+          status: 409,
+        },
+      );
+    }
+
+
+    /*
+     * Select clear strategy.
+     */
+    const lightModels =
+      [
+        "FMC125",
+        "FMM125",
+        "FMB125",
+      ];
+
+
+    const j1939SimulatorImei =
+      process.env
+        .TELTONIKA_J1939_SIM_IMEI ??
+      "356307042441650";
+
+
+    let command:
+      string;
+
+    let clearStrategy:
+      string;
+
+    let trackerSuccess:
+      (
+        response: string,
+      ) => boolean;
+
+
+    if (
+      profileName ===
+      "j1939_fms"
+    ) {
+      /*
+       * Safety barrier:
+       * J1939 clear V1 is simulator-only.
+       *
+       * Real FMC650 remains forbidden until
+       * a verified Manual CAN profile exists.
+       */
+      const j1939SimulatorAllowed =
+        trackerModel ===
+          "FMC650" &&
+        simulatorFlag ===
+          true &&
+        device.imei ===
+          j1939SimulatorImei;
+
+
+      if (
+        !j1939SimulatorAllowed
+      ) {
+        const realProfile =
+          getJ1939RealClearProfile(
+            device.imei,
+          );
+
+
+        /*
+         * ABSOLUTE REAL J1939 INTERLOCK.
+         *
+         * Safe Architecture V1 contains NO code path
+         * capable of sending a real DM3/DM11 command.
+         */
+        if (
+          !canTransmitRealJ1939Clear(
+            realProfile,
+          )
+        ) {
+          return NextResponse.json(
+            {
+              error:
+                "Effacement J1939 reel verrouille par la securite HARD_LOCK_V1.",
+
+              stage:
+                "j1939_real_hard_lock",
+
+              realProfile,
+            },
+            {
+              status: 409,
+            },
+          );
+        }
+
+
+        /*
+         * Unreachable in V1 by design.
+         */
+        return NextResponse.json(
+          {
+            error:
+              "REAL_J1939_CLEAR_NOT_IMPLEMENTED",
+          },
+          {
+            status: 409,
+          },
+        );
+      }
+
+
+      command =
+        "matelematics_sim_j1939_dm11_dm3_clear";
+
+      clearStrategy =
+        "j1939_dm11_dm3_simulator";
+
+      trackerSuccess =
+        (
+          response,
+        ) =>
+          response
+            .toLowerCase()
+            .startsWith(
+              "j1939 simulator clear confirmed",
+            );
+    } else {
+      if (
+        !lightModels.includes(
+          trackerModel,
+        )
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "L'effacement DTC n'est pas active pour ce modele de tracker.",
+          },
+          {
+            status: 409,
+          },
+        );
+      }
+
+
+      command =
+        "lvcandtcclear";
+
+      clearStrategy =
+        "light_lvcandtcclear";
+
+      trackerSuccess =
+        (
+          response,
+        ) =>
+          response
+            .toLowerCase()
+            .startsWith(
+              "dtcs cleared",
+            );
+    }
+
+
+    /*
+     * Capture active diagnostic alerts before clear.
+     */
+    const {
+      data: alertsBefore,
+      error: alertsBeforeError,
+    } =
+      await admin
+        .from("alerts")
+        .select(
+          "id,alert_type,metadata,status,triggered_at",
+        )
+        .eq(
+          "vehicle_id",
+          vehicle.id,
+        )
+        .eq(
+          "status",
+          "active",
+        )
+        .or(
+          "alert_type.eq.check_engine,alert_type.like.diagnostic_dtc_%",
+        );
+
+
+    if (
+      alertsBeforeError
+    ) {
+      throw alertsBeforeError;
+    }
+
+
+    const commandRequestedAt =
+      new Date()
+        .toISOString();
+
+
+    /*
+     * Send command through Teltonika control bridge.
+     */
+    const controller =
+      new AbortController();
+
+
+    const commandTimeout =
+      setTimeout(
+        () => {
+          controller.abort();
+        },
+        15_000,
+      );
+
+
+    let controlResponse:
+      Response;
+
+
+    try {
+      controlResponse =
+        await fetch(
+          process.env
+            .TELTONIKA_CONTROL_URL ??
+          "http://127.0.0.1:5001/command",
+          {
+            method:
+              "POST",
+
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+
+            body:
+              JSON.stringify({
+                imei:
+                  device.imei,
+
+                command,
+              }),
+
+            signal:
+              controller.signal,
+          },
+        );
+    } finally {
+      clearTimeout(
+        commandTimeout,
+      );
+    }
+
+
+    const controlBody =
+      await controlResponse
+        .json() as {
+          ok?: boolean;
+          response?: string;
+          error?: string;
+        };
+
+
+    if (
+      !controlResponse.ok
+    ) {
+      return NextResponse.json(
+        {
+          stage:
+            "command_failed",
+
+          error:
+            controlBody.error ??
+            "Tracker command failed.",
+
+          clearStrategy,
+        },
+        {
+          status: 503,
+        },
+      );
+    }
+
+
+    const trackerResponse =
+      controlBody.response ??
+      "";
+
+
+    if (
+      !trackerSuccess(
+        trackerResponse,
+      )
+    ) {
+      return NextResponse.json(
+        {
+          stage:
+            "tracker_rejected",
+
+          error:
+            trackerResponse ||
+            "Le tracker n'a pas confirme l'effacement.",
+
+          trackerResponse,
+
+          clearStrategy,
+        },
+        {
+          status: 409,
+        },
+      );
+    }
+
+
+    /*
+     * V1.2 rule preserved:
+     *
+     * A tracker response is NOT enough.
+     * Matelematics waits for new clean telemetry.
+     */
+    const trackerConfirmedAt =
+      new Date()
+        .toISOString();
+
+
+    const verification =
+      await waitForCleanTelemetry(
+        admin,
+        {
+          vehicleId:
+            vehicle.id,
+
+          after:
+            trackerConfirmedAt,
+
+          timeoutMs:
+            15_000,
+        },
+      );
+
+
+    if (
+      !verification.verified
+    ) {
+      return NextResponse.json(
+        {
+          ok:
+            false,
+
+          stage:
+            "verification_failed",
+
+          clearStrategy,
+
+          trackerResponse,
+
+          commandRequestedAt,
+
+          trackerConfirmedAt,
+
+          verification: {
+            verified:
+              false,
+
+            recordedAt:
+              verification.recordedAt,
+
+            activeCodes:
+              verification.activeCodes,
+
+            storedCodes:
+              verification.storedCodes,
+
+            checkEngine:
+              verification.checkEngine,
+          },
+
+          error:
+            verification.recordedAt
+              ? "Le tracker a accepte la commande mais un defaut est toujours present dans la telemetrie."
+              : "Le tracker a accepte la commande mais aucune telemetrie de verification n'a ete recue.",
+        },
+        {
+          status: 409,
+        },
+      );
+    }
+
+
+    const verifiedAt =
+      new Date()
+        .toISOString();
+
+
+    /*
+     * Only after clean telemetry:
+     * resolve Matelematics alerts.
+     *
+     * History remains preserved.
+     */
+    for (
+      const alert of
+      alertsBefore ??
+      []
+    ) {
+      const metadata =
+        asObject(
+          alert.metadata,
+        ) ??
+        {};
+
+
+      const {
+        error: updateError,
+      } =
+        await admin
+          .from("alerts")
+          .update({
+            status:
+              "resolved",
+
+            resolved_at:
+              verification.recordedAt,
+
+            metadata: {
+              ...metadata,
+
+              dtc_clear: {
+                strategy:
+                  clearStrategy,
+
+                command,
+
+                command_requested_at:
+                  commandRequestedAt,
+
+                tracker_confirmed_at:
+                  trackerConfirmedAt,
+
+                tracker_response:
+                  trackerResponse,
+
+                verification:
+                  "telemetry_confirmed",
+
+                verification_recorded_at:
+                  verification.recordedAt,
+
+                verified_at:
+                  verifiedAt,
+
+                previous_active_codes:
+                  beforeDiagnostics.active.map(
+                    (
+                      item,
+                    ) =>
+                      item.code,
+                  ),
+
+                previous_stored_codes:
+                  beforeDiagnostics.stored.map(
+                    (
+                      item,
+                    ) =>
+                      item.code,
+                  ),
+
+                previous_check_engine:
+                  beforeCheckEngine,
+              },
+            },
+          })
+          .eq(
+            "id",
+            alert.id,
+          );
+
+
+      if (
+        updateError
+      ) {
+        throw updateError;
+      }
+    }
+
+
+    return NextResponse.json({
+      ok:
+        true,
+
+      stage:
+        "verified",
+
+      clearStrategy,
+
+      trackerResponse,
+
+      commandRequestedAt,
+
+      trackerConfirmedAt,
+
+      verifiedAt,
+
+      verification: {
+        verified:
+          true,
+
+        recordedAt:
+          verification.recordedAt,
+
+        activeCodes:
+          verification.activeCodes,
+
+        storedCodes:
+          verification.storedCodes,
+
+        checkEngine:
+          verification.checkEngine,
+      },
+
+      previousState: {
+        activeCodes:
+          beforeDiagnostics.active.map(
+            (
+              item,
+            ) =>
+              item.code,
+          ),
+
+        storedCodes:
+          beforeDiagnostics.stored.map(
+            (
+              item,
+            ) =>
+              item.code,
+          ),
+
+        checkEngine:
+          beforeCheckEngine,
+      },
+
+      resolvedAlerts:
+        (
+          alertsBefore ??
+          []
+        ).length,
+    });
+  } catch (error) {
+    console.error(
+      "[Diagnostics POST]",
+      error,
+    );
+
+
+    return NextResponse.json(
+      {
+        stage:
+          "server_error",
+
+        error:
+          error instanceof Error
+            ? error.message
+            : "SERVER_ERROR",
+      },
+      {
+        status: 500,
+      },
+    );
+  }
+}
+
+============================================================
+FILE : .\app\dashboard\diagnostics\page.tsx
+EXISTS : True
+============================================================
+"use client";
+
+import Link from "next/link";
+
+import {
+  Activity,
+  AlertTriangle,
+  CheckCircle2,
+  Clock,
+  RefreshCw,
+  ShieldAlert,
+  Truck,
+  Wrench,
+} from "lucide-react";
+
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+
+import {
+  supabase,
+} from "../../components/supabase";
+
+
+const TXT = {
+  title:
+    "Centre de diagnostic des v\u00e9hicules",
+
+  subtitle:
+    "Codes d\u00e9faut, Check Engine et historique de diagnostic.",
+
+  select:
+    "S\u00e9lectionner un v\u00e9hicule",
+
+  active:
+    "Codes d\u00e9faut actifs",
+
+  stored:
+    "Codes d\u00e9faut m\u00e9moris\u00e9s",
+
+  history:
+    "Historique diagnostic du v\u00e9hicule",
+
+  noActive:
+    "Aucun code d\u00e9faut actif.",
+
+  noStored:
+    "Aucun code d\u00e9faut m\u00e9moris\u00e9.",
+
+  noHistory:
+    "Aucun d\u00e9faut enregistr\u00e9 pour ce v\u00e9hicule.",
+
+  clear:
+    "Effacer les codes d\u00e9faut",
+
+  clearing:
+    "Effacement en cours...",
+
+  refresh:
+    "Actualiser",
+
+  vehicle:
+    "Ouvrir la fiche v\u00e9hicule",
+};
+
+
+type Dtc = {
+  code: string;
+  source: string | null;
+  status: string;
+};
+
+
+type Vehicle = {
+  id: string;
+  companyId: string;
+  companyName: string;
+  name: string;
+  registration: string;
+
+  device: {
+    id: string;
+    imei: string;
+    manufacturer: string | null;
+    model: string | null;
+    status: string;
+    lastSeenAt: string | null;
+  } | null;
+
+  telemetryAt: string | null;
+  profile: string | null;
+  checkEngine: boolean | null;
+  activeDtc: Dtc[];
+  storedDtc: Dtc[];
+
+  j1939RealProfile: {
+    mode: "real";
+    imei: string;
+
+    vehicleVerified: boolean;
+    canProfileVerified: boolean;
+    clearProfileVerified: boolean;
+
+    realClearEnabled: false;
+    safetyInterlock: "HARD_LOCK_V1";
+    transmissionEnabled: false;
+
+    canChannel: "CAN1" | "CAN2" | null;
+    baudRate: number | null;
+    idType: "29bit" | "11bit" | null;
+    sourceAddress: number | null;
+
+    dm1Read: boolean;
+    dm2Read: boolean;
+
+    clearActiveConfigured: boolean;
+    clearStoredConfigured: boolean;
+
+    manufacturer: string | null;
+    vehicleModel: string | null;
+    vehicleYear: number | null;
+    engine: string | null;
+    ecu: string | null;
+
+    status:
+      | "LOCKED"
+      | "PROFILE_INCOMPLETE"
+      | "READY_FOR_VALIDATION";
+
+    note: string;
+  } | null;
+
+  clearCapability: {
+    supported: boolean;
+    reason: string;
+  };
+};
+
+
+type EventItem = {
+  id: string;
+  vehicleId: string;
+
+  vehicleName?: string;
+  registration?: string;
+  companyName?: string;
+
+  kind?: "dtc" | "check_engine";
+
+  code: string | null;
+  title: string;
+  message: string | null;
+
+  severity?: string | null;
+  status: string;
+
+  triggeredAt: string;
+  resolvedAt: string | null;
+
+  recurrenceCount: number;
+
+  profile?: string | null;
+};
+
+
+type DtcHistoryItem = {
+  vehicleId: string;
+  code: string;
+  title: string | null;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  recurrenceCount: number;
+  lastClearAt: string | null;
+  returnedAfterClear: boolean;
+  returnedAt: string | null;
+  returnDelaySeconds: number | null;
+  currentStatus: "active" | "resolved";
+};
+
+
+type Payload = {
+  vehicles: Vehicle[];
+  events: EventItem[];
+  dtcHistory: DtcHistoryItem[];
+
+  metrics: {
+    activeDtc: number;
+    activeCheckEngine: number;
+    storedDtc: number;
+    affectedVehicles: number;
+  };
+};
+
+
+function formatDate(
+  value: string | null,
+) {
+  if (!value) {
+    return "-";
+  }
+
+  return new Date(
+    value,
+  ).toLocaleString(
+    "fr-FR",
+    {
+      timeZone:
+        "Africa/Casablanca",
+    },
+  );
+}
+
+
+function normalizeSeverity(
+  value: string | null | undefined,
+) {
+  const severity =
+    (
+      value ??
+      ""
+    ).toLowerCase();
+
+
+  if (
+    severity === "critical" ||
+    severity === "critique"
+  ) {
+    return "critical";
+  }
+
+
+  if (
+    severity === "high" ||
+    severity === "major" ||
+    severity === "majeure" ||
+    severity === "error"
+  ) {
+    return "major";
+  }
+
+
+  if (
+    severity === "medium" ||
+    severity === "moderate" ||
+    severity === "warning"
+  ) {
+    return "moderate";
+  }
+
+
+  return "info";
+}
+
+
+function severityLabel(
+  value: string | null | undefined,
+) {
+  const severity =
+    normalizeSeverity(
+      value,
+    );
+
+
+  if (
+    severity === "critical"
+  ) {
+    return "Critique";
+  }
+
+
+  if (
+    severity === "major"
+  ) {
+    return "Majeure";
+  }
+
+
+  if (
+    severity === "moderate"
+  ) {
+    return "Moderee";
+  }
+
+
+  return "Information";
+}
+
+
+function severityClasses(
+  value: string | null | undefined,
+) {
+  const severity =
+    normalizeSeverity(
+      value,
+    );
+
+
+  if (
+    severity === "critical"
+  ) {
+    return "bg-red-500/10 text-red-300 ring-red-500/20";
+  }
+
+
+  if (
+    severity === "major"
+  ) {
+    return "bg-orange-500/10 text-orange-300 ring-orange-500/20";
+  }
+
+
+  if (
+    severity === "moderate"
+  ) {
+    return "bg-amber-500/10 text-amber-300 ring-amber-500/20";
+  }
+
+
+  return "bg-blue-500/10 text-blue-300 ring-blue-500/20";
+}
+
+
+function diagnosticProtocol(
+  profile: string | null | undefined,
+  code?: string | null,
+) {
+  if (
+    profile ===
+    "j1939_fms"
+  ) {
+    return "j1939";
+  }
+
+
+  if (
+    code
+      ?.toUpperCase()
+      .startsWith(
+        "SPN",
+      )
+  ) {
+    return "j1939";
+  }
+
+
+  return "light";
+}
+
+function profileLabel(
+  value: string | null,
+) {
+  if (
+    value ===
+    "j1939_fms"
+  ) {
+    return "J1939 / FMS";
+  }
+
+  if (
+    value ===
+    "light_vehicle_can"
+  ) {
+    return "CAN Light";
+  }
+
+  return "CAN";
+}
+
+
+function capabilityMessage(
+  reason: string,
+) {
+  if (
+    reason ===
+    "J1939_REAL_HARD_LOCK_V1"
+  ) {
+    return "Architecture J1939 r\u00e9elle pr\u00eate, mais toute \u00e9mission CAN d'effacement reste verrouill\u00e9e par HARD LOCK V1.";
+  }
+
+  if (
+    reason ===
+    "J1939_CLEAR_PROFILE_NOT_VERIFIED"
+  ) {
+    return "Le profil d\u0027effacement J1939 r\u00e9el de ce v\u00e9hicule n\u0027est pas encore valid\u00e9.";
+  }
+
+  if (
+    reason ===
+    "NO_TRACKER"
+  ) {
+    return "Aucun tracker affect\u00e9 au v\u00e9hicule.";
+  }
+
+  if (
+    reason ===
+    "TRACKER_CLEAR_NOT_SUPPORTED"
+  ) {
+    return "Ce mod\u00e8le de tracker n'est pas encore compatible avec l'effacement distant.";
+  }
+
+  return "";
+}
+
+
+export default function DiagnosticsPage() {
+  const [
+    payload,
+    setPayload,
+  ] =
+    useState<Payload | null>(
+      null,
+    );
+
+  const [
+    selectedVehicleId,
+    setSelectedVehicleId,
+  ] =
+    useState("");
+
+  const [
+    loading,
+    setLoading,
+  ] =
+    useState(true);
+
+  const [
+    clearing,
+    setClearing,
+  ] =
+    useState(false);
+
+  const [
+    message,
+    setMessage,
+  ] =
+    useState<string | null>(
+      null,
+    );
+
+  const [
+    error,
+    setError,
+  ] =
+    useState<string | null>(
+      null,
+    );
+
+
+  const [
+    search,
+    setSearch,
+  ] =
+    useState("");
+
+
+  const [
+    statusFilter,
+    setStatusFilter,
+  ] =
+    useState<
+      "all" |
+      "active" |
+      "resolved" |
+      "recurring"
+    >(
+      "all",
+    );
+
+
+  const [
+    severityFilter,
+    setSeverityFilter,
+  ] =
+    useState<
+      "all" |
+      "critical" |
+      "major" |
+      "moderate" |
+      "info"
+    >(
+      "all",
+    );
+
+
+  const [
+    protocolFilter,
+    setProtocolFilter,
+  ] =
+    useState<
+      "all" |
+      "light" |
+      "j1939"
+    >(
+      "all",
+    );
+
+
+  const load =
+    useCallback(
+      async () => {
+        try {
+          const {
+            data: {
+              session,
+            },
+          } =
+            await supabase.auth.getSession();
+
+          if (!session) {
+            throw new Error(
+              "Session expir\u00e9e.",
+            );
+          }
+
+          const response =
+            await fetch(
+              "/api/diagnostics",
+              {
+                cache:
+                  "no-store",
+
+                headers: {
+                  Authorization:
+                    `Bearer ${session.access_token}`,
+                },
+              },
+            );
+
+          const data =
+            await response.json();
+
+          if (!response.ok) {
+            throw new Error(
+              data.error ??
+              "Diagnostic indisponible.",
+            );
+          }
+
+          const next =
+            data as Payload;
+
+          setPayload(
+            next,
+          );
+
+          setSelectedVehicleId(
+            (
+              current,
+            ) => {
+              if (
+                current &&
+                (
+                  current === "__all__" ||
+                  next.vehicles.some(
+                    (
+                      vehicle,
+                    ) =>
+                      vehicle.id ===
+                      current,
+                  )
+                )
+              ) {
+                return current;
+              }
+
+
+              return "__all__";
+            },
+          );
+
+          setError(
+            null,
+          );
+        } catch (cause) {
+          setError(
+            cause instanceof Error
+              ? cause.message
+              : "Erreur.",
+          );
+        } finally {
+          setLoading(
+            false,
+          );
+        }
+      },
+      [],
+    );
+
+
+  useEffect(
+    () => {
+      void load();
+    },
+    [
+      load,
+    ],
+  );
+
+
+  const fleetMode =
+    selectedVehicleId ===
+    "__all__";
+
+
+  const selectedVehicle =
+    useMemo(
+      () => {
+        if (
+          fleetMode
+        ) {
+          return null;
+        }
+
+
+        return (
+          payload?.vehicles.find(
+            (
+              vehicle,
+            ) =>
+              vehicle.id ===
+              selectedVehicleId,
+          ) ??
+          null
+        );
+      },
+      [
+        payload,
+        selectedVehicleId,
+        fleetMode,
+      ],
+    );
+
+
+  const filteredEvents =
+    useMemo(
+      () => {
+        const query =
+          search
+            .trim()
+            .toLowerCase();
+
+
+        return (
+          payload?.events ??
+          []
+        ).filter(
+          (
+            event,
+          ) => {
+            if (
+              !fleetMode &&
+              event.vehicleId !==
+                selectedVehicleId
+            ) {
+              return false;
+            }
+
+
+            if (
+              statusFilter === "active" &&
+              event.status !== "active"
+            ) {
+              return false;
+            }
+
+
+            if (
+              statusFilter === "resolved" &&
+              event.status === "active"
+            ) {
+              return false;
+            }
+
+
+            if (
+              statusFilter === "recurring" &&
+              event.recurrenceCount <= 1
+            ) {
+              return false;
+            }
+
+
+            if (
+              severityFilter !== "all" &&
+              normalizeSeverity(
+                event.severity,
+              ) !== severityFilter
+            ) {
+              return false;
+            }
+
+
+            if (
+              protocolFilter !== "all" &&
+              diagnosticProtocol(
+                event.profile,
+                event.code,
+              ) !== protocolFilter
+            ) {
+              return false;
+            }
+
+
+            if (
+              query
+            ) {
+              const haystack =
+                [
+                  event.code,
+                  event.title,
+                  event.message,
+                  event.vehicleName,
+                  event.registration,
+                  event.companyName,
+                ]
+                  .filter(Boolean)
+                  .join(" ")
+                  .toLowerCase();
+
+
+              if (
+                !haystack.includes(
+                  query,
+                )
+              ) {
+                return false;
+              }
+            }
+
+
+            return true;
+          },
+        );
+      },
+      [
+        payload,
+        fleetMode,
+        selectedVehicleId,
+        search,
+        statusFilter,
+        severityFilter,
+        protocolFilter,
+      ],
+    );
+
+
+  const dtcHistory =
+    useMemo(
+      () => {
+        return (
+          payload?.dtcHistory ??
+          []
+        ).filter(
+          (
+            item,
+          ) => {
+            if (
+              !fleetMode &&
+              item.vehicleId !==
+                selectedVehicleId
+            ) {
+              return false;
+            }
+
+
+            if (
+              statusFilter === "active" &&
+              item.currentStatus !== "active"
+            ) {
+              return false;
+            }
+
+
+            if (
+              statusFilter === "resolved" &&
+              item.currentStatus === "active"
+            ) {
+              return false;
+            }
+
+
+            if (
+              statusFilter === "recurring" &&
+              !item.returnedAfterClear &&
+              item.recurrenceCount <= 1
+            ) {
+              return false;
+            }
+
+
+            return true;
+          },
+        );
+      },
+      [
+        payload,
+        fleetMode,
+        selectedVehicleId,
+        statusFilter,
+      ],
+    );
+
+
+  const history =
+    filteredEvents;
+
+
+  const resolvedCount =
+    (
+      payload?.events ??
+      []
+    ).filter(
+      (
+        event,
+      ) =>
+        event.status !==
+        "active",
+    ).length;
+
+
+  const recurringCount =
+    (
+      payload?.dtcHistory ??
+      []
+    ).filter(
+      (
+        item,
+      ) =>
+        item.returnedAfterClear ||
+        item.recurrenceCount >
+          1,
+    ).length;
+
+
+  const fleetVehicles =
+    useMemo(
+      () => {
+        const query =
+          search
+            .trim()
+            .toLowerCase();
+
+
+        return (
+          payload?.vehicles ??
+          []
+        ).filter(
+          (
+            vehicle,
+          ) => {
+            const directText =
+              [
+                vehicle.name,
+                vehicle.registration,
+                vehicle.companyName,
+                vehicle.device?.imei,
+                vehicle.device?.model,
+              ]
+                .filter(Boolean)
+                .join(" ")
+                .toLowerCase();
+
+
+            if (
+              query &&
+              !directText.includes(
+                query,
+              ) &&
+              !filteredEvents.some(
+                (
+                  event,
+                ) =>
+                  event.vehicleId ===
+                  vehicle.id,
+              )
+            ) {
+              return false;
+            }
+
+
+            if (
+              (
+                statusFilter !== "all" ||
+                severityFilter !== "all" ||
+                protocolFilter !== "all"
+              ) &&
+              !filteredEvents.some(
+                (
+                  event,
+                ) =>
+                  event.vehicleId ===
+                  vehicle.id,
+              )
+            ) {
+              return false;
+            }
+
+
+            return true;
+          },
+        );
+      },
+      [
+        payload,
+        filteredEvents,
+        search,
+        statusFilter,
+        severityFilter,
+        protocolFilter,
+      ],
+    );
+
+
+  const hasFaults =
+    Boolean(
+      selectedVehicle &&
+      (
+        selectedVehicle.checkEngine ===
+          true ||
+        selectedVehicle.activeDtc.length >
+          0 ||
+        selectedVehicle.storedDtc.length >
+          0 ||
+        history.some(
+          (
+            event,
+          ) =>
+            event.status ===
+            "active",
+        )
+      ),
+    );
+
+
+  const clearFaults =
+    async () => {
+      if (
+        !selectedVehicle
+      ) {
+        return;
+      }
+
+
+      const confirmed =
+        window.confirm(
+          "Confirmer l'effacement des codes d\u00e9faut sur le v\u00e9hicule et dans Matelematics ?",
+        );
+
+
+      if (
+        !confirmed
+      ) {
+        return;
+      }
+
+
+      setClearing(
+        true,
+      );
+
+      setMessage(
+        null,
+      );
+
+      setError(
+        null,
+      );
+
+
+      try {
+        const {
+          data: {
+            session,
+          },
+        } =
+          await supabase.auth.getSession();
+
+
+        if (
+          !session
+        ) {
+          throw new Error(
+            "Session expir\u00e9e.",
+          );
+        }
+
+
+        const response =
+          await fetch(
+            "/api/diagnostics",
+            {
+              method:
+                "POST",
+
+              headers: {
+                "Content-Type":
+                  "application/json",
+
+                Authorization:
+                  `Bearer ${session.access_token}`,
+              },
+
+              body:
+                JSON.stringify({
+                  action:
+                    "clear_dtc",
+
+                  vehicleId:
+                    selectedVehicle.id,
+                }),
+            },
+          );
+
+
+        const result =
+          await response.json();
+
+
+        if (
+          !response.ok
+        ) {
+          throw new Error(
+            result.error ??
+            "L'effacement a \u00e9chou\u00e9.",
+          );
+        }
+
+
+        if (
+          result.stage !==
+            "verified" ||
+          result.verification?.verified !==
+            true
+        ) {
+          throw new Error(
+            "L'effacement n'a pas pu etre confirme par la telemetrie.",
+          );
+        }
+
+
+        setMessage(
+          `Effacement confirme : tracker OK + telemetrie ECU propre a ${formatDate(
+            result.verification.recordedAt ??
+            null,
+          )}.`,
+        );
+
+
+        await load();
+      } catch (cause) {
+        setError(
+          cause instanceof Error
+            ? cause.message
+            : "Erreur d'effacement.",
+        );
+      } finally {
+        setClearing(
+          false,
+        );
+      }
+    };
+
+
+  if (
+    loading &&
+    !payload
+  ) {
+    return (
+      <div className="flex min-h-[50vh] items-center justify-center">
+        <RefreshCw className="h-8 w-8 animate-spin text-blue-400" />
+      </div>
+    );
+  }
+
+
+  return (
+    <div className="space-y-6 pb-12">
+
+      <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
+
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+
+          <div className="flex items-start gap-4">
+
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-red-500/10">
+              <ShieldAlert className="h-6 w-6 text-red-400" />
+            </div>
+
+            <div>
+              <h1 className="text-2xl font-bold text-white">
+                {TXT.title}
+              </h1>
+
+              <p className="mt-2 text-sm text-slate-400">
+                {TXT.subtitle}
+              </p>
+            </div>
+
+          </div>
+
+
+          <button
+            type="button"
+            onClick={() =>
+              void load()
+            }
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-800 px-4 py-2.5 text-sm text-white hover:bg-slate-700"
+          >
+            <RefreshCw className="h-4 w-4" />
+            {TXT.refresh}
+          </button>
+
+        </div>
+
+      </section>
+
+
+      {error && (
+        <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-300">
+          {error}
+        </div>
+      )}
+
+
+      {message && (
+        <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-4 text-sm text-emerald-300">
+          {message}
+        </div>
+      )}
+
+
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
+
+        <Kpi
+          label="DTC actifs"
+          value={
+            payload?.metrics.activeDtc ??
+            0
+          }
+          icon="alert"
+        />
+
+        <Kpi
+          label="Check Engine"
+          value={
+            payload?.metrics.activeCheckEngine ??
+            0
+          }
+          icon="engine"
+        />
+
+        <Kpi
+          label={"DTC m\u00e9moris\u00e9s"}
+          value={
+            payload?.metrics.storedDtc ??
+            0
+          }
+          icon="stored"
+        />
+
+        <Kpi
+          label={"V\u00e9hicules concern\u00e9s"}
+          value={
+            payload?.metrics.affectedVehicles ??
+            0
+          }
+          icon="vehicle"
+        />
+
+
+        <Kpi
+          label={"R\u00e9solus"}
+          value={
+            resolvedCount
+          }
+          icon="resolved"
+        />
+
+
+        <Kpi
+          label={"R\u00e9cidivants"}
+          value={
+            recurringCount
+          }
+          icon="recurring"
+        />
+
+      </section>
+
+
+      <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
+
+        <label className="mb-2 block text-sm font-medium text-slate-300">
+          {TXT.select}
+        </label>
+
+        <select
+          value={
+            selectedVehicleId
+          }
+          onChange={
+            (
+              event,
+            ) =>
+              setSelectedVehicleId(
+                event.target.value,
+              )
+          }
+          className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none lg:max-w-2xl"
+        >
+
+          <option value="__all__">
+            Tous les vehicules - Vue flotte
+          </option>
+          {(payload?.vehicles ?? []).map(
+            (
+              vehicle,
+            ) => (
+              <option
+                key={
+                  vehicle.id
+                }
+                value={
+                  vehicle.id
+                }
+              >
+                {vehicle.name} - {vehicle.registration} - {vehicle.companyName}
+              </option>
+            ),
+          )}
+        </select>
+
+      </section>
+
+
+      <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
+
+        <div className="grid gap-3 lg:grid-cols-4">
+
+          <input
+            value={search}
+            onChange={(event) =>
+              setSearch(event.target.value)
+            }
+            placeholder="DTC, vehicule, immatriculation, IMEI..."
+            className="rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white outline-none"
+          />
+
+
+          <select
+            value={statusFilter}
+            onChange={(event) =>
+              setStatusFilter(
+                event.target.value as typeof statusFilter,
+              )
+            }
+            className="rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white"
+          >
+            <option value="all">Tous les statuts</option>
+            <option value="active">Actifs</option>
+            <option value="resolved">Resolus</option>
+            <option value="recurring">Recidivants</option>
+          </select>
+
+
+          <select
+            value={severityFilter}
+            onChange={(event) =>
+              setSeverityFilter(
+                event.target.value as typeof severityFilter,
+              )
+            }
+            className="rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white"
+          >
+            <option value="all">Toutes les gravites</option>
+            <option value="critical">Critique</option>
+            <option value="major">Majeure</option>
+            <option value="moderate">Moderee</option>
+            <option value="info">Information</option>
+          </select>
+
+
+          <select
+            value={protocolFilter}
+            onChange={(event) =>
+              setProtocolFilter(
+                event.target.value as typeof protocolFilter,
+              )
+            }
+            className="rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white"
+          >
+            <option value="all">LIGHT + J1939</option>
+            <option value="light">OBD-II / CAN Light</option>
+            <option value="j1939">J1939 / SPN-FMI</option>
+          </select>
+
+        </div>
+
+      </section>
+
+
+      {fleetMode && (
+        <section>
+
+          <div className="mb-4">
+            <h2 className="text-lg font-semibold text-white">
+              Vue flotte diagnostic
+            </h2>
+
+            <p className="mt-1 text-sm text-slate-400">
+              {fleetVehicles.length} vehicule(s) correspondant aux filtres.
+            </p>
+          </div>
+
+
+          <div className="grid gap-4 lg:grid-cols-2">
+
+            {fleetVehicles.map(
+              (
+                vehicle,
+              ) => {
+                const vehicleEvents =
+                  filteredEvents.filter(
+                    (
+                      event,
+                    ) =>
+                      event.vehicleId ===
+                      vehicle.id,
+                  );
+
+
+                const activeEvents =
+                  vehicleEvents.filter(
+                    (
+                      event,
+                    ) =>
+                      event.status ===
+                      "active",
+                  );
+
+
+                const recurring =
+                  (
+                    payload?.dtcHistory ??
+                    []
+                  ).filter(
+                    (
+                      item,
+                    ) =>
+                      item.vehicleId ===
+                        vehicle.id &&
+                      (
+                        item.returnedAfterClear ||
+                        item.recurrenceCount >
+                          1
+                      ),
+                  ).length;
+
+
+                return (
+                  <button
+                    key={vehicle.id}
+                    type="button"
+                    onClick={() =>
+                      setSelectedVehicleId(
+                        vehicle.id,
+                      )
+                    }
+                    className="rounded-2xl border border-slate-800 bg-slate-900 p-5 text-left transition hover:border-slate-700 hover:bg-slate-800/70"
+                  >
+
+                    <div className="flex items-start justify-between gap-4">
+
+                      <div>
+                        <p className="font-semibold text-white">
+                          {vehicle.name}
+                        </p>
+
+                        <p className="mt-1 text-xs text-slate-500">
+                          {vehicle.registration} - {vehicle.companyName}
+                        </p>
+                      </div>
+
+
+                      <span className="text-xs text-slate-400">
+                        {profileLabel(
+                          vehicle.profile,
+                        )}
+                      </span>
+
+                    </div>
+
+
+                    <div className="mt-4 grid grid-cols-3 gap-3">
+
+                      <HistoryStat
+                        label="Actifs"
+                        value={
+                          String(
+                            vehicle.activeDtc.length,
+                          )
+                        }
+                      />
+
+                      <HistoryStat
+                        label="Memorises"
+                        value={
+                          String(
+                            vehicle.storedDtc.length,
+                          )
+                        }
+                      />
+
+                      <HistoryStat
+                        label="Recidivants"
+                        value={
+                          String(
+                            recurring,
+                          )
+                        }
+                      />
+
+                    </div>
+
+
+                    {activeEvents[0] && (
+                      <span
+                        className={`mt-4 inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${severityClasses(
+                          activeEvents[0].severity,
+                        )}`}
+                      >
+                        {severityLabel(
+                          activeEvents[0].severity,
+                        )}
+                      </span>
+                    )}
+
+                  </button>
+                );
+              },
+            )}
+
+          </div>
+
+        </section>
+      )}
+
+      {selectedVehicle && (
+        <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
+
+          <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+
+            <div>
+
+              <div className="flex flex-wrap items-center gap-3">
+
+                <Truck className="h-6 w-6 text-blue-400" />
+
+                <h2 className="text-xl font-bold text-white">
+                  {selectedVehicle.name}
+                </h2>
+
+                {selectedVehicle.checkEngine === true && (
+                  <span className="rounded-full bg-red-500/10 px-3 py-1 text-xs font-semibold text-red-300 ring-1 ring-red-500/20">
+                    CHECK ENGINE
+                  </span>
+                )}
+
+              </div>
+
+              <p className="mt-2 text-sm text-slate-400">
+                {selectedVehicle.registration}
+                {" - "}
+                {selectedVehicle.companyName}
+                {" - "}
+                {selectedVehicle.device?.model ?? "No tracker"}
+                {" - "}
+                {profileLabel(selectedVehicle.profile)}
+              </p>
+
+            </div>
+
+
+            <div className="flex flex-wrap gap-2">
+
+              <button
+                type="button"
+                disabled={
+                  clearing ||
+                  !selectedVehicle.clearCapability.supported ||
+                  !hasFaults
+                }
+                onClick={() =>
+                  void clearFaults()
+                }
+                className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white enabled:hover:bg-red-500 disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-500"
+              >
+                <Wrench className="h-4 w-4" />
+
+                {clearing
+                  ? TXT.clearing
+                  : TXT.clear}
+              </button>
+
+
+              <Link
+                href={`/dashboard/vehicle/${selectedVehicle.id}`}
+                className="rounded-xl border border-slate-700 bg-slate-800 px-4 py-2.5 text-sm text-white hover:bg-slate-700"
+              >
+                {TXT.vehicle}
+              </Link>
+
+            </div>
+
+          </div>
+
+
+          {!selectedVehicle.clearCapability.supported && (
+            <p className="mt-4 text-xs text-amber-400">
+              {capabilityMessage(
+                selectedVehicle.clearCapability.reason,
+              )}
+            </p>
+          )}
+
+
+          {selectedVehicle.j1939RealProfile && (
+            <div className="mt-5 rounded-2xl border border-amber-500/20 bg-amber-500/5 p-5">
+
+              <div className="flex flex-wrap items-center justify-between gap-3">
+
+                <div>
+                  <p className="font-semibold text-white">
+                    Profil FMC650 / J1939 r\u00e9el
+                  </p>
+
+                  <p className="mt-1 text-xs text-slate-400">
+                    Architecture Safe V1 - aucune trame d'effacement CAN ne peut \u00eatre envoy\u00e9e.
+                  </p>
+                </div>
+
+                <span className="rounded-full bg-red-500/10 px-3 py-1 text-xs font-semibold text-red-300 ring-1 ring-red-500/20">
+                  HARD LOCK
+                </span>
+
+              </div>
+
+
+              <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+
+                <SafeProfileStat
+                  label="V\u00e9hicule identifi\u00e9"
+                  ok={
+                    selectedVehicle.j1939RealProfile.vehicleVerified
+                  }
+                />
+
+                <SafeProfileStat
+                  label="Profil CAN valid\u00e9"
+                  ok={
+                    selectedVehicle.j1939RealProfile.canProfileVerified
+                  }
+                />
+
+                <SafeProfileStat
+                  label="Profil Clear valid\u00e9"
+                  ok={
+                    selectedVehicle.j1939RealProfile.clearProfileVerified
+                  }
+                />
+
+                <SafeProfileStat
+                  label="Transmission r\u00e9elle"
+                  ok={
+                    selectedVehicle.j1939RealProfile.transmissionEnabled
+                  }
+                  locked
+                />
+
+              </div>
+
+
+              <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+
+                <ProfileValue
+                  label="Canal"
+                  value={
+                    selectedVehicle.j1939RealProfile.canChannel ??
+                    "Non configur\u00e9"
+                  }
+                />
+
+                <ProfileValue
+                  label="Baudrate"
+                  value={
+                    selectedVehicle.j1939RealProfile.baudRate
+                      ? `${selectedVehicle.j1939RealProfile.baudRate} bit/s`
+                      : "Non configur\u00e9"
+                  }
+                />
+
+                <ProfileValue
+                  label="CAN ID"
+                  value={
+                    selectedVehicle.j1939RealProfile.idType ??
+                    "Non configur\u00e9"
+                  }
+                />
+
+                <ProfileValue
+                  label="ECU"
+                  value={
+                    selectedVehicle.j1939RealProfile.ecu ??
+                    "Non renseign\u00e9"
+                  }
+                />
+
+              </div>
+
+
+              <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+
+                <SafeProfileStat
+                  label="Lecture DM1"
+                  ok={
+                    selectedVehicle.j1939RealProfile.dm1Read
+                  }
+                />
+
+                <SafeProfileStat
+                  label="Lecture DM2"
+                  ok={
+                    selectedVehicle.j1939RealProfile.dm2Read
+                  }
+                />
+
+                <SafeProfileStat
+                  label="Clear actifs configur\u00e9"
+                  ok={
+                    selectedVehicle.j1939RealProfile.clearActiveConfigured
+                  }
+                />
+
+                <SafeProfileStat
+                  label="Clear m\u00e9moris\u00e9s configur\u00e9"
+                  ok={
+                    selectedVehicle.j1939RealProfile.clearStoredConfigured
+                  }
+                />
+
+              </div>
+
+
+              <p className="mt-4 text-xs text-amber-300">
+                {selectedVehicle.j1939RealProfile.note}
+              </p>
+
+            </div>
+          )}
+
+
+          <div className="mt-6">
+
+            <h3 className="font-semibold text-white">
+              {TXT.active}
+            </h3>
+
+            {selectedVehicle.activeDtc.length === 0 ? (
+              <div className="mt-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4 text-sm text-emerald-300">
+                {TXT.noActive}
+              </div>
+            ) : (
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+
+                {selectedVehicle.activeDtc.map(
+                  (
+                    dtc,
+                  ) => (
+                    <div
+                      key={
+                        dtc.code
+                      }
+                      className="rounded-xl border border-red-500/20 bg-red-500/5 p-4"
+                    >
+                      <p className="text-lg font-bold text-red-300">
+                        {dtc.code}
+                      </p>
+
+                      {dtc.source && (
+                        <p className="mt-1 text-xs text-slate-500">
+                          {dtc.source}
+                        </p>
+                      )}
+                    </div>
+                  ),
+                )}
+
+              </div>
+            )}
+
+          </div>
+
+
+          <div className="mt-6">
+
+            <h3 className="font-semibold text-white">
+              {TXT.stored}
+            </h3>
+
+            {selectedVehicle.storedDtc.length === 0 ? (
+              <div className="mt-3 rounded-xl border border-slate-800 bg-slate-950/40 p-4 text-sm text-slate-400">
+                {TXT.noStored}
+              </div>
+            ) : (
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+
+                {selectedVehicle.storedDtc.map(
+                  (
+                    dtc,
+                  ) => (
+                    <div
+                      key={
+                        dtc.code
+                      }
+                      className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4"
+                    >
+                      <p className="text-lg font-bold text-amber-300">
+                        {dtc.code}
+                      </p>
+
+                      {dtc.source && (
+                        <p className="mt-1 text-xs text-slate-500">
+                          {dtc.source}
+                        </p>
+                      )}
+                    </div>
+                  ),
+                )}
+
+              </div>
+            )}
+
+          </div>
+
+        </section>
+      )}
+
+
+      {selectedVehicle && (
+        <section>
+
+          <div className="mb-4">
+
+            <h2 className="text-lg font-semibold text-white">
+              Synth\u00e8se historique des codes d\u00e9faut
+            </h2>
+
+            <p className="mt-1 text-sm text-slate-400">
+              Agr\u00e9gation par code DTC pour {selectedVehicle.name}.
+            </p>
+
+          </div>
+
+
+          {dtcHistory.length === 0 ? (
+            <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6 text-sm text-slate-400">
+              Aucun code d\u00e9faut historique pour ce v\u00e9hicule.
+            </div>
+          ) : (
+            <div className="space-y-4">
+
+              {dtcHistory.map(
+                (
+                  item,
+                ) => (
+                  <div
+                    key={
+                      `${item.vehicleId}-${item.code}`
+                    }
+                    className="rounded-2xl border border-slate-800 bg-slate-900 p-5"
+                  >
+
+                    <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+
+                      <div>
+
+                        <div className="flex flex-wrap items-center gap-3">
+
+                          {item.currentStatus === "active" ? (
+                            <AlertTriangle className="h-5 w-5 text-red-400" />
+                          ) : (
+                            <CheckCircle2 className="h-5 w-5 text-emerald-400" />
+                          )}
+
+                          <p className="text-lg font-bold text-white">
+                            {item.code}
+                          </p>
+
+                          <span
+                            className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+                              item.currentStatus === "active"
+                                ? "bg-red-500/10 text-red-300"
+                                : "bg-emerald-500/10 text-emerald-300"
+                            }`}
+                          >
+                            {item.currentStatus === "active"
+                              ? "Actif"
+                              : "R\u00e9solu"}
+                          </span>
+
+
+                          {item.returnedAfterClear && (
+                            <span className="rounded-full bg-amber-500/10 px-2.5 py-1 text-xs font-semibold text-amber-300">
+                              Revenu apr\u00e8s effacement
+                            </span>
+                          )}
+
+                        </div>
+
+
+                        {item.title && (
+                          <p className="mt-2 text-sm text-slate-400">
+                            {item.title}
+                          </p>
+                        )}
+
+                      </div>
+
+                    </div>
+
+
+                    <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+
+                      <HistoryStat
+                        label={"Premi\u00e8re apparition"}
+                        value={
+                          formatDate(
+                            item.firstSeenAt,
+                          )
+                        }
+                      />
+
+                      <HistoryStat
+                        label={"Derni\u00e8re apparition"}
+                        value={
+                          formatDate(
+                            item.lastSeenAt,
+                          )
+                        }
+                      />
+
+                      <HistoryStat
+                        label={"Nombre de r\u00e9cidives"}
+                        value={
+                          String(
+                            item.recurrenceCount,
+                          )
+                        }
+                      />
+
+                      <HistoryStat
+                        label={"Dernier effacement"}
+                        value={
+                          formatDate(
+                            item.lastClearAt,
+                          )
+                        }
+                      />
+
+                      <HistoryStat
+                        label={"Revenu apr\u00e8s effacement"}
+                        value={
+                          item.returnedAfterClear
+                            ? "OUI"
+                            : "NON"
+                        }
+                      />
+
+                    </div>
+
+
+                    {item.returnedAfterClear && (
+                      <div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
+
+                        <p className="text-sm font-semibold text-amber-300">
+                          R\u00e9cidive apr\u00e8s effacement confirm\u00e9
+                        </p>
+
+                        <p className="mt-1 text-xs text-slate-400">
+                          Retour d\u00e9tect\u00e9 : {formatDate(item.returnedAt)}
+                        </p>
+
+                        <p className="mt-1 text-xs text-slate-400">
+                          D\u00e9lai avant retour : {
+                            item.returnDelaySeconds === null
+                              ? "-"
+                              : item.returnDelaySeconds < 60
+                                ? `${item.returnDelaySeconds} s`
+                                : `${Math.round(item.returnDelaySeconds / 60)} min`
+                          }
+                        </p>
+
+                      </div>
+                    )}
+
+                  </div>
+                ),
+              )}
+
+            </div>
+          )}
+
+        </section>
+      )}
+
+
+      {selectedVehicle && (
+        <section>
+
+          <div className="mb-4">
+
+            <h2 className="text-lg font-semibold text-white">
+              {TXT.history}
+            </h2>
+
+            <p className="mt-1 text-sm text-slate-400">
+              {selectedVehicle.name} - {selectedVehicle.registration}
+            </p>
+
+          </div>
+
+
+          {history.length === 0 ? (
+            <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6 text-sm text-slate-400">
+              {TXT.noHistory}
+            </div>
+          ) : (
+            <div className="space-y-3">
+
+              {history.map(
+                (
+                  event,
+                ) => (
+                  <div
+                    key={
+                      event.id
+                    }
+                    className="rounded-2xl border border-slate-800 bg-slate-900 p-5"
+                  >
+
+                    <div className="flex flex-wrap items-center gap-3">
+
+                      {event.status === "active" ? (
+                        <AlertTriangle className="h-5 w-5 text-red-400" />
+                      ) : (
+                        <CheckCircle2 className="h-5 w-5 text-emerald-400" />
+                      )}
+
+                      <p className="font-bold text-white">
+                        {event.code ?? "Check Engine"}
+                      </p>
+
+                      <span
+                        className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+                          event.status === "active"
+                            ? "bg-red-500/10 text-red-300"
+                            : "bg-emerald-500/10 text-emerald-300"
+                        }`}
+                      >
+                        {event.status === "active"
+                          ? "Actif"
+                          : "R\u00e9solu"}
+                      </span>
+
+                    </div>
+
+
+                    <p className="mt-2 text-sm text-slate-400">
+                      {event.title}
+                    </p>
+
+
+                    <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-xs text-slate-500">
+
+                      <span>
+                        D\u00e9tect\u00e9 : {formatDate(event.triggeredAt)}
+                      </span>
+
+                      <span>
+                        R\u00e9solu : {formatDate(event.resolvedAt)}
+                      </span>
+
+                      <span>
+                        R\u00e9cidives : {event.recurrenceCount}
+                      </span>
+
+                    </div>
+
+                  </div>
+                ),
+              )}
+
+            </div>
+          )}
+
+        </section>
+      )}
+
+    </div>
+  );
+}
+
+
+function SafeProfileStat({
+  label,
+  ok,
+  locked = false,
+}: {
+  label: string;
+  ok: boolean;
+  locked?: boolean;
+}) {
+  return (
+    <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+
+      <p className="text-xs text-slate-500">
+        {label}
+      </p>
+
+      <p
+        className={`mt-2 text-sm font-semibold ${
+          locked
+            ? "text-red-300"
+            : ok
+              ? "text-emerald-300"
+              : "text-amber-300"
+        }`}
+      >
+        {locked
+          ? "VERROUILL\u00c9"
+          : ok
+            ? "VALID\u00c9"
+            : "EN ATTENTE"}
+      </p>
+
+    </div>
+  );
+}
+
+
+function ProfileValue({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+
+      <p className="text-xs text-slate-500">
+        {label}
+      </p>
+
+      <p className="mt-2 text-sm font-semibold text-white">
+        {value}
+      </p>
+
+    </div>
+  );
+}
+
+function HistoryStat({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+
+      <p className="text-xs uppercase tracking-wide text-slate-500">
+        {label}
+      </p>
+
+      <p className="mt-2 text-sm font-semibold text-white">
+        {value}
+      </p>
+
+    </div>
+  );
+}
+
+function Kpi({
+  label,
+  value,
+  icon,
+}: {
+  label: string;
+  value: number;
+  icon:
+    | "alert"
+    | "engine"
+    | "stored"
+    | "vehicle"
+    | "resolved"
+    | "recurring";
+}) {
+  const Icon =
+    icon === "vehicle"
+      ? Truck
+      : icon === "stored"
+        ? Clock
+        : icon === "engine"
+          ? Activity
+          : icon === "resolved"
+            ? CheckCircle2
+            : icon === "recurring"
+              ? RefreshCw
+              : AlertTriangle;
+
+  return (
+    <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
+
+      <div className="flex items-center justify-between">
+
+        <p className="text-sm text-slate-400">
+          {label}
+        </p>
+
+        <Icon className="h-5 w-5 text-red-400" />
+
+      </div>
+
+      <p className="mt-3 text-3xl font-bold text-white">
+        {value}
+      </p>
+
+    </div>
+  );
+}
+
+============================================================
+FILE : .\server\teltonika\can\diagnostics.ts
+EXISTS : True
+============================================================
+import type {
+  DiagnosticCode,
+} from "./types-v2";
+
+export function numericIo(
+  io: Record<string, number | string>,
+  id: number,
+) {
+  const value =
+    io[`io_${id}`];
+
+  return typeof value === "number"
+    ? value
+    : null;
+}
+
+export function signed16(
+  value: number | null,
+) {
+  if (value === null) {
+    return null;
+  }
+
+  return value > 0x7fff
+    ? value - 0x10000
+    : value;
+}
+
+export function asciiIo(
+  io: Record<string, number | string>,
+  id: number,
+) {
+  const value =
+    io[`io_${id}`];
+
+  if (
+    typeof value !== "string" ||
+    value.length === 0
+  ) {
+    return null;
+  }
+
+  try {
+    return Buffer
+      .from(value, "hex")
+      .toString("utf8")
+      .replace(/\0/g, "")
+      .trim();
+  } catch {
+    return null;
+  }
+}
+
+/*
+ * 9001 and 9003 are MATELEMATICS SIMULATOR ONLY.
+ *
+ * They are deliberately outside the official mapping layer.
+ *
+ * 9001 = simulated light vehicle DTC text
+ * 9003 = simulated J1939 DM1 text
+ * 9004 = simulated J1939 DM2 text
+ * 9005 = simulator profile name
+ */
+
+export function simulatorDiagnostics(
+  io: Record<string, number | string>,
+): {
+  active: DiagnosticCode[];
+  stored: DiagnosticCode[];
+} {
+  const active: DiagnosticCode[] = [];
+  const stored: DiagnosticCode[] = [];
+
+  const obd =
+    asciiIo(io, 9001);
+
+  if (obd) {
+    active.push({
+      code: obd,
+      source: "simulator",
+      status: "active",
+    });
+  }
+
+  const dm1 =
+    asciiIo(io, 9003);
+
+  if (dm1) {
+    active.push({
+      code: dm1,
+      source: "j1939_dm1",
+      status: "active",
+    });
+  }
+
+  const dm2 =
+    asciiIo(io, 9004);
+
+  if (dm2) {
+    stored.push({
+      code: dm2,
+      source: "j1939_dm2",
+      status: "stored",
+    });
+  }
+
+  return {
+    active,
+    stored,
+  };
+}
+
+============================================================
+FILE : .\server\teltonika\can\types-v2.ts
+EXISTS : True
+============================================================
+export type CanProfile =
+  | "light_vehicle_can"
+  | "j1939_fms"
+  | "unknown";
+
+export type DiagnosticCode = {
+  code: string;
+  source:
+    | "can_adapter"
+    | "j1939_dm1"
+    | "j1939_dm2"
+    | "simulator";
+  status:
+    | "active"
+    | "stored";
+  description?: string | null;
+};
+
+export type NormalizedCanV2 = {
+  version: 2;
+
+  source: {
+    manufacturer: "teltonika";
+    profile: CanProfile;
+    simulator: boolean;
+    mappingVersion: "2.0";
+  };
+
+  engine: {
+    rpm: number | null;
+    coolantTemperatureC: number | null;
+    loadPercent: number | null;
+    throttlePercent: number | null;
+    engineHours: number | null;
+  };
+
+  vehicle: {
+    speedKph: number | null;
+    odometerKm: number | null;
+    ignition: boolean | null;
+    movement: boolean | null;
+  };
+
+  fuel: {
+    levelPercent: number | null;
+    levelLiters: number | null;
+    consumedLiters: number | null;
+    rateLph: number | null;
+    averageL100km: number | null;
+    adBluePercent: number | null;
+    adBlueLiters: number | null;
+  };
+
+  doors: {
+    frontLeft: boolean | null;
+    frontRight: boolean | null;
+    rearLeft: boolean | null;
+    rearRight: boolean | null;
+    hood: boolean | null;
+    trunk: boolean | null;
+  };
+
+  safety: {
+    seatbelt: boolean | null;
+    handbrake: boolean | null;
+  };
+
+  warnings: {
+    checkEngine: boolean | null;
+    abs: boolean | null;
+    airbag: boolean | null;
+    esp: boolean | null;
+    oilPressure: boolean | null;
+    tpms: boolean | null;
+  };
+
+  diagnostics: {
+    dtcCount: number | null;
+    active: DiagnosticCode[];
+    stored: DiagnosticCode[];
+  };
+
+  tracker: {
+    gsmSignal: number | null;
+    externalVoltage: number | null;
+    internalBatteryVoltage: number | null;
+    satellites: number | null;
+  };
+
+  /*
+   * Compatibility aliases.
+   * Current dashboard V1 can keep reading these fields.
+   */
+  rpm: number | null;
+  speed_kph: number | null;
+  fuel_level_percent: number | null;
+  fuel_used_litres: number | null;
+  coolant_temperature_c: number | null;
+  throttle_percent: number | null;
+  odometer_km: number | null;
+  simulator: boolean;
+};

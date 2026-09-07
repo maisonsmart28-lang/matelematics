@@ -1,0 +1,3767 @@
+
+============================================================
+FILE: server\teltonika\protocol.ts
+============================================================
+import type { Socket } from "node:net";
+import { decodeAvlPacket } from "./codec8";
+import { normalizeMessage } from "./normalize";
+import { findDeviceByImei } from "./registry";
+
+const MAX_PACKET_SIZE = 2 * 1024 * 1024;
+
+type PacketHandler = (input: {
+  socket: Socket;
+  imei: string;
+  normalized: ReturnType<typeof normalizeMessage>;
+}) => void | Promise<void>;
+
+export function attachTeltonikaProtocol(socket: Socket, onMessage: PacketHandler) {
+  let buffer = Buffer.alloc(0);
+  let authenticated = false;
+  let imei = "";
+
+  const closeWithError = (error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    socket.destroy(new Error(message));
+  };
+
+  socket.on("data", async (chunk) => {
+    try {
+      buffer = Buffer.concat([buffer, chunk]);
+
+      if (buffer.length > MAX_PACKET_SIZE) {
+        throw new Error("Teltonika receive buffer exceeded the safety limit");
+      }
+
+      if (!authenticated) {
+        if (buffer.length < 2) return;
+
+        const imeiLength = buffer.readUInt16BE(0);
+        if (imeiLength < 10 || imeiLength > 32) {
+          throw new Error(`Invalid Teltonika IMEI length: ${imeiLength}`);
+        }
+
+        if (buffer.length < 2 + imeiLength) return;
+
+        imei = buffer.subarray(2, 2 + imeiLength).toString("ascii");
+        buffer = buffer.subarray(2 + imeiLength);
+
+        if (!/^\d{10,20}$/.test(imei)) {
+          throw new Error("Invalid Teltonika IMEI format");
+        }
+
+        const registration = findDeviceByImei(imei);
+        if (!registration) {
+          socket.write(Buffer.from([0]));
+          throw new Error(`Unknown Teltonika device IMEI ${imei}`);
+        }
+
+        socket.write(Buffer.from([1]));
+        authenticated = true;
+      }
+
+      while (authenticated) {
+        if (buffer.length < 12) return;
+
+        const preamble = buffer.readUInt32BE(0);
+        if (preamble !== 0) {
+          throw new Error("Invalid Teltonika packet preamble");
+        }
+
+        const dataLength = buffer.readUInt32BE(4);
+        const totalLength = 8 + dataLength + 4;
+
+        if (dataLength <= 0 || totalLength > MAX_PACKET_SIZE) {
+          throw new Error(`Invalid Teltonika data length: ${dataLength}`);
+        }
+
+        if (buffer.length < totalLength) return;
+
+        const packet = buffer.subarray(0, totalLength);
+        buffer = buffer.subarray(totalLength);
+
+        const decoded = decodeAvlPacket(packet);
+        const normalized = normalizeMessage(imei, decoded);
+
+        /*
+         * Durable ACK:
+         *
+         * acknowledge the Teltonika packet only AFTER
+         * Matelematics has successfully processed/persisted it.
+         *
+         * This serializes the simulator/device flow and prevents
+         * record N+1 from racing record N in Supabase.
+         */
+        await onMessage({
+          socket,
+          imei,
+          normalized,
+        });
+
+        const ack = Buffer.alloc(4);
+
+        ack.writeUInt32BE(
+          normalized.length,
+          0,
+        );
+
+        socket.write(ack);
+      }
+    } catch (error) {
+      closeWithError(error);
+    }
+  });
+}
+
+
+============================================================
+FILE: server\teltonika\server.ts
+============================================================
+import net from "node:net";
+import fs from "node:fs";
+import path from "node:path";
+
+import { attachTeltonikaProtocol } from "./protocol";
+import { registerDevice } from "./registry";
+import {
+  loadDevicesFromSupabase,
+  persistTelemetry,
+} from "./storage";
+
+function loadLocalEnv() {
+  const envPath = path.resolve(
+    process.cwd(),
+    ".env.local",
+  );
+
+  if (!fs.existsSync(envPath)) {
+    return;
+  }
+
+  const content = fs.readFileSync(
+    envPath,
+    "utf8",
+  );
+
+  for (const line of content.split(/\r?\n/)) {
+    const trimmed = line.trim();
+
+    if (
+      !trimmed ||
+      trimmed.startsWith("#")
+    ) {
+      continue;
+    }
+
+    const separator = trimmed.indexOf("=");
+
+    if (separator === -1) {
+      continue;
+    }
+
+    const key = trimmed
+      .slice(0, separator)
+      .trim();
+
+    let value = trimmed
+      .slice(separator + 1)
+      .trim();
+
+    if (
+      (value.startsWith('"') &&
+        value.endsWith('"')) ||
+      (value.startsWith("'") &&
+        value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+
+    if (!process.env[key]) {
+      process.env[key] = value;
+    }
+  }
+}
+
+loadLocalEnv();
+
+const host =
+  process.env.TELTONIKA_HOST ??
+  "0.0.0.0";
+
+const port = Number(
+  process.env.TELTONIKA_PORT ??
+    5000,
+);
+
+if (
+  !Number.isInteger(port) ||
+  port < 1 ||
+  port > 65535
+) {
+  throw new Error(
+    "TELTONIKA_PORT must be a valid TCP port",
+  );
+}
+
+/*
+ * Optional development-only registry.
+ * Supabase devices are loaded automatically below.
+ */
+for (
+  const entry of (
+    process.env.TELTONIKA_DEV_DEVICES ??
+    ""
+  ).split(",")
+) {
+  const [
+    imei,
+    clientId,
+    vehicleId,
+    label,
+  ] = entry.split(":");
+
+  if (
+    imei &&
+    clientId &&
+    vehicleId
+  ) {
+    registerDevice({
+      imei,
+      clientId,
+      vehicleId,
+      label: label ?? vehicleId,
+    });
+  }
+}
+
+async function start() {
+  await loadDevicesFromSupabase();
+
+  const server = net.createServer(
+    (socket) => {
+      socket.setKeepAlive(
+        true,
+        30_000,
+      );
+
+      socket.setNoDelay(true);
+
+      console.log(
+        `[Teltonika] TCP connection from ${socket.remoteAddress}:${socket.remotePort}`,
+      );
+
+      attachTeltonikaProtocol(
+        socket,
+        async ({
+          imei,
+          normalized,
+        }) => {
+          for (
+            const telemetry of normalized
+          ) {
+            console.log(
+              `[Teltonika] ${imei} ${telemetry.timestamp} ` +
+                `${telemetry.latitude.toFixed(6)},${telemetry.longitude.toFixed(6)} ` +
+                `${telemetry.speedKph} km/h`,
+            );
+
+            const saved =
+              await persistTelemetry(
+                telemetry,
+              );
+
+            console.log(
+              `[Teltonika] persisted device=${saved.deviceId} ` +
+                `vehicle=${saved.vehicleId} ` +
+                `recorded_at=${saved.recordedAt}`,
+            );
+          }
+        },
+      );
+
+      socket.on(
+        "close",
+        () => {
+          console.log(
+            "[Teltonika] TCP connection closed",
+          );
+        },
+      );
+
+      socket.on(
+        "error",
+        (error: Error) => {
+          console.error(
+            "[Teltonika] socket error:",
+            error.message,
+          );
+        },
+      );
+    },
+  );
+
+  server.listen(
+    port,
+    host,
+    () => {
+      console.log(
+        `[Teltonika] Matelematics ingestion engine listening on ${host}:${port}`,
+      );
+    },
+  );
+}
+
+start().catch((error) => {
+  console.error(
+    "[Teltonika] startup error:",
+    error,
+  );
+
+  process.exitCode = 1;
+});
+
+
+============================================================
+FILE: server\teltonika\simulator.ts
+============================================================
+import net from "node:net";
+
+import {
+  crc16Ibm,
+} from "./crc16";
+
+
+const host =
+  process.env.TELTONIKA_SIM_HOST ??
+  "127.0.0.1";
+
+const port =
+  Number(
+    process.env.TELTONIKA_SIM_PORT ??
+    5000,
+  );
+
+const imei =
+  process.env.TELTONIKA_SIM_IMEI ??
+  "356307042441234";
+
+const intervalMs =
+  Number(
+    process.env.TELTONIKA_SIM_INTERVAL_MS ??
+    3000,
+  );
+
+const profile =
+  (
+    process.env.TELTONIKA_SIM_PROFILE ??
+    "light"
+  ).toLowerCase() === "j1939"
+    ? "j1939"
+    : "light";
+
+
+let latitude =
+  33.5731;
+
+let longitude =
+  -7.5898;
+
+let speedKph =
+  48;
+
+let heading =
+  90;
+
+let packetNumber =
+  0;
+
+let fuelLevelPercent =
+  76;
+
+let fuelUsedLitres =
+  38.4;
+
+let odometerKm =
+  128450;
+
+let engineWorkMinutes =
+  74400;
+
+let adBluePercent =
+  82;
+
+
+function state() {
+  const rpm =
+    Math.round(
+      850 +
+      speedKph * 28 +
+      Math.sin(
+        packetNumber / 3,
+      ) * 180,
+    );
+
+  const coolant =
+    Math.round(
+      Math.min(
+        112,
+        78 +
+        Math.sin(
+          packetNumber / 10,
+        ) * 8,
+      ),
+    );
+
+  const throttle =
+    Math.max(
+      8,
+      Math.min(
+        82,
+        Math.round(
+          18 +
+          speedKph * 0.45 +
+          Math.sin(
+            packetNumber / 2,
+          ) * 8,
+        ),
+      ),
+    );
+
+  const engineLoad =
+    Math.max(
+      15,
+      Math.min(
+        95,
+        Math.round(
+          25 +
+          speedKph * 0.55,
+        ),
+      ),
+    );
+
+  const fuelRate =
+    Math.max(
+      1,
+      3.5 +
+      speedKph * 0.065,
+    );
+
+  const externalVoltage =
+    Math.round(
+      13800 +
+      Math.sin(
+        packetNumber / 5,
+      ) * 180,
+    );
+
+  const internalBattery =
+    Math.round(
+      4080 +
+      Math.sin(
+        packetNumber / 7,
+      ) * 30,
+    );
+
+  const gsm =
+    Math.max(
+      1,
+      Math.min(
+        5,
+        4 +
+        Math.round(
+          Math.sin(
+            packetNumber / 6,
+          ),
+        ),
+      ),
+    );
+
+  /*
+   * Test scenarios.
+   *
+   * Door opens while moving:
+   * packets 8..11
+   *
+   * Diagnostic / Check Engine:
+   * packets 15..22
+   */
+
+  const doorFault =
+    packetNumber >= 8 &&
+    packetNumber <= 11;
+
+  const diagnosticFault =
+    packetNumber >= 15 &&
+    packetNumber <= 22;
+
+  return {
+    rpm,
+    coolant,
+    throttle,
+    engineLoad,
+    fuelRate,
+    externalVoltage,
+    internalBattery,
+    gsm,
+    doorFault,
+    diagnosticFault,
+  };
+}
+
+
+type IoNumber = {
+  id: number;
+  value: number;
+};
+
+type IoNx = {
+  id: number;
+  value: Buffer;
+};
+
+
+function buildCodec8EPacket() {
+  const s =
+    state();
+
+  const one:
+    IoNumber[] =
+    [
+      {
+        id: 239,
+        value: 1,
+      },
+
+      {
+        id: 240,
+        value:
+          speedKph > 0
+            ? 1
+            : 0,
+      },
+
+      {
+        id: 21,
+        value:
+          s.gsm,
+      },
+    ];
+
+  const two:
+    IoNumber[] =
+    [
+      {
+        id: 66,
+        value:
+          s.externalVoltage,
+      },
+
+      {
+        id: 67,
+        value:
+          s.internalBattery,
+      },
+    ];
+
+  const four:
+    IoNumber[] =
+    [];
+
+  const eight:
+    IoNumber[] =
+    [];
+
+  const nx:
+    IoNx[] =
+    [];
+
+
+  if (
+    profile === "light"
+  ) {
+    one.push(
+      {
+        id: 81,
+        value:
+          Math.round(
+            speedKph,
+          ),
+      },
+
+      {
+        id: 82,
+        value:
+          s.throttle,
+      },
+
+      {
+        id: 37,
+        value:
+          Math.round(
+            fuelLevelPercent,
+          ),
+      },
+
+      {
+        id: 19,
+        value:
+          Math.round(
+            adBluePercent,
+          ),
+      },
+
+      {
+        id: 23,
+        value:
+          s.engineLoad,
+      },
+
+      {
+        id: 176,
+        value:
+          s.diagnosticFault
+            ? 1
+            : 0,
+      },
+    );
+
+    two.push(
+      {
+        id: 18,
+        value:
+          Math.round(
+            s.fuelRate * 10,
+          ),
+      },
+
+      {
+        id: 34,
+        value:
+          Math.round(
+            58 *
+            fuelLevelPercent /
+            100 *
+            10,
+          ),
+      },
+
+      {
+        id: 35,
+        value:
+          s.rpm,
+      },
+
+      {
+        id: 25,
+        value:
+          Math.round(
+            s.coolant * 10,
+          ),
+      },
+    );
+
+    four.push(
+      {
+        id: 14,
+        value:
+          Math.round(
+            engineWorkMinutes,
+          ),
+      },
+
+      {
+        id: 16,
+        value:
+          Math.round(
+            odometerKm *
+            1000,
+          ),
+      },
+
+      {
+        id: 17,
+        value:
+          Math.round(
+            fuelUsedLitres *
+            10,
+          ),
+      },
+
+      {
+        id: 33,
+        value:
+          Math.round(
+            fuelUsedLitres *
+            10,
+          ),
+      },
+
+      {
+        id: 36,
+        value:
+          Math.round(
+            odometerKm *
+            1000,
+          ),
+      },
+
+      {
+        id: 38,
+        value:
+          s.doorFault
+            ? 0x100
+            : 0,
+      },
+    );
+
+    if (
+      s.diagnosticFault
+    ) {
+      nx.push({
+        id: 9001,
+        value:
+          Buffer.from(
+            "P0069",
+            "utf8",
+          ),
+      });
+    }
+  }
+
+
+  if (
+    profile === "j1939"
+  ) {
+    /*
+     * FMC650 FMS/J1939 profile.
+     */
+
+    one.push(
+      {
+        id: 85,
+        value:
+          s.engineLoad,
+      },
+
+      {
+        id: 10349,
+        value:
+          s.diagnosticFault
+            ? 2
+            : 0,
+      },
+    );
+
+    four.push(
+      {
+        id: 80,
+        value:
+          Math.round(
+            speedKph,
+          ),
+      },
+
+      {
+        id: 84,
+        value:
+          s.throttle,
+      },
+
+      {
+        id: 86,
+        value:
+          Math.round(
+            fuelUsedLitres,
+          ),
+      },
+
+      {
+        id: 87,
+        value:
+          Math.round(
+            fuelLevelPercent,
+          ),
+      },
+
+      {
+        id: 88,
+        value:
+          s.rpm,
+      },
+
+      /*
+       * Mileage from CAN adapter fallback.
+       */
+      {
+        id: 36,
+        value:
+          Math.round(
+            odometerKm *
+            1000,
+          ),
+      },
+    );
+
+    if (
+      s.diagnosticFault
+    ) {
+      /*
+       * Simulator-only DM1 representation.
+       *
+       * This is NOT claimed to be the real
+       * FMC650 DM1 AVL wire encoding.
+       */
+      nx.push({
+        id: 9003,
+        value:
+          Buffer.from(
+            "SPN100-FMI1",
+            "utf8",
+          ),
+      });
+
+      nx.push({
+        id: 9004,
+        value:
+          Buffer.from(
+            "SPN110-FMI3",
+            "utf8",
+          ),
+      });
+    }
+  }
+
+
+  nx.push({
+    id: 9005,
+    value:
+      Buffer.from(
+        profile,
+        "utf8",
+      ),
+  });
+
+
+  const parts:
+    Buffer[] =
+    [];
+
+
+  const u8 =
+    (value: number) => {
+      const b =
+        Buffer.alloc(1);
+
+      b.writeUInt8(
+        value,
+      );
+
+      parts.push(b);
+    };
+
+
+  const u16 =
+    (value: number) => {
+      const b =
+        Buffer.alloc(2);
+
+      b.writeUInt16BE(
+        value,
+      );
+
+      parts.push(b);
+    };
+
+
+  const u32 =
+    (value: number) => {
+      const b =
+        Buffer.alloc(4);
+
+      b.writeUInt32BE(
+        value >>> 0,
+      );
+
+      parts.push(b);
+    };
+
+
+  const i32 =
+    (value: number) => {
+      const b =
+        Buffer.alloc(4);
+
+      b.writeInt32BE(
+        value,
+      );
+
+      parts.push(b);
+    };
+
+
+  const u64 =
+    (value: bigint) => {
+      const b =
+        Buffer.alloc(8);
+
+      b.writeBigUInt64BE(
+        value,
+      );
+
+      parts.push(b);
+    };
+
+
+  /*
+   * Codec 8 Extended
+   */
+
+  u8(142);
+  u8(1);
+
+  u64(
+    BigInt(
+      Date.now(),
+    ),
+  );
+
+  u8(1);
+
+  i32(
+    Math.round(
+      longitude *
+      10_000_000,
+    ),
+  );
+
+  i32(
+    Math.round(
+      latitude *
+      10_000_000,
+    ),
+  );
+
+  u16(35);
+
+  u16(
+    Math.round(
+      heading,
+    ),
+  );
+
+  u8(11);
+
+  u16(
+    Math.round(
+      speedKph,
+    ),
+  );
+
+
+  /*
+   * Codec 8E IO
+   */
+
+  u16(239);
+
+  const totalIo =
+    one.length +
+    two.length +
+    four.length +
+    eight.length +
+    nx.length;
+
+  u16(totalIo);
+
+
+  u16(one.length);
+
+  for (
+    const item of one
+  ) {
+    u16(item.id);
+    u8(item.value);
+  }
+
+
+  u16(two.length);
+
+  for (
+    const item of two
+  ) {
+    u16(item.id);
+    u16(item.value);
+  }
+
+
+  u16(four.length);
+
+  for (
+    const item of four
+  ) {
+    u16(item.id);
+    u32(item.value);
+  }
+
+
+  u16(eight.length);
+
+  for (
+    const item of eight
+  ) {
+    u16(item.id);
+    u64(
+      BigInt(
+        item.value,
+      ),
+    );
+  }
+
+
+  u16(nx.length);
+
+  for (
+    const item of nx
+  ) {
+    u16(item.id);
+
+    u16(
+      item.value.length,
+    );
+
+    parts.push(
+      item.value,
+    );
+  }
+
+
+  u8(1);
+
+
+  const data =
+    Buffer.concat(
+      parts,
+    );
+
+  const packet =
+    Buffer.alloc(
+      8 +
+      data.length +
+      4,
+    );
+
+  packet.writeUInt32BE(
+    0,
+    0,
+  );
+
+  packet.writeUInt32BE(
+    data.length,
+    4,
+  );
+
+  data.copy(
+    packet,
+    8,
+  );
+
+  packet.writeUInt32BE(
+    crc16Ibm(data),
+    8 + data.length,
+  );
+
+  return packet;
+}
+
+
+function advance() {
+  longitude +=
+    0.00015;
+
+  latitude +=
+    0.00005;
+
+  heading =
+    (
+      heading + 3
+    ) % 360;
+
+  speedKph =
+    Math.max(
+      20,
+      Math.round(
+        48 +
+        Math.sin(
+          packetNumber / 4,
+        ) * 8,
+      ),
+    );
+
+  const distanceKm =
+    speedKph *
+    (
+      intervalMs /
+      3_600_000
+    );
+
+  odometerKm +=
+    distanceKm;
+
+  engineWorkMinutes +=
+    intervalMs /
+    60_000;
+
+  const consumption =
+    (
+      7.2 +
+      speedKph *
+      0.035
+    );
+
+  const consumed =
+    distanceKm *
+    consumption /
+    100;
+
+  fuelUsedLitres +=
+    consumed;
+
+  fuelLevelPercent =
+    Math.max(
+      0,
+      fuelLevelPercent -
+      consumed * 0.55,
+    );
+
+  adBluePercent =
+    Math.max(
+      0,
+      adBluePercent -
+      consumed * 0.015,
+    );
+}
+
+
+const socket =
+  net.createConnection(
+    {
+      host,
+      port,
+    },
+
+    () => {
+      console.log(
+        `[Teltonika simulator V2] Connected ${host}:${port}`,
+      );
+
+      console.log(
+        `[Teltonika simulator V2] Profile = ${profile}`,
+      );
+
+      const imeiBuffer =
+        Buffer.from(
+          imei,
+          "ascii",
+        );
+
+      const handshake =
+        Buffer.alloc(
+          2 +
+          imeiBuffer.length,
+        );
+
+      handshake.writeUInt16BE(
+        imeiBuffer.length,
+        0,
+      );
+
+      imeiBuffer.copy(
+        handshake,
+        2,
+      );
+
+      socket.write(
+        handshake,
+      );
+    },
+  );
+
+
+let authenticated =
+  false;
+
+let waiting =
+  false;
+
+
+function sendRecord() {
+  if (
+    !authenticated ||
+    waiting
+  ) {
+    return;
+  }
+
+  packetNumber += 1;
+
+  const s =
+    state();
+
+  const packet =
+    buildCodec8EPacket();
+
+  waiting =
+    true;
+
+  socket.write(
+    packet,
+  );
+
+  console.log(
+    `[Teltonika V2:${profile}] #${packetNumber} ` +
+    `${speedKph}km/h ` +
+    `RPM=${s.rpm} ` +
+    `Fuel=${fuelLevelPercent.toFixed(1)}% ` +
+    `Temp=${s.coolant}C ` +
+    `Door=${s.doorFault ? "OPEN" : "CLOSED"} ` +
+    `Fault=${s.diagnosticFault ? "ACTIVE" : "NONE"}`,
+  );
+
+  advance();
+}
+
+
+socket.on(
+  "data",
+
+  (data) => {
+    if (!authenticated) {
+      if (
+        data.length !== 1 ||
+        data[0] !== 1
+      ) {
+        console.error(
+          `[Teltonika simulator V2] IMEI rejected: ${imei}`,
+        );
+
+        socket.end();
+        return;
+      }
+
+      authenticated =
+        true;
+
+      console.log(
+        `[Teltonika simulator V2] IMEI ${imei} accepted`,
+      );
+
+      sendRecord();
+      return;
+    }
+
+    if (
+      data.length >= 4
+    ) {
+      console.log(
+        `[Teltonika simulator V2] Server ACK = ${data.readUInt32BE(
+          0,
+        )}`,
+      );
+
+      waiting =
+        false;
+    }
+  },
+);
+
+
+const timer =
+  setInterval(
+    sendRecord,
+    intervalMs,
+  );
+
+
+function shutdown() {
+  clearInterval(
+    timer,
+  );
+
+  socket.end();
+}
+
+
+process.on(
+  "SIGINT",
+  shutdown,
+);
+
+process.on(
+  "SIGTERM",
+  shutdown,
+);
+
+
+socket.on(
+  "error",
+
+  (error) => {
+    console.error(
+      "[Teltonika simulator V2]",
+      error.message,
+    );
+
+    process.exitCode =
+      1;
+  },
+);
+
+============================================================
+FILE: server\teltonika\codec8.ts
+============================================================
+import type {
+  GpsData,
+  IoValue,
+  TeltonikaCodec,
+  TeltonikaMessage,
+  TeltonikaRecord,
+} from "./types";
+import { crc16Ibm } from "./crc16";
+
+class Reader {
+  private offset = 0;
+
+  constructor(private readonly buffer: Buffer) {}
+
+  get position() {
+    return this.offset;
+  }
+
+  get remaining() {
+    return this.buffer.length - this.offset;
+  }
+
+  private ensure(size: number) {
+    if (this.remaining < size) {
+      throw new Error(
+        `Teltonika packet truncated: need ${size} bytes, only ${this.remaining} remain`,
+      );
+    }
+  }
+
+  u8() {
+    this.ensure(1);
+    const value = this.buffer.readUInt8(this.offset);
+    this.offset += 1;
+    return value;
+  }
+
+  u16() {
+    this.ensure(2);
+    const value = this.buffer.readUInt16BE(this.offset);
+    this.offset += 2;
+    return value;
+  }
+
+  u32() {
+    this.ensure(4);
+    const value = this.buffer.readUInt32BE(this.offset);
+    this.offset += 4;
+    return value;
+  }
+
+  u64() {
+    this.ensure(8);
+    const value = this.buffer.readBigUInt64BE(this.offset);
+    this.offset += 8;
+    return value;
+  }
+
+  i16() {
+    this.ensure(2);
+    const value = this.buffer.readInt16BE(this.offset);
+    this.offset += 2;
+    return value;
+  }
+
+  i32() {
+    this.ensure(4);
+    const value = this.buffer.readInt32BE(this.offset);
+    this.offset += 4;
+    return value;
+  }
+
+  bytes(size: number) {
+    this.ensure(size);
+    const value = this.buffer.subarray(this.offset, this.offset + size);
+    this.offset += size;
+    return value;
+  }
+}
+
+function readGps(reader: Reader): GpsData {
+  // Teltonika AVL GPS coordinates are signed integers in 1e-7 degrees.
+  const longitude = reader.i32() / 10_000_000;
+  const latitude = reader.i32() / 10_000_000;
+  const altitude = reader.i16();
+  const angle = reader.u16();
+  const satellites = reader.u8();
+  const speedKph = reader.u16();
+
+  return {
+    longitude,
+    latitude,
+    altitude,
+    angle,
+    satellites,
+    speedKph,
+  };
+}
+
+function readIo(reader: Reader, codec: TeltonikaCodec): { eventId: number; io: IoValue[] } {
+  const extended = codec === 142;
+  const idWidth = extended ? 2 : 1;
+  const countWidth = extended ? 2 : 1;
+  const values: IoValue[] = [];
+
+  const readId = () => (idWidth === 2 ? reader.u16() : reader.u8());
+  const readCount = () => (countWidth === 2 ? reader.u16() : reader.u8());
+
+  const eventId = readId();
+  readCount(); // total IO count; group counts follow.
+
+  const groups: Array<1 | 2 | 4 | 8> = [1, 2, 4, 8];
+
+  for (const size of groups) {
+    const count = readCount();
+
+    for (let index = 0; index < count; index += 1) {
+      const id = readId();
+      let value: number;
+
+      if (size === 1) value = reader.u8();
+      else if (size === 2) value = reader.u16();
+      else if (size === 4) value = reader.u32();
+      else {
+        const raw = reader.u64();
+        const maxSafe = BigInt(Number.MAX_SAFE_INTEGER);
+        value = raw <= maxSafe ? Number(raw) : Number(raw % (maxSafe + 1n));
+      }
+
+      values.push({ id, value, size });
+    }
+  }
+
+  // Codec 8 Extended additionally supports variable-length IO elements (NX).
+  if (extended) {
+    const variableCount = readCount();
+
+    for (let index = 0; index < variableCount; index += 1) {
+      const id = readId();
+      const length = reader.u16();
+      const raw = reader.bytes(length);
+      values.push({ id, value: raw.toString("hex"), size: 8 });
+    }
+  }
+
+  return { eventId, io: values };
+}
+
+function parseRecord(reader: Reader, codec: TeltonikaCodec): TeltonikaRecord {
+  const timestampMs = reader.u64();
+  const priority = reader.u8();
+  const gps = readGps(reader);
+  const { eventId, io } = readIo(reader, codec);
+
+  return {
+    timestamp: new Date(Number(timestampMs)).toISOString(),
+    priority,
+    gps,
+    eventId,
+    io,
+  };
+}
+
+export function decodeAvlPacket(packet: Buffer): TeltonikaMessage {
+  if (packet.length < 12) {
+    throw new Error("Teltonika AVL packet is too short");
+  }
+
+  const preamble = packet.readUInt32BE(0);
+  if (preamble !== 0) {
+    throw new Error("Invalid Teltonika AVL preamble");
+  }
+
+  const dataLength = packet.readUInt32BE(4);
+  const expectedLength = 8 + dataLength + 4;
+  if (packet.length !== expectedLength) {
+    throw new Error(
+      `Invalid Teltonika packet length: header says ${dataLength} bytes, received ${packet.length}`,
+    );
+  }
+
+  const data = packet.subarray(8, 8 + dataLength);
+  const receivedCrc = packet.readUInt32BE(8 + dataLength);
+  const calculatedCrc = crc16Ibm(data);
+  const crcValid = (receivedCrc & 0xffff) === calculatedCrc;
+
+  if (!crcValid) {
+    throw new Error(
+      `Invalid Teltonika CRC: received ${receivedCrc.toString(16)}, expected ${calculatedCrc.toString(16)}`,
+    );
+  }
+
+  const reader = new Reader(data);
+  const codecByte = reader.u8();
+  if (codecByte !== 8 && codecByte !== 142) {
+    throw new Error(`Unsupported Teltonika Codec ID ${codecByte}`);
+  }
+
+  const codec = codecByte === 142 ? 142 : 8;
+  const recordCount = reader.u8();
+  const records: TeltonikaRecord[] = [];
+
+  for (let index = 0; index < recordCount; index += 1) {
+    records.push(parseRecord(reader, codec));
+  }
+
+  const recordCount2 = reader.u8();
+  if (recordCount !== recordCount2) {
+    throw new Error(
+      `Teltonika record count mismatch: ${recordCount} != ${recordCount2}`,
+    );
+  }
+
+  if (reader.remaining !== 0) {
+    throw new Error(`Unexpected ${reader.remaining} bytes inside Teltonika AVL payload`);
+  }
+
+  return {
+    codec,
+    records,
+    rawLength: packet.length,
+    crcValid,
+  };
+}
+
+export function decodeAvlPacketUnsafe(packet: Buffer): TeltonikaMessage {
+  return decodeAvlPacket(packet);
+}
+
+
+============================================================
+FILE: server\teltonika\registry.ts
+============================================================
+import type { DeviceRegistration } from "./types";
+
+/**
+ * Temporary in-memory registry for development.
+ * Production will replace this with Supabase/PostgreSQL.
+ */
+const devices = new Map<string, DeviceRegistration>();
+
+export function registerDevice(device: DeviceRegistration) {
+  devices.set(device.imei, device);
+}
+
+export function findDeviceByImei(imei: string) {
+  return devices.get(imei) ?? null;
+}
+
+export function listRegisteredDevices() {
+  return [...devices.values()];
+}
+
+
+============================================================
+FILE: app\api\diagnostics\route.ts
+============================================================
+import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+type Role =
+  | "matelematics_admin"
+  | "partner_admin"
+  | "client_admin"
+  | "user";
+
+type Profile = {
+  id: string;
+  role: Role;
+  company_id: string | null;
+  partner_id: string | null;
+};
+
+type JsonMap = Record<string, unknown>;
+
+const supabaseUrl =
+  process.env.SUPABASE_URL ??
+  process.env.NEXT_PUBLIC_SUPABASE_URL;
+
+const secretKey =
+  process.env.SUPABASE_SECRET_KEY;
+
+function getAdmin() {
+  if (!supabaseUrl || !secretKey) {
+    throw new Error("SUPABASE_CONFIG");
+  }
+
+  return createClient(
+    supabaseUrl,
+    secretKey,
+    {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+      },
+    },
+  );
+}
+
+async function authenticate(request: NextRequest) {
+  const authorization =
+    request.headers.get("authorization");
+
+  const token =
+    authorization?.startsWith("Bearer ")
+      ? authorization.slice(7)
+      : null;
+
+  if (!token) {
+    throw new Error("AUTH_REQUIRED");
+  }
+
+  const admin = getAdmin();
+
+  const {
+    data: userData,
+    error: userError,
+  } =
+    await admin.auth.getUser(token);
+
+  if (userError || !userData.user) {
+    throw new Error("AUTH_REQUIRED");
+  }
+
+  const {
+    data: profile,
+    error: profileError,
+  } =
+    await admin
+      .from("profiles")
+      .select(
+        "id,role,company_id,partner_id",
+      )
+      .eq("id", userData.user.id)
+      .single();
+
+  if (profileError || !profile) {
+    throw new Error("PROFILE_REQUIRED");
+  }
+
+  return {
+    admin,
+    profile: profile as Profile,
+  };
+}
+
+async function getAllowedCompanyIds(
+  admin: ReturnType<typeof getAdmin>,
+  profile: Profile,
+) {
+  if (
+    profile.role === "client_admin" ||
+    profile.role === "user"
+  ) {
+    return profile.company_id
+      ? [profile.company_id]
+      : [];
+  }
+
+  if (profile.role === "partner_admin") {
+    if (!profile.partner_id) {
+      return [];
+    }
+
+    const {
+      data,
+      error,
+    } =
+      await admin
+        .from("companies")
+        .select("id")
+        .eq(
+          "partner_id",
+          profile.partner_id,
+        );
+
+    if (error) {
+      throw error;
+    }
+
+    return (data ?? []).map(
+      (row) => row.id,
+    );
+  }
+
+  return null;
+}
+
+async function getVisibleVehicles(
+  admin: ReturnType<typeof getAdmin>,
+  profile: Profile,
+) {
+  const allowedCompanyIds =
+    await getAllowedCompanyIds(
+      admin,
+      profile,
+    );
+
+  let query =
+    admin
+      .from("vehicles")
+      .select(
+        "id,company_id,name,registration,brand,model,status",
+      )
+      .order("name");
+
+  if (allowedCompanyIds !== null) {
+    if (allowedCompanyIds.length === 0) {
+      return [];
+    }
+
+    query =
+      query.in(
+        "company_id",
+        allowedCompanyIds,
+      );
+  }
+
+  const {
+    data,
+    error,
+  } =
+    await query;
+
+  if (error) {
+    throw error;
+  }
+
+  return data ?? [];
+}
+
+function asObject(
+  value: unknown,
+): JsonMap | null {
+  if (
+    value &&
+    typeof value === "object" &&
+    !Array.isArray(value)
+  ) {
+    return value as JsonMap;
+  }
+
+  return null;
+}
+
+function isHidden(
+  metadata: unknown,
+) {
+  const object =
+    asObject(metadata);
+
+  return (
+    typeof object?.matelematics_hidden_at ===
+    "string"
+  );
+}
+
+function diagnosticArray(
+  payload: unknown,
+  key: "active" | "stored",
+) {
+  const can =
+    asObject(payload);
+
+  const diagnostics =
+    asObject(
+      can?.diagnostics,
+    );
+
+  const value =
+    diagnostics?.[key];
+
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((entry) => {
+      const item =
+        asObject(entry);
+
+      if (
+        !item ||
+        typeof item.code !== "string"
+      ) {
+        return null;
+      }
+
+      return {
+        code:
+          item.code,
+
+        source:
+          typeof item.source === "string"
+            ? item.source
+            : null,
+
+        status:
+          typeof item.status === "string"
+            ? item.status
+            : key,
+      };
+    })
+    .filter(
+      (
+        item,
+      ): item is {
+        code: string;
+        source: string | null;
+        status: string;
+      } =>
+        item !== null,
+    );
+}
+
+function getProfile(
+  payload: unknown,
+) {
+  const can =
+    asObject(payload);
+
+  const source =
+    asObject(can?.source);
+
+  return typeof source?.profile ===
+    "string"
+    ? source.profile
+    : null;
+}
+
+function getCheckEngine(
+  payload: unknown,
+) {
+  const can =
+    asObject(payload);
+
+  const warnings =
+    asObject(can?.warnings);
+
+  return typeof warnings?.checkEngine ===
+    "boolean"
+    ? warnings.checkEngine
+    : null;
+}
+
+export async function GET(
+  request: NextRequest,
+) {
+  try {
+    const {
+      admin,
+      profile,
+    } =
+      await authenticate(request);
+
+    const vehicles =
+      await getVisibleVehicles(
+        admin,
+        profile,
+      );
+
+    if (vehicles.length === 0) {
+      return NextResponse.json({
+        vehicles: [],
+        events: [],
+        metrics: {
+          activeDtc: 0,
+          activeCheckEngine: 0,
+          storedDtc: 0,
+          affectedVehicles: 0,
+        },
+      });
+    }
+
+    const vehicleIds =
+      vehicles.map(
+        (vehicle) => vehicle.id,
+      );
+
+    const companyIds =
+      Array.from(
+        new Set(
+          vehicles.map(
+            (vehicle) =>
+              vehicle.company_id,
+          ),
+        ),
+      );
+
+    const [
+      companiesResult,
+      devicesResult,
+      alertsResult,
+      telemetryResult,
+    ] =
+      await Promise.all([
+        admin
+          .from("companies")
+          .select("id,name")
+          .in("id", companyIds),
+
+        admin
+          .from("devices")
+          .select(
+            "id,vehicle_id,imei,manufacturer,model,status,last_seen_at",
+          )
+          .in(
+            "vehicle_id",
+            vehicleIds,
+          ),
+
+        admin
+          .from("alerts")
+          .select(
+            "id,vehicle_id,alert_type,severity,title,message,status,triggered_at,resolved_at,metadata",
+          )
+          .in(
+            "vehicle_id",
+            vehicleIds,
+          )
+          .order(
+            "triggered_at",
+            {
+              ascending: false,
+            },
+          )
+          .limit(1500),
+
+        admin
+          .from("telemetry")
+          .select(
+            "vehicle_id,recorded_at,can_payload",
+          )
+          .in(
+            "vehicle_id",
+            vehicleIds,
+          )
+          .order(
+            "recorded_at",
+            {
+              ascending: false,
+            },
+          )
+          .limit(1500),
+      ]);
+
+    if (companiesResult.error) {
+      throw companiesResult.error;
+    }
+
+    if (devicesResult.error) {
+      throw devicesResult.error;
+    }
+
+    if (alertsResult.error) {
+      throw alertsResult.error;
+    }
+
+    if (telemetryResult.error) {
+      throw telemetryResult.error;
+    }
+
+    const companyMap =
+      new Map(
+        (companiesResult.data ?? []).map(
+          (company) => [
+            company.id,
+            company.name,
+          ],
+        ),
+      );
+
+    const deviceMap =
+      new Map(
+        (devicesResult.data ?? []).map(
+          (device) => [
+            device.vehicle_id,
+            device,
+          ],
+        ),
+      );
+
+    const latestTelemetry =
+      new Map<
+        string,
+        {
+          recorded_at: string;
+          can_payload: unknown;
+        }
+      >();
+
+    for (
+      const row of
+      telemetryResult.data ?? []
+    ) {
+      if (
+        !latestTelemetry.has(
+          row.vehicle_id,
+        )
+      ) {
+        latestTelemetry.set(
+          row.vehicle_id,
+          {
+            recorded_at:
+              row.recorded_at,
+
+            can_payload:
+              row.can_payload,
+          },
+        );
+      }
+    }
+
+    const diagnosticAlerts =
+      (
+        alertsResult.data ??
+        []
+      ).filter(
+        (alert) =>
+          (
+            alert.alert_type ===
+              "check_engine" ||
+            alert.alert_type.startsWith(
+              "diagnostic_dtc_",
+            )
+          ) &&
+          !isHidden(
+            alert.metadata,
+          ),
+      );
+
+    const recurrence =
+      new Map<string, number>();
+
+    for (
+      const alert of
+      diagnosticAlerts
+    ) {
+      const key =
+        `${alert.vehicle_id}:${alert.alert_type}`;
+
+      recurrence.set(
+        key,
+        (
+          recurrence.get(key) ??
+          0
+        ) + 1,
+      );
+    }
+
+    const vehicleMap =
+      new Map(
+        vehicles.map(
+          (vehicle) => [
+            vehicle.id,
+            vehicle,
+          ],
+        ),
+      );
+
+    const events =
+      diagnosticAlerts.map(
+        (alert) => {
+          const vehicle =
+            vehicleMap.get(
+              alert.vehicle_id,
+            );
+
+          const latest =
+            latestTelemetry.get(
+              alert.vehicle_id,
+            );
+
+          const isDtc =
+            alert.alert_type.startsWith(
+              "diagnostic_dtc_",
+            );
+
+          return {
+            id:
+              alert.id,
+
+            vehicleId:
+              alert.vehicle_id,
+
+            vehicleName:
+              vehicle?.name ??
+              "Vehicle",
+
+            registration:
+              vehicle?.registration ??
+              "-",
+
+            companyName:
+              vehicle
+                ? companyMap.get(
+                    vehicle.company_id,
+                  ) ??
+                  "Client"
+                : "Client",
+
+            kind:
+              isDtc
+                ? "dtc"
+                : "check_engine",
+
+            code:
+              isDtc
+                ? alert.alert_type.replace(
+                    "diagnostic_dtc_",
+                    "",
+                  )
+                : null,
+
+            title:
+              alert.title,
+
+            message:
+              alert.message,
+
+            severity:
+              alert.severity,
+
+            status:
+              alert.status,
+
+            triggeredAt:
+              alert.triggered_at,
+
+            resolvedAt:
+              alert.resolved_at,
+
+            recurrenceCount:
+              recurrence.get(
+                `${alert.vehicle_id}:${alert.alert_type}`,
+              ) ??
+              1,
+
+            profile:
+              latest
+                ? getProfile(
+                    latest.can_payload,
+                  )
+                : null,
+          };
+        },
+      );
+
+    const vehicleStates =
+      vehicles.map(
+        (vehicle) => {
+          const latest =
+            latestTelemetry.get(
+              vehicle.id,
+            );
+
+          const device =
+            deviceMap.get(
+              vehicle.id,
+            );
+
+          return {
+            id:
+              vehicle.id,
+
+            companyId:
+              vehicle.company_id,
+
+            companyName:
+              companyMap.get(
+                vehicle.company_id,
+              ) ??
+              "Client",
+
+            name:
+              vehicle.name,
+
+            registration:
+              vehicle.registration,
+
+            brand:
+              vehicle.brand,
+
+            model:
+              vehicle.model,
+
+            device:
+              device
+                ? {
+                    id:
+                      device.id,
+
+                    imei:
+                      device.imei,
+
+                    manufacturer:
+                      device.manufacturer,
+
+                    model:
+                      device.model,
+
+                    status:
+                      device.status,
+
+                    lastSeenAt:
+                      device.last_seen_at,
+                  }
+                : null,
+
+            telemetryAt:
+              latest?.recorded_at ??
+              null,
+
+            profile:
+              latest
+                ? getProfile(
+                    latest.can_payload,
+                  )
+                : null,
+
+            checkEngine:
+              latest
+                ? getCheckEngine(
+                    latest.can_payload,
+                  )
+                : null,
+
+            activeDtc:
+              latest
+                ? diagnosticArray(
+                    latest.can_payload,
+                    "active",
+                  )
+                : [],
+
+            storedDtc:
+              latest
+                ? diagnosticArray(
+                    latest.can_payload,
+                    "stored",
+                  )
+                : [],
+
+            clearCapability: {
+              supported:
+                false,
+
+              reason:
+                device
+                  ? "REMOTE_COMMAND_NOT_INSTALLED"
+                  : "NO_TRACKER",
+            },
+          };
+        },
+      );
+
+    const activeDtc =
+      vehicleStates.reduce(
+        (
+          total,
+          vehicle,
+        ) =>
+          total +
+          vehicle.activeDtc.length,
+        0,
+      );
+
+    const activeCheckEngine =
+      vehicleStates.filter(
+        (vehicle) =>
+          vehicle.checkEngine === true,
+      ).length;
+
+    const storedDtc =
+      vehicleStates.reduce(
+        (
+          total,
+          vehicle,
+        ) =>
+          total +
+          vehicle.storedDtc.length,
+        0,
+      );
+
+    const affectedVehicles =
+      new Set(
+        events.map(
+          (event) =>
+            event.vehicleId,
+        ),
+      ).size;
+
+    return NextResponse.json({
+      vehicles:
+        vehicleStates,
+
+      events,
+
+      metrics: {
+        activeDtc,
+        activeCheckEngine,
+        storedDtc,
+        affectedVehicles,
+      },
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "SERVER_ERROR";
+
+    if (
+      message ===
+      "AUTH_REQUIRED"
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Authentication required.",
+        },
+        {
+          status: 401,
+        },
+      );
+    }
+
+    if (
+      message ===
+      "PROFILE_REQUIRED"
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "User profile unavailable.",
+        },
+        {
+          status: 403,
+        },
+      );
+    }
+
+    console.error(
+      "[Diagnostics GET]",
+      error,
+    );
+
+    return NextResponse.json(
+      {
+        error:
+          message,
+      },
+      {
+        status: 500,
+      },
+    );
+  }
+}
+
+export async function POST(
+  request: NextRequest,
+) {
+  try {
+    const {
+      admin,
+      profile,
+    } =
+      await authenticate(request);
+
+    const body =
+      await request.json() as {
+        action?: string;
+        alertId?: string;
+      };
+
+    if (
+      body.action === "simulate"
+    ) {
+      const vehicleId =
+        typeof (body as { vehicleId?: unknown }).vehicleId === "string"
+          ? (body as { vehicleId: string }).vehicleId
+          : null;
+
+      if (!vehicleId) {
+        return NextResponse.json(
+          {
+            error: "Vehicle required.",
+          },
+          {
+            status: 400,
+          },
+        );
+      }
+
+      const vehicles =
+        await getVisibleVehicles(
+          admin,
+          profile,
+        );
+
+      const vehicle =
+        vehicles.find(
+          (item) =>
+            item.id === vehicleId,
+        );
+
+      if (!vehicle) {
+        return NextResponse.json(
+          {
+            error: "Vehicle unavailable.",
+          },
+          {
+            status: 404,
+          },
+        );
+      }
+
+      const {
+        data: latestTelemetry,
+      } =
+        await admin
+          .from("telemetry")
+          .select(
+            "can_payload",
+          )
+          .eq(
+            "vehicle_id",
+            vehicleId,
+          )
+          .order(
+            "recorded_at",
+            {
+              ascending: false,
+            },
+          )
+          .limit(1)
+          .maybeSingle();
+
+      const profileName =
+        latestTelemetry
+          ? getProfile(
+              latestTelemetry.can_payload,
+            )
+          : null;
+
+      const now =
+        new Date().toISOString();
+
+      const simulated =
+        profileName === "j1939_fms"
+          ? [
+              {
+                code: "SPN100-FMI1",
+                title: "Low engine oil pressure",
+                severity: "critical",
+              },
+              {
+                code: "SPN110-FMI3",
+                title: "Engine coolant temperature signal high",
+                severity: "warning",
+              },
+              {
+                code: "SPN190-FMI2",
+                title: "Engine speed data irregular",
+                severity: "warning",
+              },
+            ]
+          : [
+              {
+                code: "P0069",
+                title: "MAP / barometric pressure correlation",
+                severity: "warning",
+              },
+              {
+                code: "P0420",
+                title: "Catalyst system efficiency below threshold",
+                severity: "warning",
+              },
+              {
+                code: "P0301",
+                title: "Cylinder 1 misfire detected",
+                severity: "critical",
+              },
+            ];
+
+      const rows =
+        simulated.map(
+          (fault) => ({
+            company_id:
+              vehicle.company_id,
+
+            vehicle_id:
+              vehicle.id,
+
+            device_id:
+              null,
+
+            alert_type:
+              `diagnostic_dtc_${fault.code}`,
+
+            severity:
+              fault.severity,
+
+            title:
+              `${fault.code} - ${fault.title}`,
+
+            message:
+              "Simulated diagnostic fault for Matelematics testing.",
+
+            triggered_at:
+              now,
+
+            resolved_at:
+              null,
+
+            status:
+              "active",
+
+            metadata: {
+              simulated:
+                true,
+
+              simulator_source:
+                "diagnostics_center",
+
+              dtc_code:
+                fault.code,
+            },
+          }),
+        );
+
+      const {
+        error: insertError,
+      } =
+        await admin
+          .from("alerts")
+          .insert(rows);
+
+      if (insertError) {
+        throw insertError;
+      }
+
+      return NextResponse.json({
+        ok: true,
+        created: rows.length,
+      });
+    }
+
+
+    if (
+      body.action !== "hide" ||
+      !body.alertId
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Invalid action.",
+        },
+        {
+          status: 400,
+        },
+      );
+    }
+
+    const vehicles =
+      await getVisibleVehicles(
+        admin,
+        profile,
+      );
+
+    const visibleVehicleIds =
+      new Set(
+        vehicles.map(
+          (vehicle) =>
+            vehicle.id,
+        ),
+      );
+
+    const {
+      data: alert,
+      error: alertError,
+    } =
+      await admin
+        .from("alerts")
+        .select(
+          "id,vehicle_id,metadata",
+        )
+        .eq(
+          "id",
+          body.alertId,
+        )
+        .maybeSingle();
+
+    if (alertError) {
+      throw alertError;
+    }
+
+    if (
+      !alert ||
+      !alert.vehicle_id ||
+      !visibleVehicleIds.has(
+        alert.vehicle_id,
+      )
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Alert unavailable.",
+        },
+        {
+          status: 404,
+        },
+      );
+    }
+
+    const currentMetadata =
+      asObject(
+        alert.metadata,
+      ) ??
+      {};
+
+    const nextMetadata = {
+      ...currentMetadata,
+
+      matelematics_hidden_at:
+        new Date().toISOString(),
+
+      matelematics_hidden_by:
+        profile.id,
+    };
+
+    const {
+      error: updateError,
+    } =
+      await admin
+        .from("alerts")
+        .update({
+          metadata:
+            nextMetadata,
+        })
+        .eq(
+          "id",
+          alert.id,
+        );
+
+    if (updateError) {
+      throw updateError;
+    }
+
+    return NextResponse.json({
+      ok: true,
+    });
+  } catch (error) {
+    console.error(
+      "[Diagnostics POST]",
+      error,
+    );
+
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "SERVER_ERROR",
+      },
+      {
+        status: 500,
+      },
+    );
+  }
+}
+
+============================================================
+FILE: app\dashboard\diagnostics\page.tsx
+============================================================
+"use client";
+
+import Link from "next/link";
+
+import {
+  Activity,
+  AlertTriangle,
+  CheckCircle2,
+  Clock,
+  EyeOff,
+  RefreshCw,
+  ShieldAlert,
+  Truck,
+  Wrench,
+} from "lucide-react";
+
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+
+import {
+  supabase,
+} from "../../components/supabase";
+
+
+const TXT = {
+  title:
+    "Centre de diagnostic des v\u00e9hicules",
+
+  subtitle:
+    "Codes d\u00e9faut, Check Engine et historique de diagnostic.",
+
+  selectVehicle:
+    "S\u00e9lectionner un v\u00e9hicule",
+
+  vehicleState:
+    "\u00c9tat diagnostic du v\u00e9hicule",
+
+  activeCodes:
+    "Codes d\u00e9faut actifs",
+
+  storedCodes:
+    "Codes d\u00e9faut m\u00e9moris\u00e9s",
+
+  history:
+    "Historique diagnostic du v\u00e9hicule",
+
+  noActive:
+    "Aucun code d\u00e9faut actif.",
+
+  noStored:
+    "Aucun code d\u00e9faut m\u00e9moris\u00e9.",
+
+  noHistory:
+    "Aucun d\u00e9faut enregistr\u00e9 pour ce v\u00e9hicule.",
+
+  removeSite:
+    "Supprimer l\u0027erreur",
+
+  clearVehicle:
+    "Effacer dans le v\u00e9hicule",
+
+  clearUnavailable:
+    "La commande d'effacement r\u00e9el du calculateur n'est pas encore install\u00e9e.",
+
+  detected:
+    "D\u00e9tect\u00e9",
+
+  resolved:
+    "R\u00e9solu",
+
+  recurrences:
+    "R\u00e9cidives",
+
+  active:
+    "Actif",
+
+  closed:
+    "R\u00e9solu",
+
+  checkEngine:
+    "Check Engine",
+
+  refresh:
+    "Actualiser",
+
+  vehiclePage:
+    "Ouvrir la fiche v\u00e9hicule",
+
+  confirmation:
+    "Supprimer cette erreur de Matelematics ? Cette action ne supprime pas le code dans le calculateur du v\u00e9hicule.",
+
+  siteRemoved:
+    "\u00c9v\u00e9nement retir\u00e9 de Matelematics.",
+};
+
+
+type Dtc = {
+  code: string;
+  source: string | null;
+  status: string;
+};
+
+
+type Vehicle = {
+  id: string;
+  companyId: string;
+  companyName: string;
+  name: string;
+  registration: string;
+  brand: string | null;
+  model: string | null;
+
+  device: {
+    id: string;
+    imei: string;
+    manufacturer: string | null;
+    model: string | null;
+    status: string;
+    lastSeenAt: string | null;
+  } | null;
+
+  telemetryAt: string | null;
+  profile: string | null;
+  checkEngine: boolean | null;
+  activeDtc: Dtc[];
+  storedDtc: Dtc[];
+
+  clearCapability: {
+    supported: boolean;
+    reason: string;
+  };
+};
+
+
+type EventItem = {
+  id: string;
+  vehicleId: string;
+  vehicleName: string;
+  registration: string;
+  companyName: string;
+  kind: "dtc" | "check_engine";
+  code: string | null;
+  title: string;
+  message: string | null;
+  severity: string | null;
+  status: string;
+  triggeredAt: string;
+  resolvedAt: string | null;
+  recurrenceCount: number;
+  profile: string | null;
+};
+
+
+type Payload = {
+  vehicles: Vehicle[];
+  events: EventItem[];
+
+  metrics: {
+    activeDtc: number;
+    activeCheckEngine: number;
+    storedDtc: number;
+    affectedVehicles: number;
+  };
+};
+
+
+function formatDate(
+  value: string | null,
+) {
+  if (!value) {
+    return "-";
+  }
+
+  return new Date(
+    value,
+  ).toLocaleString(
+    "fr-FR",
+    {
+      timeZone:
+        "Africa/Casablanca",
+    },
+  );
+}
+
+
+function profileLabel(
+  value: string | null,
+) {
+  if (
+    value ===
+    "j1939_fms"
+  ) {
+    return "J1939 / FMS";
+  }
+
+  if (
+    value ===
+    "light_vehicle_can"
+  ) {
+    return "CAN Light";
+  }
+
+  return "CAN";
+}
+
+
+export default function DiagnosticsPage() {
+  const [
+    payload,
+    setPayload,
+  ] =
+    useState<Payload | null>(
+      null,
+    );
+
+  const [
+    selectedVehicleId,
+    setSelectedVehicleId,
+  ] =
+    useState("");
+
+  const [
+    loading,
+    setLoading,
+  ] =
+    useState(true);
+
+  const [
+    error,
+    setError,
+  ] =
+    useState<string | null>(
+      null,
+    );
+
+  const [
+    message,
+    setMessage,
+  ] =
+    useState<string | null>(
+      null,
+    );
+
+  const [
+    hidingId,
+    setHidingId,
+  ] =
+    useState<string | null>(
+      null,
+    );
+
+
+  const load =
+    useCallback(
+      async () => {
+        try {
+          const {
+            data: {
+              session,
+            },
+          } =
+            await supabase.auth.getSession();
+
+          if (!session) {
+            throw new Error(
+              "Session expired.",
+            );
+          }
+
+          const response =
+            await fetch(
+              "/api/diagnostics",
+              {
+                cache:
+                  "no-store",
+
+                headers: {
+                  Authorization:
+                    `Bearer ${session.access_token}`,
+                },
+              },
+            );
+
+          const data =
+            await response.json();
+
+          if (!response.ok) {
+            throw new Error(
+              data.error ??
+              "Diagnostics unavailable.",
+            );
+          }
+
+          const next =
+            data as Payload;
+
+          setPayload(next);
+
+          setSelectedVehicleId(
+            (current) => {
+              if (
+                current &&
+                next.vehicles.some(
+                  (vehicle) =>
+                    vehicle.id ===
+                    current,
+                )
+              ) {
+                return current;
+              }
+
+              const withFault =
+                next.vehicles.find(
+                  (vehicle) =>
+                    vehicle.activeDtc.length >
+                      0 ||
+                    vehicle.storedDtc.length >
+                      0 ||
+                    next.events.some(
+                      (event) =>
+                        event.vehicleId ===
+                        vehicle.id,
+                    ),
+                );
+
+              return (
+                withFault?.id ??
+                next.vehicles[0]?.id ??
+                ""
+              );
+            },
+          );
+
+          setError(null);
+        } catch (cause) {
+          setError(
+            cause instanceof Error
+              ? cause.message
+              : "Error",
+          );
+        } finally {
+          setLoading(false);
+        }
+      },
+      [],
+    );
+
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+
+  const selectedVehicle =
+    useMemo(
+      () =>
+        payload?.vehicles.find(
+          (vehicle) =>
+            vehicle.id ===
+            selectedVehicleId,
+        ) ??
+        null,
+      [
+        payload,
+        selectedVehicleId,
+      ],
+    );
+
+
+  const history =
+    useMemo(
+      () =>
+        (
+          payload?.events ??
+          []
+        ).filter(
+          (event) =>
+            event.vehicleId ===
+            selectedVehicleId,
+        ),
+      [
+        payload,
+        selectedVehicleId,
+      ],
+    );
+
+
+  const simulateFaults =
+    async () => {
+      if (!selectedVehicle) {
+        return;
+      }
+
+      setMessage(null);
+      setError(null);
+
+      try {
+        const {
+          data: {
+            session,
+          },
+        } =
+          await supabase.auth.getSession();
+
+        if (!session) {
+          throw new Error(
+            "Session expired.",
+          );
+        }
+
+        const response =
+          await fetch(
+            "/api/diagnostics",
+            {
+              method:
+                "POST",
+
+              headers: {
+                "Content-Type":
+                  "application/json",
+
+                Authorization:
+                  `Bearer ${session.access_token}`,
+              },
+
+              body:
+                JSON.stringify({
+                  action:
+                    "simulate",
+
+                  vehicleId:
+                    selectedVehicle.id,
+                }),
+            },
+          );
+
+        const result =
+          await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            result.error ??
+            "Simulation failed.",
+          );
+        }
+
+        setMessage(
+          `${result.created ?? 0} erreurs simul\u00e9es ajout\u00e9es.`,
+        );
+
+        await load();
+      } catch (cause) {
+        setError(
+          cause instanceof Error
+            ? cause.message
+            : "Error",
+        );
+      }
+    };
+
+
+  const hideEvent =
+    async (
+      event: EventItem,
+    ) => {
+      if (
+        !window.confirm(
+          TXT.confirmation,
+        )
+      ) {
+        return;
+      }
+
+      setHidingId(
+        event.id,
+      );
+
+      setMessage(null);
+
+      try {
+        const {
+          data: {
+            session,
+          },
+        } =
+          await supabase.auth.getSession();
+
+        if (!session) {
+          throw new Error(
+            "Session expired.",
+          );
+        }
+
+        const response =
+          await fetch(
+            "/api/diagnostics",
+            {
+              method:
+                "POST",
+
+              headers: {
+                "Content-Type":
+                  "application/json",
+
+                Authorization:
+                  `Bearer ${session.access_token}`,
+              },
+
+              body:
+                JSON.stringify({
+                  action:
+                    "hide",
+
+                  alertId:
+                    event.id,
+                }),
+            },
+          );
+
+        const result =
+          await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            result.error ??
+            "Unable to hide event.",
+          );
+        }
+
+        setMessage(
+          TXT.siteRemoved,
+        );
+
+        await load();
+      } catch (cause) {
+        setError(
+          cause instanceof Error
+            ? cause.message
+            : "Error",
+        );
+      } finally {
+        setHidingId(null);
+      }
+    };
+
+
+  if (
+    loading &&
+    !payload
+  ) {
+    return (
+      <div className="flex min-h-[50vh] items-center justify-center">
+        <RefreshCw className="h-8 w-8 animate-spin text-blue-400" />
+      </div>
+    );
+  }
+
+
+  return (
+    <div className="space-y-6 pb-12">
+
+      <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
+
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+
+          <div className="flex items-start gap-4">
+
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-red-500/10">
+              <ShieldAlert className="h-6 w-6 text-red-400" />
+            </div>
+
+            <div>
+              <h1 className="text-2xl font-bold text-white">
+                {TXT.title}
+              </h1>
+
+              <p className="mt-2 text-sm text-slate-400">
+                {TXT.subtitle}
+              </p>
+            </div>
+
+          </div>
+
+
+          <button
+            type="button"
+            onClick={() =>
+              void load()
+            }
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-800 px-4 py-2.5 text-sm text-white hover:bg-slate-700"
+          >
+            <RefreshCw className="h-4 w-4" />
+            {TXT.refresh}
+          </button>
+
+        </div>
+
+      </section>
+
+
+      {error && (
+        <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-300">
+          {error}
+        </div>
+      )}
+
+
+      {message && (
+        <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-4 text-sm text-emerald-300">
+          {message}
+        </div>
+      )}
+
+
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+
+        <Kpi
+          label="DTC actifs"
+          value={
+            payload?.metrics.activeDtc ??
+            0
+          }
+          icon="alert"
+        />
+
+        <Kpi
+          label="Check Engine"
+          value={
+            payload?.metrics.activeCheckEngine ??
+            0
+          }
+          icon="engine"
+        />
+
+        <Kpi
+          label={"DTC m\u00e9moris\u00e9s"}
+          value={
+            payload?.metrics.storedDtc ??
+            0
+          }
+          icon="stored"
+        />
+
+        <Kpi
+          label={"V\u00e9hicules concern\u00e9s"}
+          value={
+            payload?.metrics.affectedVehicles ??
+            0
+          }
+          icon="vehicle"
+        />
+
+      </section>
+
+
+      <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
+
+        <label className="mb-2 block text-sm font-medium text-slate-300">
+          {TXT.selectVehicle}
+        </label>
+
+        <select
+          value={
+            selectedVehicleId
+          }
+          onChange={
+            (event) =>
+              setSelectedVehicleId(
+                event.target.value,
+              )
+          }
+          className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none lg:max-w-2xl"
+        >
+          {(payload?.vehicles ?? []).map(
+            (vehicle) => (
+              <option
+                key={
+                  vehicle.id
+                }
+                value={
+                  vehicle.id
+                }
+              >
+                {vehicle.name} - {vehicle.registration} - {vehicle.companyName}
+              </option>
+            ),
+          )}
+        </select>
+
+      </section>
+
+
+      {selectedVehicle && (
+        <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
+
+          <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+
+            <div>
+
+              <div className="flex flex-wrap items-center gap-3">
+
+                <Truck className="h-6 w-6 text-blue-400" />
+
+                <h2 className="text-xl font-bold text-white">
+                  {selectedVehicle.name}
+                </h2>
+
+                {selectedVehicle.checkEngine === true && (
+                  <span className="rounded-full bg-red-500/10 px-3 py-1 text-xs font-semibold text-red-300 ring-1 ring-red-500/20">
+                    CHECK ENGINE
+                  </span>
+                )}
+
+              </div>
+
+              <p className="mt-2 text-sm text-slate-400">
+                {selectedVehicle.registration}
+                {" - "}
+                {selectedVehicle.companyName}
+                {" - "}
+                {selectedVehicle.device?.model ??
+                  "No tracker"}
+                {" - "}
+                {profileLabel(
+                  selectedVehicle.profile,
+                )}
+              </p>
+
+            </div>
+
+
+            <div className="flex flex-wrap gap-2">
+
+              <button
+                type="button"
+                onClick={() =>
+                  void simulateFaults()
+                }
+                className="inline-flex items-center gap-2 rounded-xl bg-amber-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-amber-500"
+              >
+                <AlertTriangle className="h-4 w-4" />
+
+                Simuler des erreurs
+              </button>
+
+              <Link
+                href={`/dashboard/vehicle/${selectedVehicle.id}`}
+                className="rounded-xl border border-slate-700 bg-slate-800 px-4 py-2.5 text-sm text-white hover:bg-slate-700"
+              >
+                {TXT.vehiclePage}
+              </Link>
+
+            </div>
+
+          </div>
+
+
+          <div className="mt-6">
+
+            <h3 className="font-semibold text-white">
+              {TXT.activeCodes}
+            </h3>
+
+
+            {selectedVehicle.activeDtc.length ===
+            0 ? (
+              <div className="mt-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4 text-sm text-emerald-300">
+                {TXT.noActive}
+              </div>
+            ) : (
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+
+                {selectedVehicle.activeDtc.map(
+                  (dtc) => (
+                    <div
+                      key={
+                        dtc.code
+                      }
+                      className="rounded-xl border border-red-500/20 bg-red-500/5 p-4"
+                    >
+                      <p className="text-lg font-bold text-red-300">
+                        {dtc.code}
+                      </p>
+
+                      {dtc.source && (
+                        <p className="mt-1 text-xs text-slate-500">
+                          {dtc.source}
+                        </p>
+                      )}
+                    </div>
+                  ),
+                )}
+
+              </div>
+            )}
+
+          </div>
+
+
+          <div className="mt-6">
+
+            <h3 className="font-semibold text-white">
+              {TXT.storedCodes}
+            </h3>
+
+
+            {selectedVehicle.storedDtc.length ===
+            0 ? (
+              <div className="mt-3 rounded-xl border border-slate-800 bg-slate-950/40 p-4 text-sm text-slate-400">
+                {TXT.noStored}
+              </div>
+            ) : (
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+
+                {selectedVehicle.storedDtc.map(
+                  (dtc) => (
+                    <div
+                      key={
+                        dtc.code
+                      }
+                      className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4"
+                    >
+                      <p className="text-lg font-bold text-amber-300">
+                        {dtc.code}
+                      </p>
+
+                      {dtc.source && (
+                        <p className="mt-1 text-xs text-slate-500">
+                          {dtc.source}
+                        </p>
+                      )}
+                    </div>
+                  ),
+                )}
+
+              </div>
+            )}
+
+          </div>
+        </section>
+      )}
+
+
+      {selectedVehicle && (
+        <section>
+
+          <div className="mb-4">
+
+            <h2 className="text-lg font-semibold text-white">
+              {TXT.history}
+            </h2>
+
+            <p className="mt-1 text-sm text-slate-400">
+              {selectedVehicle.name} - {selectedVehicle.registration}
+            </p>
+
+          </div>
+
+
+          {history.length ===
+          0 ? (
+            <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6 text-sm text-slate-400">
+              {TXT.noHistory}
+            </div>
+          ) : (
+            <div className="space-y-3">
+
+              {history.map(
+                (event) => (
+                  <div
+                    key={
+                      event.id
+                    }
+                    className="rounded-2xl border border-slate-800 bg-slate-900 p-5"
+                  >
+
+                    <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+
+                      <div>
+
+                        <div className="flex flex-wrap items-center gap-2">
+
+                          {event.status ===
+                          "active" ? (
+                            <AlertTriangle className="h-5 w-5 text-red-400" />
+                          ) : (
+                            <CheckCircle2 className="h-5 w-5 text-emerald-400" />
+                          )}
+
+
+                          <p className="font-bold text-white">
+                            {event.code ??
+                              TXT.checkEngine}
+                          </p>
+
+
+                          <span
+                            className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+                              event.status ===
+                              "active"
+                                ? "bg-red-500/10 text-red-300"
+                                : "bg-emerald-500/10 text-emerald-300"
+                            }`}
+                          >
+                            {event.status ===
+                            "active"
+                              ? TXT.active
+                              : TXT.closed}
+                          </span>
+
+                        </div>
+
+
+                        <p className="mt-2 text-sm text-slate-400">
+                          {event.title}
+                        </p>
+
+
+                        <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-xs text-slate-500">
+
+                          <span>
+                            {TXT.detected}: {formatDate(event.triggeredAt)}
+                          </span>
+
+                          <span>
+                            {TXT.resolved}: {formatDate(event.resolvedAt)}
+                          </span>
+
+                          <span>
+                            {TXT.recurrences}: {event.recurrenceCount}
+                          </span>
+
+                        </div>
+
+                      </div>
+
+
+                      <div className="flex flex-wrap gap-2">
+
+                        <button
+                          type="button"
+                          disabled={
+                            hidingId ===
+                            event.id
+                          }
+                          onClick={() =>
+                            void hideEvent(
+                              event,
+                            )
+                          }
+                          className="inline-flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-800 px-4 py-2.5 text-sm text-white hover:bg-slate-700 disabled:opacity-50"
+                        >
+                          <EyeOff className="h-4 w-4" />
+
+                          {TXT.removeSite}
+                        </button>
+
+                      </div>
+
+                    </div>
+
+                  </div>
+                ),
+              )}
+
+            </div>
+          )}
+
+        </section>
+      )}
+
+    </div>
+  );
+}
+
+
+function Kpi({
+  label,
+  value,
+  icon,
+}: {
+  label: string;
+  value: number;
+  icon:
+    | "alert"
+    | "engine"
+    | "stored"
+    | "vehicle";
+}) {
+  const Icon =
+    icon === "vehicle"
+      ? Truck
+      : icon === "stored"
+        ? Clock
+        : icon === "engine"
+          ? Activity
+          : AlertTriangle;
+
+  return (
+    <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
+
+      <div className="flex items-center justify-between">
+
+        <p className="text-sm text-slate-400">
+          {label}
+        </p>
+
+        <Icon className="h-5 w-5 text-red-400" />
+
+      </div>
+
+      <p className="mt-3 text-3xl font-bold text-white">
+        {value}
+      </p>
+
+    </div>
+  );
+}
+
+============================================================
+FILE: package.json
+============================================================
+{
+  "name": "matelematics",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "teltonika:server": "tsx server/teltonika/server.ts",
+    "teltonika:simulate": "tsx server/teltonika/simulator.ts"
+  },
+  "dependencies": {
+    "@hookform/resolvers": "^5.4.0",
+    "@supabase/supabase-js": "^2.112.4",
+    "framer-motion": "^12.42.2",
+    "leaflet": "^1.9.4",
+    "lucide-react": "^1.21.0",
+    "next": "16.2.9",
+    "nodemailer": "^9.0.3",
+    "pdf-lib": "^1.17.1",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "react-hook-form": "^7.80.0",
+    "react-leaflet": "^5.0.0",
+    "recharts": "^3.10.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/leaflet": "^1.9.22",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.9",
+    "tailwindcss": "^4",
+    "tsx": "^4.20.5",
+    "typescript": "^5"
+  }
+}
+

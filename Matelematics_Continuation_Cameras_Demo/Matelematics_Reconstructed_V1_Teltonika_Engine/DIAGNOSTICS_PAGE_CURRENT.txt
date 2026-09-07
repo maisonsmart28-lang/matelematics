@@ -1,0 +1,1398 @@
+﻿"use client";
+
+import Link from "next/link";
+
+import {
+  Activity,
+  AlertTriangle,
+  CheckCircle2,
+  Clock,
+  RefreshCw,
+  Search,
+  ShieldAlert,
+  Truck,
+  Wrench,
+  XCircle,
+} from "lucide-react";
+
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+
+import {
+  supabase,
+} from "../../components/supabase";
+
+
+type DiagnosticItem = {
+  code: string;
+  source: string | null;
+  status: string;
+};
+
+
+type VehicleState = {
+  id: string;
+  companyId: string;
+  companyName: string;
+  name: string;
+  registration: string;
+  brand: string | null;
+  model: string | null;
+
+  device: {
+    id: string;
+    imei: string;
+    manufacturer: string | null;
+    model: string | null;
+    status: string;
+    lastSeenAt: string | null;
+  } | null;
+
+  telemetryAt: string | null;
+  profile: string | null;
+  checkEngine: boolean | null;
+
+  activeDtc:
+    DiagnosticItem[];
+
+  storedDtc:
+    DiagnosticItem[];
+
+  clearCapability: {
+    supported: boolean;
+    reason: string;
+  };
+};
+
+
+type DiagnosticEvent = {
+  id: string;
+  vehicleId: string;
+  vehicleName: string;
+  registration: string;
+  companyName: string;
+  trackerModel: string;
+  imei: string | null;
+  profile: string | null;
+  kind:
+    | "dtc"
+    | "check_engine";
+  code: string | null;
+  title: string;
+  message: string | null;
+  severity: string | null;
+  status: string;
+  triggeredAt: string;
+  resolvedAt: string | null;
+  recurrenceCount: number;
+};
+
+
+type StoredDiagnostic = {
+  vehicleId: string;
+  code: string;
+  source: string | null;
+  lastSeenAt: string;
+  vehicleName: string;
+  registration: string;
+  companyName: string;
+  trackerModel: string;
+};
+
+
+type DiagnosticsPayload = {
+  metrics: {
+    activeDtc: number;
+    activeCheckEngine: number;
+    storedDtc: number;
+    affectedVehicles: number;
+  };
+
+  vehicles:
+    VehicleState[];
+
+  events:
+    DiagnosticEvent[];
+
+  storedDiagnostics:
+    StoredDiagnostic[];
+};
+
+
+function dateTime(
+  value:
+    string | null,
+) {
+  if (!value) {
+    return "Ã¢â‚¬â€";
+  }
+
+  return new Date(
+    value,
+  ).toLocaleString(
+    "fr-FR",
+    {
+      timeZone:
+        "Africa/Casablanca",
+    },
+  );
+}
+
+
+function profileLabel(
+  profile:
+    string | null,
+) {
+  if (
+    profile ===
+    "j1939_fms"
+  ) {
+    return "J1939 / FMS";
+  }
+
+  if (
+    profile ===
+    "light_vehicle_can"
+  ) {
+    return "CAN vÃƒÂ©hicule lÃƒÂ©ger";
+  }
+
+  return "Non identifiÃƒÂ©";
+}
+
+
+export default function DiagnosticsPage() {
+  const [
+    data,
+    setData,
+  ] =
+    useState<
+      DiagnosticsPayload | null
+    >(null);
+
+  const [
+    loading,
+    setLoading,
+  ] =
+    useState(true);
+
+  const [
+    refreshing,
+    setRefreshing,
+  ] =
+    useState(false);
+
+  const [
+    error,
+    setError,
+  ] =
+    useState<
+      string | null
+    >(null);
+
+  const [
+    query,
+    setQuery,
+  ] =
+    useState("");
+
+  const [
+    statusFilter,
+    setStatusFilter,
+  ] =
+    useState<
+      "all" |
+      "active" |
+      "resolved"
+    >("all");
+
+
+  const [
+    selectedVehicleId,
+    setSelectedVehicleId,
+  ] =
+    useState<string>("");
+
+
+  const load =
+    useCallback(
+      async (
+        manual = false,
+      ) => {
+        if (manual) {
+          setRefreshing(
+            true,
+          );
+        }
+
+        try {
+          const {
+            data: {
+              session,
+            },
+          } =
+            await supabase.auth.getSession();
+
+          if (!session) {
+            throw new Error(
+              "Session expirÃƒÂ©e. Reconnectez-vous.",
+            );
+          }
+
+          const response =
+            await fetch(
+              "/api/diagnostics",
+              {
+                cache:
+                  "no-store",
+
+                headers: {
+                  Authorization:
+                    `Bearer ${session.access_token}`,
+                },
+              },
+            );
+
+          const payload =
+            await response.json();
+
+          if (!response.ok) {
+            throw new Error(
+              payload.error ??
+              "Impossible de charger les diagnostics.",
+            );
+          }
+
+          const nextData =
+            payload as DiagnosticsPayload;
+
+          setData(
+            nextData,
+          );
+
+          setSelectedVehicleId(
+            (current) => {
+              if (
+                current &&
+                nextData.vehicles.some(
+                  (vehicle) =>
+                    vehicle.id === current,
+                )
+              ) {
+                return current;
+              }
+
+              return (
+                nextData.vehicles[0]?.id ??
+                ""
+              );
+            },
+          );
+
+          setError(
+            null,
+          );
+        } catch (cause) {
+          setError(
+            cause instanceof Error
+              ? cause.message
+              : "Erreur de chargement.",
+          );
+        } finally {
+          setLoading(
+            false,
+          );
+
+          setRefreshing(
+            false,
+          );
+        }
+      },
+      [],
+    );
+
+
+  useEffect(() => {
+    void load();
+
+    const timer =
+      window.setInterval(
+        () => {
+          void load();
+        },
+        10_000,
+      );
+
+    return () =>
+      window.clearInterval(
+        timer,
+      );
+  }, [
+    load,
+  ]);
+
+
+  const events =
+    useMemo(
+      () => {
+        const normalized =
+          query
+            .trim()
+            .toLowerCase();
+
+        return (
+          data?.events ??
+          []
+        ).filter(
+          (event) => {
+
+            const matchesVehicle =
+              !selectedVehicleId ||
+              event.vehicleId ===
+                selectedVehicleId;
+            const matchesQuery =
+              !normalized ||
+              event.vehicleName
+                .toLowerCase()
+                .includes(
+                  normalized,
+                ) ||
+              event.registration
+                .toLowerCase()
+                .includes(
+                  normalized,
+                ) ||
+              event.companyName
+                .toLowerCase()
+                .includes(
+                  normalized,
+                ) ||
+              (
+                event.code ??
+                ""
+              )
+                .toLowerCase()
+                .includes(
+                  normalized,
+                );
+
+            const matchesStatus =
+              statusFilter ===
+                "all" ||
+              event.status ===
+                statusFilter;
+
+            return (
+              matchesVehicle &&
+              matchesQuery &&
+              matchesStatus
+            );
+          },
+        );
+      },
+      [
+        data,
+        query,
+        statusFilter,
+        selectedVehicleId,
+      ],
+    );
+
+
+  const activeVehicles =
+    (
+      data?.vehicles ??
+      []
+    ).filter(
+      (vehicle) =>
+        vehicle.checkEngine ===
+          true ||
+        vehicle.activeDtc.length >
+          0,
+    );
+
+
+  const selectedVehicle =
+    (
+      data?.vehicles ??
+      []
+    ).find(
+      (vehicle) =>
+        vehicle.id ===
+        selectedVehicleId,
+    ) ??
+    null;
+
+
+  const selectedStoredDiagnostics =
+    (
+      data?.storedDiagnostics ??
+      []
+    ).filter(
+      (item) =>
+        item.vehicleId ===
+        selectedVehicleId,
+    );
+
+
+  if (
+    loading &&
+    !data
+  ) {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <RefreshCw className="h-8 w-8 animate-spin text-blue-400" />
+      </div>
+    );
+  }
+
+
+  return (
+    <div className="space-y-6 pb-12">
+
+      <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
+
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+
+          <div className="flex items-start gap-4">
+
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-red-500/10">
+              <ShieldAlert className="h-6 w-6 text-red-400" />
+            </div>
+
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-red-400">
+                CAN / OBD / J1939
+              </p>
+
+              <h1 className="mt-1 text-2xl font-bold text-white">
+                Centre de diagnostic
+              </h1>
+
+              <p className="mt-2 max-w-3xl text-sm text-slate-400">
+                DÃƒÂ©fauts moteur, Check Engine, DTC actifs et mÃƒÂ©morisÃƒÂ©s, SPN/FMI et historique des rÃƒÂ©cidives.
+              </p>
+            </div>
+
+          </div>
+
+
+          <button
+            type="button"
+            onClick={() =>
+              void load(true)
+            }
+            disabled={
+              refreshing
+            }
+            className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-800 px-4 py-2.5 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+          >
+            <RefreshCw
+              className={`h-4 w-4 ${
+                refreshing
+                  ? "animate-spin"
+                  : ""
+              }`}
+            />
+
+            Actualiser
+          </button>
+
+        </div>
+
+      </section>
+
+
+      {error && (
+        <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+          {error}
+        </div>
+      )}
+
+
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+
+        <Kpi
+          label="DTC actifs"
+          value={
+            data?.metrics
+              .activeDtc ??
+            0
+          }
+          icon="alert"
+        />
+
+        <Kpi
+          label="Check Engine actifs"
+          value={
+            data?.metrics
+              .activeCheckEngine ??
+            0
+          }
+          icon="engine"
+        />
+
+        <Kpi
+          label="DTC mÃƒÂ©morisÃƒÂ©s observÃƒÂ©s"
+          value={
+            data?.metrics
+              .storedDtc ??
+            0
+          }
+          icon="stored"
+        />
+
+        <Kpi
+          label="VÃƒÂ©hicules concernÃƒÂ©s"
+          value={
+            data?.metrics
+              .affectedVehicles ??
+            0
+          }
+          icon="vehicle"
+        />
+
+      </section>
+
+
+      <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
+
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+
+          <div className="w-full lg:max-w-xl">
+
+            <label className="mb-2 block text-sm font-medium text-slate-300">
+              VÃ©hicule Ã  diagnostiquer
+            </label>
+
+            <select
+              value={
+                selectedVehicleId
+              }
+              onChange={
+                (event) =>
+                  setSelectedVehicleId(
+                    event.target.value,
+                  )
+              }
+              className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-blue-500"
+            >
+              {(data?.vehicles ?? []).map(
+                (vehicle) => (
+                  <option
+                    key={vehicle.id}
+                    value={vehicle.id}
+                  >
+                    {vehicle.name} â€” {vehicle.registration} â€” {vehicle.companyName}
+                  </option>
+                ),
+              )}
+            </select>
+
+          </div>
+
+
+          {selectedVehicle && (
+            <Link
+              href={`/dashboard/vehicle/${selectedVehicle.id}`}
+              className="inline-flex items-center justify-center rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-sm font-medium text-white hover:bg-slate-700"
+            >
+              Ouvrir la fiche vÃ©hicule
+            </Link>
+          )}
+
+        </div>
+
+      </section>
+
+
+      {selectedVehicle && (
+
+        <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
+
+          <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+
+            <div>
+
+              <div className="flex flex-wrap items-center gap-3">
+
+                <Truck className="h-6 w-6 text-blue-400" />
+
+                <h2 className="text-xl font-bold text-white">
+                  {selectedVehicle.name}
+                </h2>
+
+                {selectedVehicle.checkEngine === true && (
+                  <span className="rounded-full bg-red-500/10 px-3 py-1 text-xs font-semibold text-red-300 ring-1 ring-red-500/20">
+                    CHECK ENGINE
+                  </span>
+                )}
+
+              </div>
+
+              <p className="mt-2 text-sm text-slate-400">
+                {selectedVehicle.registration}
+                {" Â· "}
+                {selectedVehicle.companyName}
+                {" Â· "}
+                {selectedVehicle.device?.model ?? "Tracker non assignÃ©"}
+                {" Â· "}
+                {profileLabel(selectedVehicle.profile)}
+              </p>
+
+            </div>
+
+
+            <div className="flex flex-col items-start gap-2">
+
+              <button
+                type="button"
+                disabled={
+                  !selectedVehicle
+                    .clearCapability
+                    .supported
+                }
+                title={
+                  selectedVehicle
+                    .clearCapability
+                    .reason
+                }
+                className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-5 py-3 text-sm font-semibold text-white transition enabled:hover:bg-red-500 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
+              >
+                <Wrench className="h-4 w-4" />
+
+                Effacer les codes erreur
+              </button>
+
+              {!selectedVehicle.clearCapability.supported && (
+                <p className="max-w-sm text-xs text-amber-400">
+                  {selectedVehicle.clearCapability.reason}
+                </p>
+              )}
+
+            </div>
+
+          </div>
+
+
+          <div className="mt-6 grid gap-4 md:grid-cols-3">
+
+            <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-4">
+              <p className="text-xs uppercase text-slate-500">
+                Check Engine
+              </p>
+
+              <p
+                className={`mt-2 text-lg font-bold ${
+                  selectedVehicle.checkEngine === true
+                    ? "text-red-300"
+                    : selectedVehicle.checkEngine === false
+                      ? "text-emerald-300"
+                      : "text-slate-400"
+                }`}
+              >
+                {selectedVehicle.checkEngine === true
+                  ? "DÃ©faut actif"
+                  : selectedVehicle.checkEngine === false
+                    ? "Ã‰teint"
+                    : "Non disponible"}
+              </p>
+            </div>
+
+
+            <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-4">
+              <p className="text-xs uppercase text-slate-500">
+                DTC actifs
+              </p>
+
+              <p className="mt-2 text-2xl font-bold text-white">
+                {selectedVehicle.activeDtc.length}
+              </p>
+            </div>
+
+
+            <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-4">
+              <p className="text-xs uppercase text-slate-500">
+                DTC mÃ©morisÃ©s
+              </p>
+
+              <p className="mt-2 text-2xl font-bold text-white">
+                {selectedStoredDiagnostics.length}
+              </p>
+            </div>
+
+          </div>
+
+
+          <div className="mt-6">
+
+            <h3 className="font-semibold text-white">
+              Codes actifs
+            </h3>
+
+            {selectedVehicle.activeDtc.length === 0 ? (
+
+              <div className="mt-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4 text-sm text-emerald-300">
+                Aucun code dÃ©faut actif actuellement.
+              </div>
+
+            ) : (
+
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+
+                {selectedVehicle.activeDtc.map(
+                  (dtc) => (
+                    <div
+                      key={dtc.code}
+                      className="rounded-xl border border-red-500/20 bg-red-500/5 p-4"
+                    >
+                      <p className="text-lg font-bold text-red-300">
+                        {dtc.code}
+                      </p>
+
+                      <p className="mt-1 text-xs text-slate-500">
+                        {dtc.source ?? "Source non renseignÃ©e"}
+                      </p>
+                    </div>
+                  ),
+                )}
+
+              </div>
+
+            )}
+
+          </div>
+
+
+          <div className="mt-6">
+
+            <h3 className="font-semibold text-white">
+              Codes mÃ©morisÃ©s
+            </h3>
+
+            {selectedStoredDiagnostics.length === 0 ? (
+
+              <div className="mt-3 rounded-xl border border-slate-800 bg-slate-950/50 p-4 text-sm text-slate-400">
+                Aucun code mÃ©morisÃ© observÃ© rÃ©cemment.
+              </div>
+
+            ) : (
+
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+
+                {selectedStoredDiagnostics.map(
+                  (dtc) => (
+                    <div
+                      key={`${dtc.vehicleId}-${dtc.code}`}
+                      className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4"
+                    >
+                      <p className="text-lg font-bold text-amber-300">
+                        {dtc.code}
+                      </p>
+
+                      <p className="mt-1 text-xs text-slate-500">
+                        {dtc.source ?? "Source non renseignÃ©e"}
+                      </p>
+
+                      <p className="mt-2 text-xs text-slate-400">
+                        DerniÃ¨re observation : {dateTime(dtc.lastSeenAt)}
+                      </p>
+                    </div>
+                  ),
+                )}
+
+              </div>
+
+            )}
+
+          </div>
+
+        </section>
+
+      )}
+
+
+      <section>
+
+        <div className="mb-4">
+
+          <h2 className="text-lg font-semibold text-white">
+            Diagnostic actuel
+          </h2>
+
+          <p className="mt-1 text-sm text-slate-400">
+            VÃƒÂ©hicules prÃƒÂ©sentant actuellement un dÃƒÂ©faut actif.
+          </p>
+
+        </div>
+
+
+        {activeVehicles.length ===
+        0 ? (
+          <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-6">
+
+            <div className="flex items-center gap-3">
+
+              <CheckCircle2 className="h-6 w-6 text-emerald-400" />
+
+              <div>
+                <p className="font-semibold text-emerald-300">
+                  Aucun dÃƒÂ©faut actif
+                </p>
+
+                <p className="mt-1 text-sm text-slate-400">
+                  Aucun Check Engine ou DTC actif dans la derniÃƒÂ¨re tÃƒÂ©lÃƒÂ©mÃƒÂ©trie disponible.
+                </p>
+              </div>
+
+            </div>
+
+          </div>
+        ) : (
+          <div className="grid gap-4 xl:grid-cols-2">
+
+            {activeVehicles.map(
+              (vehicle) => (
+                <VehicleDiagnosticCard
+                  key={
+                    vehicle.id
+                  }
+                  vehicle={
+                    vehicle
+                  }
+                />
+              ),
+            )}
+
+          </div>
+        )}
+
+      </section>
+
+
+      <section>
+
+        <div className="mb-4">
+
+          <h2 className="text-lg font-semibold text-white">
+            DTC mÃƒÂ©morisÃƒÂ©s
+          </h2>
+
+          <p className="mt-1 text-sm text-slate-400">
+            Codes mÃƒÂ©morisÃƒÂ©s observÃƒÂ©s dans les tÃƒÂ©lÃƒÂ©mÃƒÂ©tries rÃƒÂ©centes, notamment DM2/J1939.
+          </p>
+
+        </div>
+
+
+        {(
+          data
+            ?.storedDiagnostics
+            .length ??
+          0
+        ) === 0 ? (
+          <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-400">
+            Aucun DTC mÃƒÂ©morisÃƒÂ© observÃƒÂ© dans la fenÃƒÂªtre de tÃƒÂ©lÃƒÂ©mÃƒÂ©trie rÃƒÂ©cente.
+          </div>
+        ) : (
+          <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900">
+
+            <div className="overflow-x-auto">
+
+              <table className="min-w-full text-sm">
+
+                <thead className="bg-slate-950/50 text-xs uppercase text-slate-500">
+
+                  <tr>
+                    <th className="px-5 py-3 text-left">
+                      Code
+                    </th>
+
+                    <th className="px-5 py-3 text-left">
+                      VÃƒÂ©hicule
+                    </th>
+
+                    <th className="px-5 py-3 text-left">
+                      Source
+                    </th>
+
+                    <th className="px-5 py-3 text-left">
+                      DerniÃƒÂ¨re observation
+                    </th>
+                  </tr>
+
+                </thead>
+
+
+                <tbody className="divide-y divide-slate-800">
+
+                  {data?.storedDiagnostics.map(
+                    (item) => (
+                      <tr
+                        key={`${item.vehicleId}-${item.code}`}
+                      >
+
+                        <td className="px-5 py-4 font-semibold text-amber-300">
+                          {item.code}
+                        </td>
+
+                        <td className="px-5 py-4">
+                          <Link
+                            href={`/dashboard/vehicle/${item.vehicleId}`}
+                            className="font-medium text-white hover:text-blue-300"
+                          >
+                            {item.vehicleName}
+                          </Link>
+
+                          <p className="mt-1 text-xs text-slate-500">
+                            {item.registration} Ã‚Â· {item.companyName}
+                          </p>
+                        </td>
+
+                        <td className="px-5 py-4 text-slate-300">
+                          {item.source ??
+                            "Non renseignÃƒÂ©e"}
+                        </td>
+
+                        <td className="whitespace-nowrap px-5 py-4 text-slate-300">
+                          {dateTime(
+                            item.lastSeenAt,
+                          )}
+                        </td>
+
+                      </tr>
+                    ),
+                  )}
+
+                </tbody>
+
+              </table>
+
+            </div>
+
+          </div>
+        )}
+
+      </section>
+
+
+      <section>
+
+        <div className="mb-4 flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+
+          <div>
+            <h2 className="text-lg font-semibold text-white">
+              Historique des dÃƒÂ©fauts
+            </h2>
+
+            <p className="mt-1 text-sm text-slate-400">
+              DÃƒÂ©tections, rÃƒÂ©solutions et rÃƒÂ©cidives enregistrÃƒÂ©es.
+            </p>
+          </div>
+
+
+          <div className="flex flex-col gap-2 sm:flex-row">
+
+            <div className="flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2">
+
+              <Search className="h-4 w-4 text-slate-500" />
+
+              <input
+                value={
+                  query
+                }
+                onChange={
+                  (event) =>
+                    setQuery(
+                      event.target.value,
+                    )
+                }
+                placeholder="VÃƒÂ©hicule, immatriculation, DTC..."
+                className="w-64 bg-transparent text-sm text-white outline-none"
+              />
+
+            </div>
+
+
+            <select
+              value={
+                statusFilter
+              }
+              onChange={
+                (event) =>
+                  setStatusFilter(
+                    event.target.value as
+                      | "all"
+                      | "active"
+                      | "resolved",
+                  )
+              }
+              className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none"
+            >
+              <option value="all">
+                Tous les ÃƒÂ©tats
+              </option>
+
+              <option value="active">
+                Actifs
+              </option>
+
+              <option value="resolved">
+                RÃƒÂ©solus
+              </option>
+            </select>
+
+          </div>
+
+        </div>
+
+
+        <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900">
+
+          <div className="overflow-x-auto">
+
+            <table className="min-w-full text-sm">
+
+              <thead className="bg-slate-950/50 text-xs uppercase text-slate-500">
+
+                <tr>
+                  <th className="px-5 py-3 text-left">
+                    DÃƒÂ©faut
+                  </th>
+
+                  <th className="px-5 py-3 text-left">
+                    VÃƒÂ©hicule
+                  </th>
+
+                  <th className="px-5 py-3 text-left">
+                    Protocole
+                  </th>
+
+                  <th className="px-5 py-3 text-left">
+                    Ãƒâ€°tat
+                  </th>
+
+                  <th className="px-5 py-3 text-left">
+                    DÃƒÂ©tectÃƒÂ©
+                  </th>
+
+                  <th className="px-5 py-3 text-left">
+                    RÃƒÂ©solu
+                  </th>
+
+                  <th className="px-5 py-3 text-right">
+                    RÃƒÂ©cidives
+                  </th>
+                </tr>
+
+              </thead>
+
+
+              <tbody className="divide-y divide-slate-800">
+
+                {events.map(
+                  (event) => (
+                    <tr
+                      key={
+                        event.id
+                      }
+                      className="hover:bg-slate-800/30"
+                    >
+
+                      <td className="px-5 py-4">
+
+                        <div className="flex items-center gap-2">
+
+                          {event.status ===
+                          "active" ? (
+                            <XCircle className="h-4 w-4 text-red-400" />
+                          ) : (
+                            <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                          )}
+
+                          <div>
+
+                            <p className="font-semibold text-white">
+                              {event.code ??
+                                "Check Engine"}
+                            </p>
+
+                            <p className="mt-1 text-xs text-slate-500">
+                              {event.title}
+                            </p>
+
+                          </div>
+
+                        </div>
+
+                      </td>
+
+
+                      <td className="px-5 py-4">
+
+                        <Link
+                          href={`/dashboard/vehicle/${event.vehicleId}`}
+                          className="font-medium text-blue-300 hover:text-blue-200"
+                        >
+                          {event.vehicleName}
+                        </Link>
+
+                        <p className="mt-1 text-xs text-slate-500">
+                          {event.registration} Ã‚Â· {event.companyName}
+                        </p>
+
+                      </td>
+
+
+                      <td className="px-5 py-4 text-slate-300">
+                        {profileLabel(
+                          event.profile,
+                        )}
+                      </td>
+
+
+                      <td className="px-5 py-4">
+
+                        <StatusBadge
+                          status={
+                            event.status
+                          }
+                        />
+
+                      </td>
+
+
+                      <td className="whitespace-nowrap px-5 py-4 text-slate-300">
+                        {dateTime(
+                          event.triggeredAt,
+                        )}
+                      </td>
+
+
+                      <td className="whitespace-nowrap px-5 py-4 text-slate-300">
+                        {dateTime(
+                          event.resolvedAt,
+                        )}
+                      </td>
+
+
+                      <td className="px-5 py-4 text-right font-semibold text-white">
+                        {event.recurrenceCount}
+                      </td>
+
+                    </tr>
+                  ),
+                )}
+
+
+                {events.length ===
+                  0 && (
+                  <tr>
+                    <td
+                      colSpan={
+                        7
+                      }
+                      className="px-5 py-10 text-center text-slate-500"
+                    >
+                      Aucun ÃƒÂ©vÃƒÂ©nement correspondant.
+                    </td>
+                  </tr>
+                )}
+
+              </tbody>
+
+            </table>
+
+          </div>
+
+        </div>
+
+      </section>
+
+    </div>
+  );
+}
+
+
+function VehicleDiagnosticCard({
+  vehicle,
+}: {
+  vehicle:
+    VehicleState;
+}) {
+  return (
+    <div className="rounded-2xl border border-red-500/20 bg-slate-900 p-5">
+
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+
+        <div>
+
+          <div className="flex items-center gap-2">
+
+            <Truck className="h-5 w-5 text-blue-400" />
+
+            <Link
+              href={`/dashboard/vehicle/${vehicle.id}`}
+              className="font-semibold text-white hover:text-blue-300"
+            >
+              {vehicle.name}
+            </Link>
+
+          </div>
+
+          <p className="mt-1 text-sm text-slate-500">
+            {vehicle.registration} Ã‚Â· {vehicle.companyName}
+          </p>
+
+          <p className="mt-1 text-xs text-slate-500">
+            {vehicle.device?.model ??
+              "Tracker non assignÃƒÂ©"} Ã‚Â· {profileLabel(vehicle.profile)}
+          </p>
+
+        </div>
+
+
+        {vehicle.checkEngine ===
+        true && (
+          <span className="rounded-full bg-red-500/10 px-3 py-1 text-xs font-medium text-red-300 ring-1 ring-red-500/20">
+            CHECK ENGINE
+          </span>
+        )}
+
+      </div>
+
+
+      <div className="mt-4 space-y-2">
+
+        {vehicle.activeDtc.map(
+          (dtc) => (
+            <div
+              key={
+                dtc.code
+              }
+              className="rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3"
+            >
+              <p className="font-bold text-red-300">
+                {dtc.code}
+              </p>
+
+              <p className="mt-1 text-xs text-slate-500">
+                {dtc.source ??
+                  "Source non renseignÃƒÂ©e"}
+              </p>
+            </div>
+          ),
+        )}
+
+      </div>
+
+
+      <div className="mt-5 border-t border-slate-800 pt-4">
+
+        <button
+          type="button"
+          disabled={
+            !vehicle
+              .clearCapability
+              .supported
+          }
+          title={
+            vehicle
+              .clearCapability
+              .reason
+          }
+          className="inline-flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-800 px-4 py-2.5 text-sm font-medium text-white transition enabled:hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <Wrench className="h-4 w-4" />
+
+          Effacer les codes erreur
+        </button>
+
+        {!vehicle
+          .clearCapability
+          .supported && (
+          <p className="mt-2 text-xs text-amber-400">
+            {vehicle
+              .clearCapability
+              .reason}
+          </p>
+        )}
+
+      </div>
+
+    </div>
+  );
+}
+
+
+function Kpi({
+  label,
+  value,
+  icon,
+}: {
+  label: string;
+  value: number;
+  icon:
+    | "alert"
+    | "engine"
+    | "stored"
+    | "vehicle";
+}) {
+  const Icon =
+    icon === "vehicle"
+      ? Truck
+      : icon === "stored"
+        ? Clock
+        : icon === "engine"
+          ? Activity
+          : AlertTriangle;
+
+  return (
+    <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
+
+      <div className="flex items-center justify-between">
+
+        <p className="text-sm text-slate-400">
+          {label}
+        </p>
+
+        <Icon className="h-5 w-5 text-red-400" />
+
+      </div>
+
+      <p className="mt-3 text-3xl font-bold text-white">
+        {value}
+      </p>
+
+    </div>
+  );
+}
+
+
+function StatusBadge({
+  status,
+}: {
+  status: string;
+}) {
+  const active =
+    status ===
+    "active";
+
+  return (
+    <span
+      className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${
+        active
+          ? "bg-red-500/10 text-red-300 ring-1 ring-red-500/20"
+          : "bg-emerald-500/10 text-emerald-300 ring-1 ring-emerald-500/20"
+      }`}
+    >
+      {active
+        ? "Actif"
+        : "RÃƒÂ©solu"}
+    </span>
+  );
+}

@@ -1,0 +1,102 @@
+import net from "node:net";
+import { crc16Ibm } from "./crc16";
+
+const host = process.env.TELTONIKA_SIM_HOST ?? "127.0.0.1";
+const port = Number(process.env.TELTONIKA_SIM_PORT ?? 5000);
+const imei = process.env.TELTONIKA_SIM_IMEI ?? "356307042441234";
+
+function buildCodec8Packet() {
+  const timestamp = BigInt(Date.now());
+  const parts: Buffer[] = [];
+
+  const pushU8 = (value: number) => {
+    const b = Buffer.alloc(1);
+    b.writeUInt8(value);
+    parts.push(b);
+  };
+  const pushU16 = (value: number) => {
+    const b = Buffer.alloc(2);
+    b.writeUInt16BE(value);
+    parts.push(b);
+  };
+  const pushU32 = (value: number) => {
+    const b = Buffer.alloc(4);
+    b.writeUInt32BE(value >>> 0);
+    parts.push(b);
+  };
+  const pushU64 = (value: bigint) => {
+    const b = Buffer.alloc(8);
+    b.writeBigUInt64BE(value);
+    parts.push(b);
+  };
+
+  pushU8(8); // Codec 8
+  pushU8(1); // Number of records
+  pushU64(timestamp);
+  pushU8(1); // Priority
+  pushU32(Math.round(7.5898 * 10_000_000)); // longitude
+  pushU32(Math.round(33.5731 * 10_000_000)); // latitude
+  pushU16(35); // altitude
+  pushU16(90); // angle
+  pushU8(9); // satellites
+  pushU16(48); // speed
+
+  // IO event ID + total IO count
+  pushU8(1);
+  pushU8(3);
+
+  // 1-byte IO: ignition = 1
+  pushU8(1);
+  pushU8(239);
+  pushU8(1);
+
+  // 2-byte IO: battery-like demo value
+  pushU8(1);
+  pushU8(66);
+  pushU16(12400);
+
+  // 4-byte IO: odometer-like demo value
+  pushU8(1);
+  pushU8(16);
+  pushU32(124560);
+
+  // 8-byte IO count
+  pushU8(0);
+
+  // Number of records again
+  pushU8(1);
+
+  const data = Buffer.concat(parts);
+  const packet = Buffer.alloc(8 + data.length + 4);
+  packet.writeUInt32BE(0, 0);
+  packet.writeUInt32BE(data.length, 4);
+  data.copy(packet, 8);
+  packet.writeUInt32BE(crc16Ibm(data), 8 + data.length);
+
+  return packet;
+}
+
+const socket = net.createConnection({ host, port }, () => {
+  const imeiBuffer = Buffer.from(imei, "ascii");
+  const handshake = Buffer.alloc(2 + imeiBuffer.length);
+  handshake.writeUInt16BE(imeiBuffer.length, 0);
+  imeiBuffer.copy(handshake, 2);
+  socket.write(handshake);
+});
+
+socket.once("data", (ack) => {
+  if (ack.length !== 1 || ack[0] !== 1) {
+    throw new Error(`Server rejected simulator IMEI ${imei}`);
+  }
+
+  const packet = buildCodec8Packet();
+  socket.write(packet);
+  console.log(`[Teltonika simulator] Sent one AVL record for ${imei}`);
+
+  setTimeout(() => socket.end(), 300);
+});
+
+socket.on("error", (error) => {
+  console.error("[Teltonika simulator]", error.message);
+  process.exitCode = 1;
+});

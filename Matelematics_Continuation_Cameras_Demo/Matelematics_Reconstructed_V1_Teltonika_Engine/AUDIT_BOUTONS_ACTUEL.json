@@ -1,0 +1,429 @@
+{
+  "buttonsWithoutAction": [
+    {
+      "file": "app\\(public)\\contact\\page.tsx",
+      "line": 59,
+      "text": "Envoyer"
+    },
+    {
+      "file": "app\\components\\Services.tsx",
+      "line": 22,
+      "text": "En savoir plus"
+    },
+    {
+      "file": "app\\components\\Services.tsx",
+      "line": 36,
+      "text": "En savoir plus"
+    },
+    {
+      "file": "app\\components\\Services.tsx",
+      "line": 50,
+      "text": "En savoir plus"
+    },
+    {
+      "file": "app\\components\\Services.tsx",
+      "line": 64,
+      "text": "En savoir plus"
+    },
+    {
+      "file": "app\\dashboard\\alerts\\page.tsx",
+      "line": 382,
+      "text": "Marquer tout comme lu"
+    },
+    {
+      "file": "app\\dashboard\\Support\\page.tsx",
+      "line": 305,
+      "text": "Voir"
+    },
+    {
+      "file": "app\\dashboard\\Support\\page.tsx",
+      "line": 518,
+      "text": "{title}"
+    },
+    {
+      "file": "app\\dashboard\\vehicles\\page.tsx",
+      "line": 50,
+      "text": "Ajouter un véhicule"
+    },
+    {
+      "file": "app\\dashboard\\vehicles\\page.tsx",
+      "line": 63,
+      "text": ""
+    },
+    {
+      "file": "app\\dashboard\\VehicleTable.tsx",
+      "line": 42,
+      "text": "Voir"
+    },
+    {
+      "file": "app\\demo\\page.tsx",
+      "line": 652,
+      "text": ""
+    },
+    {
+      "file": "app\\demo\\page.tsx",
+      "line": 660,
+      "text": ""
+    },
+    {
+      "file": "app\\demo\\page.tsx",
+      "line": 818,
+      "text": "Freinage brusque Il y a 2 min • 78 km/h"
+    },
+    {
+      "file": "app\\demo\\page.tsx",
+      "line": 843,
+      "text": "Excès de vitesse Il y a 16 min • 96 km/h"
+    },
+    {
+      "file": "app\\demo\\parametres\\page.tsx",
+      "line": 329,
+      "text": "Modifier"
+    },
+    {
+      "file": "app\\demo\\profil\\page.tsx",
+      "line": 88,
+      "text": ""
+    },
+    {
+      "file": "app\\demo\\profil\\page.tsx",
+      "line": 336,
+      "text": "Modifier le mot de passe"
+    },
+    {
+      "file": "components\\DashboardShell.tsx",
+      "line": 200,
+      "text": ""
+    }
+  ],
+  "hashLinks": [
+    {
+      "file": "app\\components\\CasUsage.tsx",
+      "line": 72,
+      "code": "href=\"#\""
+    },
+    {
+      "file": "app\\components\\Footer.tsx",
+      "line": 281,
+      "code": "href=\"#\""
+    },
+    {
+      "file": "app\\components\\Footer.tsx",
+      "line": 289,
+      "code": "href=\"#\""
+    },
+    {
+      "file": "app\\components\\Footer.tsx",
+      "line": 297,
+      "code": "href=\"#\""
+    }
+  ],
+  "suspiciousLinks": [],
+  "routerLinks": [
+    {
+      "file": "app\\(public)\\login\\page.tsx",
+      "line": 45,
+      "href": "/"
+    },
+    {
+      "file": "app\\components\\Benefits.tsx",
+      "line": 307,
+      "href": "/demo"
+    },
+    {
+      "file": "app\\components\\FAQAccordion.tsx",
+      "line": 244,
+      "href": "/contact"
+    },
+    {
+      "file": "app\\components\\Footer.tsx",
+      "line": 139,
+      "href": "/"
+    },
+    {
+      "file": "app\\components\\Footer.tsx",
+      "line": 261,
+      "href": "/dashboard"
+    },
+    {
+      "file": "app\\components\\Footer.tsx",
+      "line": 327,
+      "href": "/contact"
+    },
+    {
+      "file": "app\\components\\Footer.tsx",
+      "line": 334,
+      "href": "/"
+    },
+    {
+      "file": "app\\components\\Footer.tsx",
+      "line": 341,
+      "href": "/"
+    },
+    {
+      "file": "app\\components\\Hero.tsx",
+      "line": 45,
+      "href": "/demo"
+    },
+    {
+      "file": "app\\components\\HowItWorks.tsx",
+      "line": 435,
+      "href": "/demo"
+    },
+    {
+      "file": "app\\components\\IndustrySectors.tsx",
+      "line": 245,
+      "href": "/demo"
+    },
+    {
+      "file": "app\\components\\Navbar.tsx",
+      "line": 15,
+      "href": "/"
+    },
+    {
+      "file": "app\\components\\Navbar.tsx",
+      "line": 26,
+      "href": "/"
+    },
+    {
+      "file": "app\\components\\Navbar.tsx",
+      "line": 42,
+      "href": "/demo"
+    },
+    {
+      "file": "app\\components\\Navbar.tsx",
+      "line": 58,
+      "href": "/login"
+    },
+    {
+      "file": "app\\components\\Testimonials.tsx",
+      "line": 199,
+      "href": "/demo"
+    },
+    {
+      "file": "app\\dashboard\\CameraOverview.tsx",
+      "line": 25,
+      "href": "/dashboard/cameras"
+    },
+    {
+      "file": "app\\dashboard\\page.tsx",
+      "line": 358,
+      "href": "/dashboard/map"
+    },
+    {
+      "file": "app\\dashboard\\page.tsx",
+      "line": 495,
+      "href": "/dashboard/vehicles"
+    },
+    {
+      "file": "app\\dashboard\\page.tsx",
+      "line": 540,
+      "href": "/dashboard/alerts"
+    },
+    {
+      "file": "app\\dashboard\\page.tsx",
+      "line": 783,
+      "href": "/dashboard/rapports"
+    },
+    {
+      "file": "app\\dashboard\\page.tsx",
+      "line": 790,
+      "href": "/dashboard/alerts"
+    },
+    {
+      "file": "app\\dashboard\\page.tsx",
+      "line": 797,
+      "href": "/dashboard/Support"
+    },
+    {
+      "file": "app\\dashboard\\rapports\\export\\page.tsx",
+      "line": 43,
+      "href": "/dashboard/rapports"
+    },
+    {
+      "file": "app\\dashboard\\rapports\\export\\page.tsx",
+      "line": 463,
+      "href": "/dashboard/rapports"
+    },
+    {
+      "file": "app\\dashboard\\vehicle\\[id]\\page.tsx",
+      "line": 249,
+      "href": "/dashboard"
+    },
+    {
+      "file": "app\\dashboard\\vehicle\\[id]\\page.tsx",
+      "line": 270,
+      "href": "/dashboard/vehicles"
+    },
+    {
+      "file": "app\\demo\\alerts\\page.tsx",
+      "line": 982,
+      "href": "/demo"
+    },
+    {
+      "file": "app\\demo\\carburant\\page.tsx",
+      "line": 581,
+      "href": "/demo"
+    },
+    {
+      "file": "app\\demo\\geozones\\page.tsx",
+      "line": 250,
+      "href": "/demo"
+    },
+    {
+      "file": "app\\demo\\history\\page.tsx",
+      "line": 98,
+      "href": "/demo"
+    },
+    {
+      "file": "app\\demo\\layout.tsx",
+      "line": 185,
+      "href": "/demo"
+    },
+    {
+      "file": "app\\demo\\layout.tsx",
+      "line": 254,
+      "href": "/login"
+    },
+    {
+      "file": "app\\demo\\layout.tsx",
+      "line": 262,
+      "href": "/"
+    },
+    {
+      "file": "app\\demo\\layout.tsx",
+      "line": 467,
+      "href": "/login"
+    },
+    {
+      "file": "app\\demo\\map\\page.tsx",
+      "line": 39,
+      "href": "/demo"
+    },
+    {
+      "file": "app\\demo\\page.tsx",
+      "line": 235,
+      "href": "/"
+    },
+    {
+      "file": "app\\demo\\page.tsx",
+      "line": 1299,
+      "href": "/"
+    },
+    {
+      "file": "app\\demo\\page.tsx",
+      "line": 1306,
+      "href": "/login"
+    },
+    {
+      "file": "app\\demo\\solutions\\page.tsx",
+      "line": 143,
+      "href": "/demo"
+    },
+    {
+      "file": "app\\demo\\solutions\\page.tsx",
+      "line": 151,
+      "href": "/contact"
+    },
+    {
+      "file": "app\\demo\\solutions\\page.tsx",
+      "line": 303,
+      "href": "/demo"
+    },
+    {
+      "file": "app\\demo\\solutions\\page.tsx",
+      "line": 311,
+      "href": "/contact"
+    },
+    {
+      "file": "app\\demo\\support\\page.tsx",
+      "line": 368,
+      "href": "/demo/contact"
+    },
+    {
+      "file": "app\\demo\\support\\page.tsx",
+      "line": 408,
+      "href": "/demo/contact"
+    },
+    {
+      "file": "app\\demo\\vehicles\\page.tsx",
+      "line": 93,
+      "href": "/demo"
+    },
+    {
+      "file": "app\\demo\\vehicles\\[registration]\\page.tsx",
+      "line": 135,
+      "href": "/demo/vehicles"
+    },
+    {
+      "file": "app\\demo\\vehicles\\[registration]\\page.tsx",
+      "line": 156,
+      "href": "/demo/vehicles"
+    },
+    {
+      "file": "app\\demo\\vehicles\\[registration]\\page.tsx",
+      "line": 489,
+      "href": "/demo/map"
+    },
+    {
+      "file": "app\\demo\\vehicles\\[registration]\\page.tsx",
+      "line": 615,
+      "href": "/demo/maintenance"
+    },
+    {
+      "file": "app\\demo\\vehicles\\[registration]\\page.tsx",
+      "line": 631,
+      "href": "/demo/vehicles"
+    },
+    {
+      "file": "components\\DashboardNavbar.tsx",
+      "line": 15,
+      "href": "/dashboard"
+    },
+    {
+      "file": "components\\DashboardNavbar.tsx",
+      "line": 21,
+      "href": "/dashboard/vehicles"
+    },
+    {
+      "file": "components\\DashboardNavbar.tsx",
+      "line": 27,
+      "href": "/dashboard/cameras"
+    },
+    {
+      "file": "components\\DashboardNavbar.tsx",
+      "line": 33,
+      "href": "/dashboard/alerts"
+    },
+    {
+      "file": "components\\DashboardNavbar.tsx",
+      "line": 39,
+      "href": "/dashboard/profile"
+    },
+    {
+      "file": "components\\DashboardNavbar.tsx",
+      "line": 50,
+      "href": "/login"
+    },
+    {
+      "file": "components\\PublicNavbar.tsx",
+      "line": 15,
+      "href": "/"
+    },
+    {
+      "file": "components\\PublicNavbar.tsx",
+      "line": 21,
+      "href": "/services"
+    },
+    {
+      "file": "components\\PublicNavbar.tsx",
+      "line": 27,
+      "href": "/contact"
+    },
+    {
+      "file": "components\\PublicNavbar.tsx",
+      "line": 33,
+      "href": "/login"
+    }
+  ]
+}

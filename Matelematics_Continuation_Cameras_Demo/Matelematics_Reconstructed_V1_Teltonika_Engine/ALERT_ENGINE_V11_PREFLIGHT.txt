@@ -1,0 +1,1698 @@
+﻿============================================================
+ MATELEMATICS - ALERT ENGINE V1.1 PREFLIGHT
+============================================================
+
+============================================================
+FILE : .\server\teltonika\can\alert-engine.ts
+EXISTS : True
+============================================================
+import type {
+  NormalizedCanV2,
+} from "./types-v2";
+
+export type CanAlertCandidate = {
+  alertType: string;
+  active: boolean;
+  severity:
+    | "info"
+    | "warning"
+    | "critical";
+  title: string;
+  message: string;
+  metadata: Record<string, unknown>;
+};
+
+
+function anyDoorOpen(
+  can: NormalizedCanV2,
+) {
+  return [
+    can.doors.frontLeft,
+    can.doors.frontRight,
+    can.doors.rearLeft,
+    can.doors.rearRight,
+    can.doors.hood,
+    can.doors.trunk,
+  ].some(
+    (value) =>
+      value === true,
+  );
+}
+
+
+export function buildAlertCandidates(
+  can: NormalizedCanV2,
+): CanAlertCandidate[] {
+  const result:
+    CanAlertCandidate[] =
+    [];
+
+  if (
+    can.warnings.checkEngine !== null
+  ) {
+    result.push({
+      alertType:
+        "check_engine",
+
+      active:
+        can.warnings.checkEngine,
+
+      severity:
+        "warning",
+
+      title:
+        "Voyant moteur",
+
+      message:
+        can.warnings.checkEngine
+          ? "Le systÃ¨me CAN signale un dÃ©faut moteur."
+          : "Le voyant moteur n'est plus actif.",
+
+      metadata: {
+        can_version: 2,
+      },
+    });
+  }
+
+  const doorOpen =
+    anyDoorOpen(can);
+
+  const moving =
+    can.vehicle.movement === true ||
+    (
+      can.vehicle.speedKph !== null &&
+      can.vehicle.speedKph > 0
+    );
+
+  result.push({
+    alertType:
+      "door_open_moving",
+
+    active:
+      doorOpen &&
+      moving,
+
+    severity:
+      "critical",
+
+    title:
+      "Ouverture dÃ©tectÃ©e en mouvement",
+
+    message:
+      "Une porte, le capot ou le coffre est ouvert alors que le vÃ©hicule est en mouvement.",
+
+    metadata: {
+      doors:
+        can.doors,
+    },
+  });
+
+  if (
+    can.engine.coolantTemperatureC !==
+    null
+  ) {
+    result.push({
+      alertType:
+        "high_coolant_temperature",
+
+      active:
+        can.engine.coolantTemperatureC >=
+        105,
+
+      severity:
+        "critical",
+
+      title:
+        "TempÃ©rature moteur Ã©levÃ©e",
+
+      message:
+        `TempÃ©rature moteur : ${can.engine.coolantTemperatureC.toFixed(
+          1,
+        )} Â°C.`,
+
+      metadata: {
+        temperature_c:
+          can.engine.coolantTemperatureC,
+      },
+    });
+  }
+
+  if (
+    can.fuel.levelPercent !==
+    null
+  ) {
+    result.push({
+      alertType:
+        "low_fuel",
+
+      active:
+        can.fuel.levelPercent <=
+        15,
+
+      severity:
+        "warning",
+
+      title:
+        "Niveau carburant faible",
+
+      message:
+        `Niveau carburant : ${can.fuel.levelPercent.toFixed(
+          0,
+        )} %.`,
+
+      metadata: {
+        fuel_level_percent:
+          can.fuel.levelPercent,
+      },
+    });
+  }
+
+  for (
+    const diagnostic of
+    can.diagnostics.active
+  ) {
+    const safeCode =
+      diagnostic.code
+        .replace(
+          /[^A-Za-z0-9_-]/g,
+          "_",
+        )
+        .slice(
+          0,
+          50,
+        );
+
+    result.push({
+      alertType:
+        `diagnostic_dtc_${safeCode}`,
+
+      active:
+        true,
+
+      severity:
+        "warning",
+
+      title:
+        `DÃ©faut diagnostic ${diagnostic.code}`,
+
+      message:
+        `Un dÃ©faut vÃ©hicule actif a Ã©tÃ© dÃ©tectÃ© : ${diagnostic.code}.`,
+
+      metadata: {
+        diagnostic,
+      },
+    });
+  }
+
+  return result;
+}
+
+============================================================
+FILE : .\server\teltonika\storage.ts
+EXISTS : True
+============================================================
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+
+import { registerDevice } from "./registry";
+import type { NormalizedTelemetry } from "./types";
+
+import {
+  normalizeCanV2,
+} from "./can/normalizer";
+
+import {
+  buildAlertCandidates,
+} from "./can/alert-engine";
+
+import type {
+  NormalizedCanV2,
+} from "./can/types-v2";
+
+type DeviceRow = {
+  id: string;
+  company_id: string;
+  vehicle_id: string | null;
+  imei: string;
+  model: string | null;
+  status: string;
+};
+
+function requiredEnv(name: string) {
+  const value = process.env[name];
+
+  if (!value) {
+    throw new Error(
+      `[Teltonika] Missing required environment variable: ${name}`,
+    );
+  }
+
+  return value;
+}
+
+const SUPABASE_FETCH_MAX_ATTEMPTS = 4;
+
+const SUPABASE_FETCH_TIMEOUT_MS =
+  12_000;
+
+
+function sleep(
+  milliseconds: number,
+) {
+  return new Promise<void>(
+    (resolve) => {
+      setTimeout(
+        resolve,
+        milliseconds,
+      );
+    },
+  );
+}
+
+
+function retryableHttpStatus(
+  status: number,
+) {
+  return (
+    status === 408 ||
+    status === 425 ||
+    status === 429 ||
+    status === 500 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504
+  );
+}
+
+
+const resilientSupabaseFetch:
+  typeof fetch =
+  async (
+    input,
+    init,
+  ) => {
+    let lastError:
+      unknown = null;
+
+    for (
+      let attempt = 1;
+      attempt <=
+      SUPABASE_FETCH_MAX_ATTEMPTS;
+      attempt += 1
+    ) {
+      const controller =
+        new AbortController();
+
+      const timeout =
+        setTimeout(
+          () => {
+            controller.abort();
+          },
+          SUPABASE_FETCH_TIMEOUT_MS,
+        );
+
+      let abortListener:
+        (() => void) |
+        null = null;
+
+      try {
+        /*
+         * Respect an existing AbortSignal
+         * if Supabase supplies one.
+         */
+        if (init?.signal) {
+          if (
+            init.signal.aborted
+          ) {
+            controller.abort();
+          } else {
+            abortListener =
+              () => {
+                controller.abort();
+              };
+
+            init.signal.addEventListener(
+              "abort",
+              abortListener,
+              {
+                once: true,
+              },
+            );
+          }
+        }
+
+        const response =
+          await fetch(
+            input,
+            {
+              ...init,
+              signal:
+                controller.signal,
+            },
+          );
+
+        clearTimeout(
+          timeout,
+        );
+
+        if (
+          abortListener &&
+          init?.signal
+        ) {
+          init.signal.removeEventListener(
+            "abort",
+            abortListener,
+          );
+        }
+
+        if (
+          !retryableHttpStatus(
+            response.status,
+          )
+        ) {
+          if (attempt > 1) {
+            console.log(
+              `[Teltonika] Supabase recovered on attempt ${attempt}/${SUPABASE_FETCH_MAX_ATTEMPTS}`,
+            );
+          }
+
+          return response;
+        }
+
+        lastError =
+          new Error(
+            `Supabase HTTP ${response.status}`,
+          );
+
+        console.warn(
+          `[Teltonika] Supabase HTTP ${response.status} - retry ${attempt}/${SUPABASE_FETCH_MAX_ATTEMPTS}`,
+        );
+      } catch (error) {
+        clearTimeout(
+          timeout,
+        );
+
+        if (
+          abortListener &&
+          init?.signal
+        ) {
+          init.signal.removeEventListener(
+            "abort",
+            abortListener,
+          );
+        }
+
+        lastError =
+          error;
+
+        console.warn(
+          `[Teltonika] Supabase network failure - retry ${attempt}/${SUPABASE_FETCH_MAX_ATTEMPTS}: ${
+            error instanceof Error
+              ? error.message
+              : String(error)
+          }`,
+        );
+      }
+
+      if (
+        attempt <
+        SUPABASE_FETCH_MAX_ATTEMPTS
+      ) {
+        const delay =
+          500 *
+          2 **
+          (
+            attempt - 1
+          );
+
+        await sleep(
+          delay,
+        );
+      }
+    }
+
+    throw new Error(
+      `Supabase unavailable after ${SUPABASE_FETCH_MAX_ATTEMPTS} attempts: ${
+        lastError instanceof Error
+          ? lastError.message
+          : String(lastError)
+      }`,
+    );
+  };
+
+
+let supabaseClient: SupabaseClient | null =
+  null;
+
+function getSupabase() {
+  if (supabaseClient) {
+    return supabaseClient;
+  }
+
+  const supabaseUrl =
+    requiredEnv("SUPABASE_URL");
+
+  const supabaseSecretKey =
+    requiredEnv("SUPABASE_SECRET_KEY");
+
+  supabaseClient =
+    createClient(
+      supabaseUrl,
+      supabaseSecretKey,
+      {
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false,
+          detectSessionInUrl: false,
+        },
+
+        global: {
+          fetch:
+            resilientSupabaseFetch,
+        },
+      },
+    );
+
+  return supabaseClient;
+}
+
+export async function loadDevicesFromSupabase() {
+  const { data, error } = await getSupabase()
+    .from("devices")
+    .select(
+      "id,company_id,vehicle_id,imei,model,status",
+    );
+
+  if (error) {
+    throw new Error(
+      `[Teltonika] Unable to load devices from Supabase: ${error.message}`,
+    );
+  }
+
+  const devices = (data ?? []) as DeviceRow[];
+
+  let registered = 0;
+
+  for (const device of devices) {
+    if (!device.vehicle_id) {
+      console.warn(
+        `[Teltonika] Device ${device.imei} has no vehicle_id; skipped`,
+      );
+
+      continue;
+    }
+
+    registerDevice({
+      imei: device.imei,
+      clientId: device.company_id,
+      vehicleId: device.vehicle_id,
+      label: device.model ?? device.imei,
+    });
+
+    registered += 1;
+  }
+
+  console.log(
+    `[Teltonika] Loaded ${registered} device(s) from Supabase`,
+  );
+
+  return devices;
+}
+
+function readNumericIo(
+  telemetry: NormalizedTelemetry,
+  key: string,
+) {
+  const value = telemetry.io[key];
+
+  return typeof value === "number"
+    ? value
+    : null;
+}
+
+function getIgnition(
+  telemetry: NormalizedTelemetry,
+) {
+  const value =
+    readNumericIo(
+      telemetry,
+      "io_239",
+    );
+
+  if (value === null) {
+    return null;
+  }
+
+  return value === 1;
+}
+
+function getBatteryVoltage(
+  telemetry: NormalizedTelemetry,
+) {
+  const value =
+    readNumericIo(
+      telemetry,
+      "io_66",
+    );
+
+  if (value === null) {
+    return null;
+  }
+
+  return value / 1000;
+}
+
+
+/* ============================================================
+   CAN / IO NORMALIZATION
+   ============================================================ */
+
+function buildCanPayload(
+  telemetry: NormalizedTelemetry,
+) {
+  const rpm =
+    readNumericIo(
+      telemetry,
+      "io_207",
+    );
+
+  const canSpeed =
+    readNumericIo(
+      telemetry,
+      "io_206",
+    );
+
+  const fuelLevel =
+    readNumericIo(
+      telemetry,
+      "io_203",
+    );
+
+  const fuelUsedMl =
+    readNumericIo(
+      telemetry,
+      "io_208",
+    );
+
+  const coolantTemperature =
+    readNumericIo(
+      telemetry,
+      "io_204",
+    );
+
+  const throttlePosition =
+    readNumericIo(
+      telemetry,
+      "io_205",
+    );
+
+  const odometerMetres =
+    readNumericIo(
+      telemetry,
+      "io_209",
+    );
+
+  return {
+    rpm,
+
+    speed_kph:
+      canSpeed,
+
+    fuel_level_percent:
+      fuelLevel,
+
+    fuel_used_litres:
+      fuelUsedMl === null
+        ? null
+        : fuelUsedMl / 1000,
+
+    coolant_temperature_c:
+      coolantTemperature,
+
+    throttle_percent:
+      throttlePosition,
+
+    odometer_km:
+      odometerMetres === null
+        ? null
+        : odometerMetres / 1000,
+
+    simulator: true,
+  };
+}
+
+function buildIoMetadata(
+  telemetry: NormalizedTelemetry,
+) {
+  const movement =
+    readNumericIo(
+      telemetry,
+      "io_240",
+    );
+
+  const internalBatteryMv =
+    readNumericIo(
+      telemetry,
+      "io_67",
+    );
+
+  const odometerMetres =
+    readNumericIo(
+      telemetry,
+      "io_16",
+    );
+
+  return {
+    movement:
+      movement === null
+        ? null
+        : movement === 1,
+
+    external_voltage:
+      getBatteryVoltage(
+        telemetry,
+      ),
+
+    internal_battery_voltage:
+      internalBatteryMv === null
+        ? null
+        : internalBatteryMv / 1000,
+
+    odometer_km:
+      odometerMetres === null
+        ? null
+        : odometerMetres / 1000,
+  };
+}
+
+
+
+async function syncCanAlerts({
+  companyId,
+  vehicleId,
+  deviceId,
+  recordedAt,
+  telemetry,
+  canPayload,
+}: {
+  companyId: string;
+  vehicleId: string;
+  deviceId: string;
+  recordedAt: string;
+  telemetry: NormalizedTelemetry;
+  canPayload: NormalizedCanV2;
+}) {
+  const candidates =
+    buildAlertCandidates(
+      canPayload,
+    );
+
+  /*
+   * All alert types that are active in THIS telemetry record.
+   *
+   * This is especially important for DTC lifecycle:
+   *
+   * P0069 appears
+   *   -> diagnostic_dtc_P0069 ACTIVE
+   *
+   * P0069 disappears
+   *   -> diagnostic_dtc_P0069 RESOLVED
+   */
+
+  const currentlyActiveTypes =
+    new Set(
+      candidates
+        .filter(
+          (candidate) =>
+            candidate.active,
+        )
+        .map(
+          (candidate) =>
+            candidate.alertType,
+        ),
+    );
+
+
+  /*
+   * ---------------------------------------------------------
+   * NORMAL CANDIDATE SYNC
+   * ---------------------------------------------------------
+   */
+
+  for (
+    const candidate of
+    candidates
+  ) {
+    const {
+      data: existing,
+      error: findError,
+    } =
+      await getSupabase()
+        .from("alerts")
+        .select(
+          "id,alert_type",
+        )
+        .eq(
+          "company_id",
+          companyId,
+        )
+        .eq(
+          "vehicle_id",
+          vehicleId,
+        )
+        .eq(
+          "alert_type",
+          candidate.alertType,
+        )
+        .eq(
+          "status",
+          "active",
+        )
+        .limit(1)
+        .maybeSingle();
+
+    if (findError) {
+      throw new Error(
+        `[Teltonika] Alert lookup failed: ${findError.message}`,
+      );
+    }
+
+
+    /*
+     * CREATE
+     */
+
+    if (
+      candidate.active &&
+      !existing
+    ) {
+      const {
+        error: insertError,
+      } =
+        await getSupabase()
+          .from("alerts")
+          .insert({
+            company_id:
+              companyId,
+
+            vehicle_id:
+              vehicleId,
+
+            device_id:
+              deviceId,
+
+            alert_type:
+              candidate.alertType,
+
+            severity:
+              candidate.severity,
+
+            title:
+              candidate.title,
+
+            message:
+              candidate.message,
+
+            latitude:
+              telemetry.latitude,
+
+            longitude:
+              telemetry.longitude,
+
+            triggered_at:
+              recordedAt,
+
+            status:
+              "active",
+
+            metadata: {
+              source:
+                "teltonika_can_v2",
+
+              can_profile:
+                canPayload.source.profile,
+
+              can_mapping_version:
+                canPayload.source.mappingVersion,
+
+              ...candidate.metadata,
+            },
+          });
+
+      if (insertError) {
+        throw new Error(
+          `[Teltonika] Alert insert failed: ${insertError.message}`,
+        );
+      }
+
+      console.log(
+        `[Teltonika] alert created type=${candidate.alertType}`,
+      );
+    }
+
+
+    /*
+     * RESOLVE NORMAL BOOLEAN ALERT
+     */
+
+    if (
+      !candidate.active &&
+      existing
+    ) {
+      const {
+        error: resolveError,
+      } =
+        await getSupabase()
+          .from("alerts")
+          .update({
+            status:
+              "resolved",
+
+            resolved_at:
+              recordedAt,
+          })
+          .eq(
+            "id",
+            existing.id,
+          );
+
+      if (resolveError) {
+        throw new Error(
+          `[Teltonika] Alert resolution failed: ${resolveError.message}`,
+        );
+      }
+
+      console.log(
+        `[Teltonika] alert resolved type=${candidate.alertType}`,
+      );
+    }
+  }
+
+
+  /*
+   * ---------------------------------------------------------
+   * DTC LIFECYCLE
+   * ---------------------------------------------------------
+   *
+   * A disappeared DTC does not produce an active:false
+   * candidate because it is no longer in the CAN payload.
+   *
+   * Therefore retrieve active vehicle alerts and explicitly
+   * resolve diagnostic codes absent from current telemetry.
+   */
+
+  const {
+    data: activeAlerts,
+    error: activeAlertsError,
+  } =
+    await getSupabase()
+      .from("alerts")
+      .select(
+        "id,alert_type",
+      )
+      .eq(
+        "company_id",
+        companyId,
+      )
+      .eq(
+        "vehicle_id",
+        vehicleId,
+      )
+      .eq(
+        "status",
+        "active",
+      );
+
+  if (activeAlertsError) {
+    throw new Error(
+      `[Teltonika] Active alert lookup failed: ${activeAlertsError.message}`,
+    );
+  }
+
+
+  const staleDiagnostics =
+    (
+      activeAlerts ??
+      []
+    ).filter(
+      (alert) =>
+        typeof alert.alert_type ===
+          "string" &&
+        alert.alert_type.startsWith(
+          "diagnostic_dtc_",
+        ) &&
+        !currentlyActiveTypes.has(
+          alert.alert_type,
+        ),
+    );
+
+
+  for (
+    const alert of
+    staleDiagnostics
+  ) {
+    const {
+      error: resolveError,
+    } =
+      await getSupabase()
+        .from("alerts")
+        .update({
+          status:
+            "resolved",
+
+          resolved_at:
+            recordedAt,
+        })
+        .eq(
+          "id",
+          alert.id,
+        );
+
+    if (resolveError) {
+      throw new Error(
+        `[Teltonika] DTC resolution failed: ${resolveError.message}`,
+      );
+    }
+
+    console.log(
+      `[Teltonika] alert resolved type=${alert.alert_type}`,
+    );
+  }
+}
+/* ============================================================
+   PERSISTENCE
+   ============================================================ */
+
+export async function persistTelemetry(
+  telemetry: NormalizedTelemetry,
+) {
+  const { data: device, error: deviceError } =
+    await getSupabase()
+      .from("devices")
+      .select(
+        "id,company_id,vehicle_id,imei",
+      )
+      .eq("imei", telemetry.imei)
+      .maybeSingle();
+
+  if (deviceError) {
+    throw new Error(
+      `[Teltonika] Device lookup failed for ${telemetry.imei}: ${deviceError.message}`,
+    );
+  }
+
+  if (!device) {
+    throw new Error(
+      `[Teltonika] Unknown Supabase device IMEI ${telemetry.imei}`,
+    );
+  }
+
+  if (!device.vehicle_id) {
+    throw new Error(
+      `[Teltonika] Device ${telemetry.imei} is not assigned to a vehicle`,
+    );
+  }
+
+  const recordedAt =
+    telemetry.timestamp;
+
+  const positionRow = {
+    company_id: device.company_id,
+    vehicle_id: device.vehicle_id,
+    device_id: device.id,
+
+    latitude: telemetry.latitude,
+    longitude: telemetry.longitude,
+    altitude: telemetry.altitude,
+    speed: telemetry.speedKph,
+    heading: telemetry.angle,
+
+    recorded_at: recordedAt,
+  };
+
+  const { error: positionError } =
+    await getSupabase()
+      .from("positions")
+      .insert(positionRow);
+
+  if (positionError) {
+    throw new Error(
+      `[Teltonika] Position insert failed: ${positionError.message}`,
+    );
+  }
+
+  const codec =
+    telemetry.codec === 142
+      ? "8E"
+      : "8";
+
+  const signalStrength =
+    readNumericIo(
+      telemetry,
+      "io_21",
+    );
+
+  const canPayload = normalizeCanV2(telemetry);
+
+  const ioMetadata =
+    buildIoMetadata(
+      telemetry,
+    );
+
+  const telemetryRow = {
+    company_id: device.company_id,
+    vehicle_id: device.vehicle_id,
+    device_id: device.id,
+
+    recorded_at: recordedAt,
+
+    source: "teltonika",
+    codec,
+
+    raw_payload:
+      JSON.stringify(
+        telemetry.raw,
+      ),
+
+    /*
+     * IMPORTANT:
+     * All original AVL IDs remain available here.
+     */
+    io_values:
+      telemetry.io,
+
+    /*
+     * Normalized CAN representation used by Matelematics.
+     */
+    can_payload:
+      canPayload,
+
+    metadata: {
+      imei: telemetry.imei,
+      received_at: telemetry.receivedAt,
+      priority: telemetry.priority,
+      event_id: telemetry.eventId,
+      satellites: telemetry.satellites,
+
+      io_normalized:
+        ioMetadata,
+
+      simulator: canPayload.source.simulator,
+    },
+
+    signal_strength:
+      signalStrength,
+
+    battery_voltage:
+      getBatteryVoltage(
+        telemetry,
+      ),
+
+    ignition:
+      getIgnition(
+        telemetry,
+      ),
+  };
+
+  const { error: telemetryError } =
+    await getSupabase()
+      .from("telemetry")
+      .insert(telemetryRow);
+
+  if (telemetryError) {
+    throw new Error(
+      `[Teltonika] Telemetry insert failed: ${telemetryError.message}`,
+    );
+  }
+
+  await syncCanAlerts({
+    companyId: device.company_id,
+    vehicleId: device.vehicle_id,
+    deviceId: device.id,
+    recordedAt,
+    telemetry,
+    canPayload,
+  });
+
+  const now =
+    new Date().toISOString();
+
+  const { error: deviceUpdateError } =
+    await getSupabase()
+      .from("devices")
+      .update({
+        status: "online",
+        last_seen_at: now,
+        updated_at: now,
+      })
+      .eq("id", device.id);
+
+  if (deviceUpdateError) {
+    throw new Error(
+      `[Teltonika] Device status update failed: ${deviceUpdateError.message}`,
+    );
+  }
+
+  return {
+    deviceId: device.id,
+    companyId: device.company_id,
+    vehicleId: device.vehicle_id,
+    recordedAt,
+  };
+}
+
+============================================================
+FILE : .\server\teltonika\can\types-v2.ts
+EXISTS : True
+============================================================
+export type CanProfile =
+  | "light_vehicle_can"
+  | "j1939_fms"
+  | "unknown";
+
+export type DiagnosticCode = {
+  code: string;
+  source:
+    | "can_adapter"
+    | "j1939_dm1"
+    | "j1939_dm2"
+    | "simulator";
+  status:
+    | "active"
+    | "stored";
+  description?: string | null;
+};
+
+export type NormalizedCanV2 = {
+  version: 2;
+
+  source: {
+    manufacturer: "teltonika";
+    profile: CanProfile;
+    simulator: boolean;
+    mappingVersion: "2.0";
+  };
+
+  engine: {
+    rpm: number | null;
+    coolantTemperatureC: number | null;
+    loadPercent: number | null;
+    throttlePercent: number | null;
+    engineHours: number | null;
+  };
+
+  vehicle: {
+    speedKph: number | null;
+    odometerKm: number | null;
+    ignition: boolean | null;
+    movement: boolean | null;
+  };
+
+  fuel: {
+    levelPercent: number | null;
+    levelLiters: number | null;
+    consumedLiters: number | null;
+    rateLph: number | null;
+    averageL100km: number | null;
+    adBluePercent: number | null;
+    adBlueLiters: number | null;
+  };
+
+  doors: {
+    frontLeft: boolean | null;
+    frontRight: boolean | null;
+    rearLeft: boolean | null;
+    rearRight: boolean | null;
+    hood: boolean | null;
+    trunk: boolean | null;
+  };
+
+  safety: {
+    seatbelt: boolean | null;
+    handbrake: boolean | null;
+  };
+
+  warnings: {
+    checkEngine: boolean | null;
+    abs: boolean | null;
+    airbag: boolean | null;
+    esp: boolean | null;
+    oilPressure: boolean | null;
+    tpms: boolean | null;
+  };
+
+  diagnostics: {
+    dtcCount: number | null;
+    active: DiagnosticCode[];
+    stored: DiagnosticCode[];
+  };
+
+  tracker: {
+    gsmSignal: number | null;
+    externalVoltage: number | null;
+    internalBatteryVoltage: number | null;
+    satellites: number | null;
+  };
+
+  /*
+   * Compatibility aliases.
+   * Current dashboard V1 can keep reading these fields.
+   */
+  rpm: number | null;
+  speed_kph: number | null;
+  fuel_level_percent: number | null;
+  fuel_used_litres: number | null;
+  coolant_temperature_c: number | null;
+  throttle_percent: number | null;
+  odometer_km: number | null;
+  simulator: boolean;
+};
+
+============================================================
+FILE : .\lib\alerts\alert-rules.ts
+EXISTS : True
+============================================================
+export type AlertCategory =
+  | "diagnostic"
+  | "safety"
+  | "engine"
+  | "electrical"
+  | "driving"
+  | "connectivity"
+  | "location"
+  | "other";
+
+
+export type AlertSeverity =
+  | "critical"
+  | "high"
+  | "medium"
+  | "info";
+
+
+export type AlertRuleDefinition = {
+  key:
+    string;
+
+  label:
+    string;
+
+  category:
+    AlertCategory;
+
+  defaultSeverity:
+    AlertSeverity;
+
+  autoResolve:
+    boolean;
+
+  recurrenceTracking:
+    boolean;
+
+  description:
+    string;
+};
+
+
+export const ALERT_RULES:
+  AlertRuleDefinition[] = [
+
+  {
+    key:
+      "check_engine",
+
+    label:
+      "Check Engine",
+
+    category:
+      "diagnostic",
+
+    defaultSeverity:
+      "high",
+
+    autoResolve:
+      true,
+
+    recurrenceTracking:
+      true,
+
+    description:
+      "Temoin moteur signale par la telemetrie CAN.",
+  },
+
+
+  {
+    key:
+      "diagnostic_dtc_*",
+
+    label:
+      "Code defaut",
+
+    category:
+      "diagnostic",
+
+    defaultSeverity:
+      "high",
+
+    autoResolve:
+      true,
+
+    recurrenceTracking:
+      true,
+
+    description:
+      "Code diagnostic OBD-II ou J1939 remonte par le vehicule.",
+  },
+
+
+  {
+    key:
+      "door_open_moving",
+
+    label:
+      "Porte ouverte en mouvement",
+
+    category:
+      "safety",
+
+    defaultSeverity:
+      "critical",
+
+    autoResolve:
+      true,
+
+    recurrenceTracking:
+      true,
+
+    description:
+      "Le vehicule se deplace alors qu'une porte est detectee ouverte.",
+  },
+
+
+  {
+    key:
+      "coolant_temperature_high",
+
+    label:
+      "Temperature moteur elevee",
+
+    category:
+      "engine",
+
+    defaultSeverity:
+      "critical",
+
+    autoResolve:
+      true,
+
+    recurrenceTracking:
+      true,
+
+    description:
+      "Temperature du liquide de refroidissement superieure au seuil configure.",
+  },
+
+
+  {
+    key:
+      "battery_voltage_low",
+
+    label:
+      "Batterie faible",
+
+    category:
+      "electrical",
+
+    defaultSeverity:
+      "medium",
+
+    autoResolve:
+      true,
+
+    recurrenceTracking:
+      true,
+
+    description:
+      "Tension d'alimentation inferieure au seuil configure.",
+  },
+
+
+  {
+    key:
+      "overspeed",
+
+    label:
+      "Exces de vitesse",
+
+    category:
+      "driving",
+
+    defaultSeverity:
+      "high",
+
+    autoResolve:
+      true,
+
+    recurrenceTracking:
+      true,
+
+    description:
+      "Vitesse superieure au seuil autorise pour la regle.",
+  },
+
+
+  {
+    key:
+      "gps_lost",
+
+    label:
+      "Signal GPS perdu",
+
+    category:
+      "connectivity",
+
+    defaultSeverity:
+      "medium",
+
+    autoResolve:
+      true,
+
+    recurrenceTracking:
+      true,
+
+    description:
+      "Aucune position GPS exploitable pendant la duree configuree.",
+  },
+
+
+  {
+    key:
+      "tracker_offline",
+
+    label:
+      "Tracker hors ligne",
+
+    category:
+      "connectivity",
+
+    defaultSeverity:
+      "high",
+
+    autoResolve:
+      true,
+
+    recurrenceTracking:
+      true,
+
+    description:
+      "Le tracker n'a plus transmis depuis la duree configuree.",
+  },
+
+];
+
+
+export function getAlertRule(
+  alertType: string,
+): AlertRuleDefinition {
+  if (
+    alertType.startsWith(
+      "diagnostic_dtc_",
+    )
+  ) {
+    return (
+      ALERT_RULES.find(
+        (
+          rule,
+        ) =>
+          rule.key ===
+          "diagnostic_dtc_*",
+      ) ??
+      fallbackRule(
+        alertType,
+      )
+    );
+  }
+
+
+  return (
+    ALERT_RULES.find(
+      (
+        rule,
+      ) =>
+        rule.key ===
+        alertType,
+    ) ??
+    fallbackRule(
+      alertType,
+    )
+  );
+}
+
+
+function fallbackRule(
+  alertType: string,
+): AlertRuleDefinition {
+  return {
+    key:
+      alertType,
+
+    label:
+      humanizeAlertType(
+        alertType,
+      ),
+
+    category:
+      "other",
+
+    defaultSeverity:
+      "info",
+
+    autoResolve:
+      false,
+
+    recurrenceTracking:
+      true,
+
+    description:
+      "Evenement telematique Matelematics.",
+  };
+}
+
+
+export function humanizeAlertType(
+  value: string,
+) {
+  return value
+    .replace(
+      /^diagnostic_dtc_/,
+      "DTC ",
+    )
+    .replace(
+      /_/g,
+      " ",
+    )
+    .replace(
+      /\b\w/g,
+      (
+        char,
+      ) =>
+        char.toUpperCase(),
+    );
+}
+
+
+export function normalizeAlertSeverity(
+  value: string | null | undefined,
+): AlertSeverity {
+  const severity =
+    (
+      value ??
+      ""
+    )
+      .trim()
+      .toLowerCase();
+
+
+  if (
+    severity === "critical" ||
+    severity === "critique"
+  ) {
+    return "critical";
+  }
+
+
+  if (
+    severity === "high" ||
+    severity === "major" ||
+    severity === "important" ||
+    severity === "importante" ||
+    severity === "error"
+  ) {
+    return "high";
+  }
+
+
+  if (
+    severity === "medium" ||
+    severity === "moderate" ||
+    severity === "warning"
+  ) {
+    return "medium";
+  }
+
+
+  return "info";
+}
+
+============================================================
+ ALERT REFERENCES
+============================================================
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\server\teltonika\can\alert-engine.ts:8: severity:
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\server\teltonika\can\alert-engine.ts:52: severity:
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\server\teltonika\can\alert-engine.ts:81: "door_open_moving",
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\server\teltonika\can\alert-engine.ts:87: severity:
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\server\teltonika\can\alert-engine.ts:108: "high_coolant_temperature",
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\server\teltonika\can\alert-engine.ts:114: severity:
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\server\teltonika\can\alert-engine.ts:144: severity:
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\server\teltonika\can\alert-engine.ts:184: severity:
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\server\teltonika\storage.ts:12: } from "./can/alert-engine";
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\server\teltonika\storage.ts:539: "id,alert_type",
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\server\teltonika\storage.ts:550: "alert_type",
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\server\teltonika\storage.ts:590: alert_type:
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\server\teltonika\storage.ts:593: severity:
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\server\teltonika\storage.ts:594: candidate.severity,
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\server\teltonika\storage.ts:657: resolved_at:
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\server\teltonika\storage.ts:697: "id,alert_type",
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\server\teltonika\storage.ts:725: typeof alert.alert_type ===
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\server\teltonika\storage.ts:727: alert.alert_type.startsWith(
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\server\teltonika\storage.ts:731: alert.alert_type,
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\server\teltonika\storage.ts:749: resolved_at:
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\server\teltonika\storage.ts:764: `[Teltonika] alert resolved type=${alert.alert_type}`,
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\lib\alerts\alert-rules.ts:12: export type AlertSeverity =
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\lib\alerts\alert-rules.ts:29: defaultSeverity:
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\lib\alerts\alert-rules.ts:30: AlertSeverity;
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\lib\alerts\alert-rules.ts:56: defaultSeverity:
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\lib\alerts\alert-rules.ts:80: defaultSeverity:
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\lib\alerts\alert-rules.ts:96: "door_open_moving",
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\lib\alerts\alert-rules.ts:104: defaultSeverity:
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\lib\alerts\alert-rules.ts:120: "coolant_temperature_high",
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\lib\alerts\alert-rules.ts:128: defaultSeverity:
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\lib\alerts\alert-rules.ts:144: "battery_voltage_low",
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\lib\alerts\alert-rules.ts:152: defaultSeverity:
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\lib\alerts\alert-rules.ts:168: "overspeed",
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\lib\alerts\alert-rules.ts:176: defaultSeverity:
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\lib\alerts\alert-rules.ts:200: defaultSeverity:
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\lib\alerts\alert-rules.ts:224: defaultSeverity:
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\lib\alerts\alert-rules.ts:293: defaultSeverity:
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\lib\alerts\alert-rules.ts:330: export function normalizeAlertSeverity(
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\lib\alerts\alert-rules.ts:332: ): AlertSeverity {
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\lib\alerts\alert-rules.ts:333: const severity =
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\lib\alerts\alert-rules.ts:343: severity === "critical" ||
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\lib\alerts\alert-rules.ts:344: severity === "critique"
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\lib\alerts\alert-rules.ts:351: severity === "high" ||
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\lib\alerts\alert-rules.ts:352: severity === "major" ||
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\lib\alerts\alert-rules.ts:353: severity === "important" ||
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\lib\alerts\alert-rules.ts:354: severity === "importante" ||
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\lib\alerts\alert-rules.ts:355: severity === "error"
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\lib\alerts\alert-rules.ts:362: severity === "medium" ||
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\lib\alerts\alert-rules.ts:363: severity === "moderate" ||
+C:\Users\alibelgamra\OneDrive - Domo28\Bureau\flutter\Matelematics_Continuation_Cameras_Demo\Matelematics_Reconstructed_V1_Teltonika_Engine\lib\alerts\alert-rules.ts:364: severity === "warning"

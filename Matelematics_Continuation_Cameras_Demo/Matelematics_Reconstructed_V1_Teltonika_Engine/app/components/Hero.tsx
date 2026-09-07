@@ -1,0 +1,69 @@
+﻿"use client";
+
+import Image from "next/image";
+import Link from "next/link";
+import { useDemoModal } from "./DemoContext";
+
+export default function Hero() {
+  const { open } = useDemoModal();
+
+  return (
+    <section className="bg-gradient-to-r from-slate-950 to-blue-900 text-white min-h-screen flex items-center">
+      <div className="max-w-7xl mx-auto px-6 py-20 grid md:grid-cols-2 gap-10 items-center relative">
+
+        {/* Partie gauche */}
+        <div>
+          <h1 className="text-5xl md:text-7xl font-bold leading-tight">
+            Solution intelligente
+            <br />
+            <span className="text-blue-400">
+              pour une gestion de flotte
+            </span>
+            <br />
+            nouvelle génération
+          </h1>
+
+          <p className="mt-6 text-gray-300 text-lg">
+            Suivez vos véhicules en temps réel, réduisez les coûts,
+            améliorez la sécurité et pilotez votre flotte depuis une
+            plateforme unique.
+          </p>
+
+          <div className="mt-8 flex gap-4">
+
+            {/* DEMANDER UNE DÉMO */}
+            <button
+              type="button"
+              onClick={open}
+              className="bg-blue-600 px-6 py-3 rounded-xl hover:bg-blue-700 transition"
+            >
+              Demander une démo
+            </button>
+
+            {/* VOIR LE DASHBOARD démonstratif */}
+            <Link
+              href="/demo"
+              className="bg-white text-black px-6 py-3 rounded-xl hover:bg-gray-200 transition inline-flex items-center justify-center"
+            >
+              Voir le dashboard
+            </Link>
+
+          </div>
+        </div>
+
+        {/* Partie droite */}
+        <div className="relative">
+          <Image
+            src="/images/hero-dashboard.png"
+            alt="Dashboard télématique"
+            width={700}
+            height={450}
+            priority
+            className="rounded-2xl shadow-2xl"
+          />
+        </div>
+
+      </div>
+    </section>
+  );
+}

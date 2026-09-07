@@ -1,0 +1,613 @@
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+
+import { registerDevice } from "./registry";
+import type { NormalizedTelemetry } from "./types";
+
+import {
+  normalizeCanV2,
+} from "./can/normalizer";
+
+import {
+  buildAlertCandidates,
+} from "./can/alert-engine";
+
+import type {
+  NormalizedCanV2,
+} from "./can/types-v2";
+
+type DeviceRow = {
+  id: string;
+  company_id: string;
+  vehicle_id: string | null;
+  imei: string;
+  model: string | null;
+  status: string;
+};
+
+function requiredEnv(name: string) {
+  const value = process.env[name];
+
+  if (!value) {
+    throw new Error(
+      `[Teltonika] Missing required environment variable: ${name}`,
+    );
+  }
+
+  return value;
+}
+
+let supabaseClient: SupabaseClient | null =
+  null;
+
+function getSupabase() {
+  if (supabaseClient) {
+    return supabaseClient;
+  }
+
+  const supabaseUrl =
+    requiredEnv("SUPABASE_URL");
+
+  const supabaseSecretKey =
+    requiredEnv("SUPABASE_SECRET_KEY");
+
+  supabaseClient =
+    createClient(
+      supabaseUrl,
+      supabaseSecretKey,
+      {
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false,
+          detectSessionInUrl: false,
+        },
+      },
+    );
+
+  return supabaseClient;
+}
+
+export async function loadDevicesFromSupabase() {
+  const { data, error } = await getSupabase()
+    .from("devices")
+    .select(
+      "id,company_id,vehicle_id,imei,model,status",
+    );
+
+  if (error) {
+    throw new Error(
+      `[Teltonika] Unable to load devices from Supabase: ${error.message}`,
+    );
+  }
+
+  const devices = (data ?? []) as DeviceRow[];
+
+  let registered = 0;
+
+  for (const device of devices) {
+    if (!device.vehicle_id) {
+      console.warn(
+        `[Teltonika] Device ${device.imei} has no vehicle_id; skipped`,
+      );
+
+      continue;
+    }
+
+    registerDevice({
+      imei: device.imei,
+      clientId: device.company_id,
+      vehicleId: device.vehicle_id,
+      label: device.model ?? device.imei,
+    });
+
+    registered += 1;
+  }
+
+  console.log(
+    `[Teltonika] Loaded ${registered} device(s) from Supabase`,
+  );
+
+  return devices;
+}
+
+function readNumericIo(
+  telemetry: NormalizedTelemetry,
+  key: string,
+) {
+  const value = telemetry.io[key];
+
+  return typeof value === "number"
+    ? value
+    : null;
+}
+
+function getIgnition(
+  telemetry: NormalizedTelemetry,
+) {
+  const value =
+    readNumericIo(
+      telemetry,
+      "io_239",
+    );
+
+  if (value === null) {
+    return null;
+  }
+
+  return value === 1;
+}
+
+function getBatteryVoltage(
+  telemetry: NormalizedTelemetry,
+) {
+  const value =
+    readNumericIo(
+      telemetry,
+      "io_66",
+    );
+
+  if (value === null) {
+    return null;
+  }
+
+  return value / 1000;
+}
+
+
+/* ============================================================
+   CAN / IO NORMALIZATION
+   ============================================================ */
+
+function buildCanPayload(
+  telemetry: NormalizedTelemetry,
+) {
+  const rpm =
+    readNumericIo(
+      telemetry,
+      "io_207",
+    );
+
+  const canSpeed =
+    readNumericIo(
+      telemetry,
+      "io_206",
+    );
+
+  const fuelLevel =
+    readNumericIo(
+      telemetry,
+      "io_203",
+    );
+
+  const fuelUsedMl =
+    readNumericIo(
+      telemetry,
+      "io_208",
+    );
+
+  const coolantTemperature =
+    readNumericIo(
+      telemetry,
+      "io_204",
+    );
+
+  const throttlePosition =
+    readNumericIo(
+      telemetry,
+      "io_205",
+    );
+
+  const odometerMetres =
+    readNumericIo(
+      telemetry,
+      "io_209",
+    );
+
+  return {
+    rpm,
+
+    speed_kph:
+      canSpeed,
+
+    fuel_level_percent:
+      fuelLevel,
+
+    fuel_used_litres:
+      fuelUsedMl === null
+        ? null
+        : fuelUsedMl / 1000,
+
+    coolant_temperature_c:
+      coolantTemperature,
+
+    throttle_percent:
+      throttlePosition,
+
+    odometer_km:
+      odometerMetres === null
+        ? null
+        : odometerMetres / 1000,
+
+    simulator: canPayload.source.simulator,
+  };
+}
+
+function buildIoMetadata(
+  telemetry: NormalizedTelemetry,
+) {
+  const movement =
+    readNumericIo(
+      telemetry,
+      "io_240",
+    );
+
+  const internalBatteryMv =
+    readNumericIo(
+      telemetry,
+      "io_67",
+    );
+
+  const odometerMetres =
+    readNumericIo(
+      telemetry,
+      "io_16",
+    );
+
+  return {
+    movement:
+      movement === null
+        ? null
+        : movement === 1,
+
+    external_voltage:
+      getBatteryVoltage(
+        telemetry,
+      ),
+
+    internal_battery_voltage:
+      internalBatteryMv === null
+        ? null
+        : internalBatteryMv / 1000,
+
+    odometer_km:
+      odometerMetres === null
+        ? null
+        : odometerMetres / 1000,
+  };
+}
+
+
+
+async function syncCanAlerts({
+  companyId,
+  vehicleId,
+  deviceId,
+  recordedAt,
+  telemetry,
+  canPayload,
+}: {
+  companyId: string;
+  vehicleId: string;
+  deviceId: string;
+  recordedAt: string;
+  telemetry: NormalizedTelemetry;
+  canPayload: NormalizedCanV2;
+}) {
+  const candidates =
+    buildAlertCandidates(
+      canPayload,
+    );
+
+  for (
+    const candidate of candidates
+  ) {
+    const {
+      data: existing,
+      error: findError,
+    } =
+      await getSupabase()
+        .from("alerts")
+        .select("id")
+        .eq(
+          "company_id",
+          companyId,
+        )
+        .eq(
+          "vehicle_id",
+          vehicleId,
+        )
+        .eq(
+          "alert_type",
+          candidate.alertType,
+        )
+        .eq(
+          "status",
+          "active",
+        )
+        .limit(1)
+        .maybeSingle();
+
+    if (findError) {
+      throw new Error(
+        `[Teltonika] Alert lookup failed: ${findError.message}`,
+      );
+    }
+
+    if (
+      candidate.active &&
+      !existing
+    ) {
+      const {
+        error: insertError,
+      } =
+        await getSupabase()
+          .from("alerts")
+          .insert({
+            company_id:
+              companyId,
+
+            vehicle_id:
+              vehicleId,
+
+            device_id:
+              deviceId,
+
+            alert_type:
+              candidate.alertType,
+
+            severity:
+              candidate.severity,
+
+            title:
+              candidate.title,
+
+            message:
+              candidate.message,
+
+            latitude:
+              telemetry.latitude,
+
+            longitude:
+              telemetry.longitude,
+
+            triggered_at:
+              recordedAt,
+
+            status:
+              "active",
+
+            metadata: {
+              source:
+                "teltonika_can_v2",
+
+              can_profile:
+                canPayload.source.profile,
+
+              ...candidate.metadata,
+            },
+          });
+
+      if (insertError) {
+        throw new Error(
+          `[Teltonika] Alert insert failed: ${insertError.message}`,
+        );
+      }
+
+      console.log(
+        `[Teltonika] alert created type=${candidate.alertType}`,
+      );
+    }
+
+    if (
+      !candidate.active &&
+      existing
+    ) {
+      const {
+        error: resolveError,
+      } =
+        await getSupabase()
+          .from("alerts")
+          .update({
+            status:
+              "resolved",
+
+            resolved_at:
+              recordedAt,
+          })
+          .eq(
+            "id",
+            existing.id,
+          );
+
+      if (resolveError) {
+        throw new Error(
+          `[Teltonika] Alert resolution failed: ${resolveError.message}`,
+        );
+      }
+
+      console.log(
+        `[Teltonika] alert resolved type=${candidate.alertType}`,
+      );
+    }
+  }
+}
+/* ============================================================
+   PERSISTENCE
+   ============================================================ */
+
+export async function persistTelemetry(
+  telemetry: NormalizedTelemetry,
+) {
+  const { data: device, error: deviceError } =
+    await getSupabase()
+      .from("devices")
+      .select(
+        "id,company_id,vehicle_id,imei",
+      )
+      .eq("imei", telemetry.imei)
+      .maybeSingle();
+
+  if (deviceError) {
+    throw new Error(
+      `[Teltonika] Device lookup failed for ${telemetry.imei}: ${deviceError.message}`,
+    );
+  }
+
+  if (!device) {
+    throw new Error(
+      `[Teltonika] Unknown Supabase device IMEI ${telemetry.imei}`,
+    );
+  }
+
+  if (!device.vehicle_id) {
+    throw new Error(
+      `[Teltonika] Device ${telemetry.imei} is not assigned to a vehicle`,
+    );
+  }
+
+  const recordedAt =
+    telemetry.timestamp;
+
+  const positionRow = {
+    company_id: device.company_id,
+    vehicle_id: device.vehicle_id,
+    device_id: device.id,
+
+    latitude: telemetry.latitude,
+    longitude: telemetry.longitude,
+    altitude: telemetry.altitude,
+    speed: telemetry.speedKph,
+    heading: telemetry.angle,
+
+    recorded_at: recordedAt,
+  };
+
+  const { error: positionError } =
+    await getSupabase()
+      .from("positions")
+      .insert(positionRow);
+
+  if (positionError) {
+    throw new Error(
+      `[Teltonika] Position insert failed: ${positionError.message}`,
+    );
+  }
+
+  const codec =
+    telemetry.codec === 142
+      ? "8E"
+      : "8";
+
+  const signalStrength =
+    readNumericIo(
+      telemetry,
+      "io_21",
+    );
+
+  const canPayload = normalizeCanV2(telemetry);
+
+  const ioMetadata =
+    buildIoMetadata(
+      telemetry,
+    );
+
+  const telemetryRow = {
+    company_id: device.company_id,
+    vehicle_id: device.vehicle_id,
+    device_id: device.id,
+
+    recorded_at: recordedAt,
+
+    source: "teltonika",
+    codec,
+
+    raw_payload:
+      JSON.stringify(
+        telemetry.raw,
+      ),
+
+    /*
+     * IMPORTANT:
+     * All original AVL IDs remain available here.
+     */
+    io_values:
+      telemetry.io,
+
+    /*
+     * Normalized CAN representation used by Matelematics.
+     */
+    can_payload:
+      canPayload,
+
+    metadata: {
+      imei: telemetry.imei,
+      received_at: telemetry.receivedAt,
+      priority: telemetry.priority,
+      event_id: telemetry.eventId,
+      satellites: telemetry.satellites,
+
+      io_normalized:
+        ioMetadata,
+
+      simulator: canPayload.source.simulator,
+    },
+
+    signal_strength:
+      signalStrength,
+
+    battery_voltage:
+      getBatteryVoltage(
+        telemetry,
+      ),
+
+    ignition:
+      getIgnition(
+        telemetry,
+      ),
+  };
+
+  const { error: telemetryError } =
+    await getSupabase()
+      .from("telemetry")
+      .insert(telemetryRow);
+
+  if (telemetryError) {
+    throw new Error(
+      `[Teltonika] Telemetry insert failed: ${telemetryError.message}`,
+    );
+  }
+
+  await syncCanAlerts({
+    companyId: device.company_id,
+    vehicleId: device.vehicle_id,
+    deviceId: device.id,
+    recordedAt,
+    telemetry,
+    canPayload,
+  });
+
+  const now =
+    new Date().toISOString();
+
+  const { error: deviceUpdateError } =
+    await getSupabase()
+      .from("devices")
+      .update({
+        status: "online",
+        last_seen_at: now,
+        updated_at: now,
+      })
+      .eq("id", device.id);
+
+  if (deviceUpdateError) {
+    throw new Error(
+      `[Teltonika] Device status update failed: ${deviceUpdateError.message}`,
+    );
+  }
+
+  return {
+    deviceId: device.id,
+    companyId: device.company_id,
+    vehicleId: device.vehicle_id,
+    recordedAt,
+  };
+}

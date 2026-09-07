@@ -1,0 +1,2 @@
+Matelematics_Continuation_Cameras_Demo/Matelematics_Reconstructed_V1_Teltonika_Engine/public/demo/cameras/*/live.mp4 filter=lfs diff=lfs merge=lfs -text
+Matelematics_Continuation_Cameras_Demo/Matelematics_Reconstructed_V1_Teltonika_Engine/public/demo-camera/*.mp4 filter=lfs diff=lfs merge=lfs -text

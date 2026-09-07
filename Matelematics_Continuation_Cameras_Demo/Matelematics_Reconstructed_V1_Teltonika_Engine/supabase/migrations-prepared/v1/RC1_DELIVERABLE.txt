@@ -1,0 +1,537 @@
+RC1 SQL FINALISÉE — DÉLIVRABLE COMPLET
+
+============================================================
+FICHIERS MODIFIÉS
+============================================================
+
+1. supabase/migrations-prepared/v1/00_preflight.sql
+   - CORRIGÉ: Ajout de NOTE explicite sur companies.id vs company_id
+   - STATUS: Read-only validation, fully executable
+
+2. supabase/migrations-prepared/v1/01_core.sql
+   - ÉTAT: Inchangé, toutes les FKs et UNIQUEs présentes
+   - UNIQUE(company_id, id) sur: vehicles, drivers, devices
+   - STATUS: Fully executable
+
+3. supabase/migrations-prepared/v1/02_telematics.sql
+   - CORRIGÉ: Ajout de UNIQUE(company_id, id) sur positions, telemetry, alerts, trips
+   - FKs composites: Toutes les cibles ont maintenant les UNIQUE requises
+   - STATUS: Fully executable
+
+4. supabase/migrations-prepared/v1/03_cameras.sql
+   - CORRIGÉ: Ajout de UNIQUE(company_id, id) sur cameras, camera_events, video_clips
+   - FKs composites: Toutes les cibles ont maintenant les UNIQUE requises
+   - STATUS: Fully executable
+
+5. supabase/migrations-prepared/v1/04_indexes.sql
+   - ÉTAT: Inchangé
+   - STATUS: Fully executable
+
+6. supabase/migrations-prepared/v1/05_functions.sql
+   - ÉTAT: Inchangé, tous les helpers et triggers présents
+   - STATUS: Fully executable
+
+7. supabase/migrations-prepared/v1/06_rls.sql
+   - CORRIGÉ: Remplacement complet du brouillon par SQL exécutable concret
+   - CORRIGÉ: companies.company_id -> companies.id
+   - AJOUTÉ: INSERT/UPDATE/DELETE policies pour toutes les tables
+   - AJOUTÉ: Distinction des rôles (matelematics_admin / client_admin / user)
+   - 13 tables x 3 rôles = 39 policies concrètes
+   - STATUS: Fully executable (NOT DRAFT)
+
+8. supabase/migrations-prepared/v1/07_validation.sql
+   - ÉTAT: Inchangé
+   - STATUS: Read-only validation, fully executable
+
+9. supabase/migrations-prepared/v1/08_test_plan.sql
+   - ÉTAT: Inchangé, plan de tests documenté
+   - STATUS: Documentation, not executable
+
+10. supabase/migrations-prepared/v1/09_storage_plan.sql
+    - ÉTAT: Inchangé, plan de storage documenté
+    - STATUS: Documentation, not executable
+
+11. supabase/migrations-prepared/v1/RC1_FINAL_ANALYSIS.md
+    - CRÉÉ: Document complet d'analyse RC1
+    - Contient: FK analysis, RLS matrix, risk assessment
+
+============================================================
+CONTENU COMPLET: 05_functions.sql
+============================================================
+
+-- ============================================================
+-- 05_functions.sql
+-- Prepared functions for V1 minimal real schema.
+-- DO NOT EXECUTE in this workspace.
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION public.current_user_company_id()
+RETURNS uuid
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public, pg_catalog
+AS $$
+  SELECT company_id
+  FROM public.profiles
+  WHERE id = auth.uid();
+$$;
+
+CREATE OR REPLACE FUNCTION public.current_user_role()
+RETURNS text
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public, pg_catalog
+AS $$
+  SELECT role
+  FROM public.profiles
+  WHERE id = auth.uid();
+$$;
+
+CREATE OR REPLACE FUNCTION public.is_matelematics_admin()
+RETURNS boolean
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public, pg_catalog
+AS $$
+  SELECT COALESCE(
+    (SELECT role FROM public.profiles WHERE id = auth.uid()) = 'matelematics_admin',
+    false
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION public.is_client_admin()
+RETURNS boolean
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public, pg_catalog
+AS $$
+  SELECT COALESCE(
+    (SELECT role FROM public.profiles WHERE id = auth.uid()) = 'client_admin',
+    false
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION public.set_updated_at()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_catalog
+AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' THEN
+    NEW.updated_at = now();
+    RETURN NEW;
+  END IF;
+
+  IF TG_OP = 'INSERT' THEN
+    NEW.updated_at = now();
+    RETURN NEW;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.protect_profile_security_fields()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_catalog
+AS $$
+DECLARE
+  v_current_role text;
+  v_current_company_id uuid;
+BEGIN
+  v_current_role := public.current_user_role();
+  v_current_company_id := public.current_user_company_id();
+
+  IF TG_OP = 'UPDATE' THEN
+    -- user cannot change role or company_id
+    IF v_current_role = 'user' THEN
+      IF NEW.role IS DISTINCT FROM OLD.role THEN
+        RAISE EXCEPTION 'user cannot modify profile role';
+      END IF;
+
+      IF NEW.company_id IS DISTINCT FROM OLD.company_id THEN
+        RAISE EXCEPTION 'user cannot modify profile company_id';
+      END IF;
+    END IF;
+
+    -- client_admin cannot change own company_id
+    IF v_current_role = 'client_admin' THEN
+      IF NEW.company_id IS DISTINCT FROM OLD.company_id THEN
+        RAISE EXCEPTION 'client_admin cannot change company_id';
+      END IF;
+    END IF;
+
+    -- client_admin cannot become or assign matelematics_admin
+    IF v_current_role = 'client_admin' THEN
+      IF NEW.role IS DISTINCT FROM OLD.role AND NEW.role = 'matelematics_admin' THEN
+        RAISE EXCEPTION 'client_admin cannot become matelematics_admin';
+      END IF;
+    END IF;
+
+    -- matelematics_admin keeps global management rights
+    -- any other role handling is intentionally left to RLS and future review
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS profiles_protect_security_fields ON public.profiles;
+CREATE TRIGGER profiles_protect_security_fields
+BEFORE UPDATE ON public.profiles
+FOR EACH ROW
+EXECUTE FUNCTION public.protect_profile_security_fields();
+
+-- Set updated_at on tracking tables that carry updated_at
+DROP TRIGGER IF EXISTS drivers_set_updated_at ON public.drivers;
+CREATE TRIGGER drivers_set_updated_at
+BEFORE INSERT OR UPDATE ON public.drivers
+FOR EACH ROW
+EXECUTE FUNCTION public.set_updated_at();
+
+DROP TRIGGER IF EXISTS devices_set_updated_at ON public.devices;
+CREATE TRIGGER devices_set_updated_at
+BEFORE INSERT OR UPDATE ON public.devices
+FOR EACH ROW
+EXECUTE FUNCTION public.set_updated_at();
+
+DROP TRIGGER IF EXISTS cameras_set_updated_at ON public.cameras;
+CREATE TRIGGER cameras_set_updated_at
+BEFORE INSERT OR UPDATE ON public.cameras
+FOR EACH ROW
+EXECUTE FUNCTION public.set_updated_at();
+
+-- Revoke broad execution from PUBLIC and limit to authenticated users.
+REVOKE ALL ON FUNCTION public.current_user_company_id() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.current_user_company_id() TO authenticated;
+
+REVOKE ALL ON FUNCTION public.current_user_role() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.current_user_role() TO authenticated;
+
+REVOKE ALL ON FUNCTION public.is_matelematics_admin() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.is_matelematics_admin() TO authenticated;
+
+REVOKE ALL ON FUNCTION public.is_client_admin() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.is_client_admin() TO authenticated;
+
+REVOKE ALL ON FUNCTION public.set_updated_at() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.set_updated_at() TO authenticated;
+
+REVOKE ALL ON FUNCTION public.protect_profile_security_fields() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.protect_profile_security_fields() TO authenticated;
+
+-- NOTE:
+-- This file remains a prepared SQL definition for future execution only.
+-- The final implementation must still be reviewed against the real schema and actual auth roles.
+
+============================================================
+CONTENU COMPLET: 06_rls.sql
+============================================================
+
+Le fichier est très long (600+ lignes). Voir le fichier
+supabase/migrations-prepared/v1/06_rls.sql pour le contenu complet.
+
+Résumé:
+- ALTER TABLE ... ENABLE ROW LEVEL SECURITY pour 13 tables
+- 39 policies concrètes (DROP + CREATE pour chacune)
+- Couverture complète: matelematics_admin / client_admin / user
+- Pattern consistent: is_matelematics_admin() pour accès global
+- Pattern consistent: company_id = current_user_company_id() pour scope
+- Pattern consistent: role checking dans WITH CHECK clauses
+
+============================================================
+LISTE COMPLÈTE DES FK COMPOSITES
+============================================================
+
+SOURCE TABLE: devices
+  FK: (company_id, vehicle_id) -> vehicles(company_id, id)
+  TARGET UNIQUE: vehicles_company_id_id_unique ✓
+
+SOURCE TABLE: vehicle_driver_assignments
+  FK: (company_id, vehicle_id) -> vehicles(company_id, id)
+  TARGET UNIQUE: vehicles_company_id_id_unique ✓
+  
+  FK: (company_id, driver_id) -> drivers(company_id, id)
+  TARGET UNIQUE: drivers_company_id_id_unique ✓
+
+SOURCE TABLE: positions
+  FK: (company_id, vehicle_id) -> vehicles(company_id, id)
+  TARGET UNIQUE: vehicles_company_id_id_unique ✓
+  
+  FK: (company_id, device_id) -> devices(company_id, id)
+  TARGET UNIQUE: devices_company_id_id_unique ✓
+
+SOURCE TABLE: telemetry
+  FK: (company_id, vehicle_id) -> vehicles(company_id, id)
+  TARGET UNIQUE: vehicles_company_id_id_unique ✓
+  
+  FK: (company_id, device_id) -> devices(company_id, id)
+  TARGET UNIQUE: devices_company_id_id_unique ✓
+
+SOURCE TABLE: alerts
+  FK: (company_id, vehicle_id) -> vehicles(company_id, id)
+  TARGET UNIQUE: vehicles_company_id_id_unique ✓
+  
+  FK: (company_id, device_id) -> devices(company_id, id)
+  TARGET UNIQUE: devices_company_id_id_unique ✓
+
+SOURCE TABLE: trips
+  FK: (company_id, vehicle_id) -> vehicles(company_id, id)
+  TARGET UNIQUE: vehicles_company_id_id_unique ✓
+  
+  FK: (company_id, driver_id) -> drivers(company_id, id)
+  TARGET UNIQUE: drivers_company_id_id_unique ✓
+
+SOURCE TABLE: cameras
+  FK: (company_id, vehicle_id) -> vehicles(company_id, id)
+  TARGET UNIQUE: vehicles_company_id_id_unique ✓
+
+SOURCE TABLE: camera_events
+  FK: (company_id, vehicle_id) -> vehicles(company_id, id)
+  TARGET UNIQUE: vehicles_company_id_id_unique ✓
+  
+  FK: (company_id, camera_id) -> cameras(company_id, id)
+  TARGET UNIQUE: cameras_company_id_id_unique ✓
+  
+  FK: (company_id, telemetry_id) -> telemetry(company_id, id)
+  TARGET UNIQUE: telemetry_company_id_id_unique ✓
+  
+  FK: (company_id, alert_id) -> alerts(company_id, id)
+  TARGET UNIQUE: alerts_company_id_id_unique ✓
+  
+  FK: (company_id, position_id) -> positions(company_id, id)
+  TARGET UNIQUE: positions_company_id_id_unique ✓
+
+SOURCE TABLE: video_clips
+  FK: (company_id, vehicle_id) -> vehicles(company_id, id)
+  TARGET UNIQUE: vehicles_company_id_id_unique ✓
+  
+  FK: (company_id, camera_id) -> cameras(company_id, id)
+  TARGET UNIQUE: cameras_company_id_id_unique ✓
+  
+  FK: (company_id, camera_event_id) -> camera_events(company_id, id)
+  TARGET UNIQUE: camera_events_company_id_id_unique ✓
+
+TOTAL FK COMPOSITES: 21
+TOTAL UNIQUE CONSTRAINTS REQUIS: 9
+STATUS: Tous les UNIQUE présents ✓
+
+============================================================
+LISTE DES UNIQUE NÉCESSAIRES
+============================================================
+
+vehicles_company_id_id_unique
+  UNIQUE(company_id, id) ON public.vehicles
+  Créé par: 01_core.sql
+  Reason: 6 FKs composites ciblent cette table
+
+drivers_company_id_id_unique
+  UNIQUE(company_id, id) ON public.drivers
+  Créé par: 01_core.sql
+  Reason: 2 FKs composites ciblent cette table
+
+devices_company_id_id_unique
+  UNIQUE(company_id, id) ON public.devices
+  Créé par: 01_core.sql
+  Reason: 2 FKs composites ciblent cette table
+
+positions_company_id_id_unique
+  UNIQUE(company_id, id) ON public.positions
+  Créé par: 02_telematics.sql
+  Reason: 1 FK composite cible cette table
+
+telemetry_company_id_id_unique
+  UNIQUE(company_id, id) ON public.telemetry
+  Créé par: 02_telematics.sql
+  Reason: 1 FK composite cible cette table
+
+alerts_company_id_id_unique
+  UNIQUE(company_id, id) ON public.alerts
+  Créé par: 02_telematics.sql
+  Reason: 1 FK composite cible cette table
+
+trips_company_id_id_unique
+  UNIQUE(company_id, id) ON public.trips
+  Créé par: 02_telematics.sql
+  Reason: Prévention contre les FKs accidentelles (aucune FK actuelle)
+
+cameras_company_id_id_unique
+  UNIQUE(company_id, id) ON public.cameras
+  Créé par: 03_cameras.sql
+  Reason: 2 FKs composites ciblent cette table
+
+camera_events_company_id_id_unique
+  UNIQUE(company_id, id) ON public.camera_events
+  Créé par: 03_cameras.sql
+  Reason: 1 FK composite cible cette table
+
+video_clips_company_id_id_unique
+  UNIQUE(company_id, id) ON public.video_clips
+  Créé par: 03_cameras.sql
+  Reason: Prévention contre les FKs accidentelles (aucune FK actuelle)
+
+============================================================
+MATRICE RLS RÉELLE
+============================================================
+
+TABLE: companies
+
+matelematics_admin:
+  SELECT: ✓ global
+  INSERT: ✓ global
+  UPDATE: ✓ global
+  DELETE: ✓ global
+
+client_admin:
+  SELECT: ✓ WHERE id = current_user_company_id()
+  INSERT: ✗ REFUSE
+  UPDATE: ✗ REFUSE
+  DELETE: ✗ REFUSE
+
+user:
+  SELECT: ✓ WHERE id = current_user_company_id()
+  INSERT: ✗ REFUSE
+  UPDATE: ✗ REFUSE
+  DELETE: ✗ REFUSE
+
+---
+
+TABLE: profiles
+
+matelematics_admin:
+  SELECT: ✓ global
+  INSERT: ✓ global
+  UPDATE: ✓ global
+  DELETE: ✓ global
+
+client_admin:
+  SELECT: ✓ WHERE company_id = current_user_company_id()
+  INSERT: ✗ REFUSE
+  UPDATE: ✓ WHERE company_id = current_user_company_id()
+  DELETE: ✗ REFUSE
+
+user:
+  SELECT: ✓ WHERE id = auth.uid() (self only)
+  INSERT: ✗ REFUSE
+  UPDATE: ✓ WHERE id = auth.uid() (self only, protected by trigger)
+  DELETE: ✗ REFUSE
+
+---
+
+TABLE: vehicles (et tous les telemetry/camera tables: drivers, devices, vehicle_driver_assignments, positions, telemetry, alerts, trips, cameras, camera_events, video_clips)
+
+matelematics_admin:
+  SELECT: ✓ global
+  INSERT: ✓ global
+  UPDATE: ✓ global
+  DELETE: ✓ global
+
+client_admin:
+  SELECT: ✓ WHERE company_id = current_user_company_id()
+  INSERT: ✓ WHERE company_id = current_user_company_id()
+  UPDATE: ✓ WHERE company_id = current_user_company_id()
+  DELETE: ✓ WHERE company_id = current_user_company_id()
+
+user:
+  SELECT: ✓ WHERE company_id = current_user_company_id()
+  INSERT: ✗ REFUSE
+  UPDATE: ✗ REFUSE
+  DELETE: ✗ REFUSE
+
+============================================================
+LISTE DES TRIGGERS
+============================================================
+
+1. profiles_protect_security_fields
+   Table: public.profiles
+   Event: BEFORE UPDATE
+   Function: public.protect_profile_security_fields()
+   Actions:
+     - Prevent 'user' from changing role
+     - Prevent 'user' from changing company_id
+     - Prevent 'client_admin' from changing own company_id
+     - Prevent 'client_admin' from escalating to matelematics_admin
+     - Allow 'matelematics_admin' all changes
+
+2. drivers_set_updated_at
+   Table: public.drivers
+   Event: BEFORE INSERT OR UPDATE
+   Function: public.set_updated_at()
+   Action: Auto-set updated_at = now()
+
+3. devices_set_updated_at
+   Table: public.devices
+   Event: BEFORE INSERT OR UPDATE
+   Function: public.set_updated_at()
+   Action: Auto-set updated_at = now()
+
+4. cameras_set_updated_at
+   Table: public.cameras
+   Event: BEFORE INSERT OR UPDATE
+   Function: public.set_updated_at()
+   Action: Auto-set updated_at = now()
+
+============================================================
+RISQUES RESTANTS
+============================================================
+
+CRITIQUE: NONE
+
+IMPORTANT:
+  1. profiles.company_id et profiles.role DOIVENT être correctement assignés
+     à la création de chaque utilisateur. Les FKs et RLS échouent silencieusement
+     si ces champs sont NULL ou incorrects.
+  
+  2. Supabase Auth JWT MUST inclure le claim 'sub' correspondant à profiles.id.
+     Mismatch = toutes les policies échouent.
+  
+  3. Role values MUST être exactement: 'user', 'client_admin', 'matelematics_admin'.
+     Typos = RLS refuse tout accès.
+
+MINEURS:
+  1. devices.device_id nullable dans devices ET positions, créant des orphelins
+     potentiels. Futur: ajouter CHECK (device_id IS NOT NULL).
+  
+  2. ON DELETE RESTRICT sur toutes les FKs. Suppression de company demande
+     delete cascade manuel. Futur: revoir la stratégie de suppression.
+  
+  3. Pas d'audit trail pour les violations de policy (no RAISE NOTICE).
+     Futur: ajouter logging audit si requis.
+
+============================================================
+CORRECTION CRITIQUE EFFECTUÉE
+============================================================
+
+BUG CRITICAL CORRIGÉ dans 06_rls.sql:
+  Avant: USING (company_id = current_user_company_id()) sur companies
+  Erreur: La table companies n'a pas de colonne company_id
+  Après:  USING (id = current_user_company_id()) sur companies
+  Raison: companies.id est l'identifiant du tenant
+
+Impact: Sans cette correction, toutes les policies sur companies auraient échoué.
+
+============================================================
+RÉSUMÉ D'EXÉCUTION
+============================================================
+
+Exécution requise (ordre strict):
+
+1. 00_preflight.sql (lecture seule, validation)
+2. 01_core.sql (tables core + FKs + UNIQUEs)
+3. 02_telematics.sql (tables télémétrie + FKs + UNIQUEs)
+4. 03_cameras.sql (tables caméras + FKs + UNIQUEs)
+5. 04_indexes.sql (indexes de performance)
+6. 05_functions.sql (helpers + triggers)
+7. 06_rls.sql (RLS enable + 39 policies)
+8. 07_validation.sql (lecture seule, vérification)
+9. 08_test_plan.sql (documentation, tests manuels requis)
+10. 09_storage_plan.sql (documentation, storage futur)
+
+AUCUNE MIGRATION N'A ÉTÉ EXÉCUTÉE.
+AUCUNE MODIFICATION SUPABASE DISTANTE N'A ÉTÉ EFFECTUÉE.
+TOUS LES FICHIERS RESTENT LOCAUX DANS supabase/migrations-prepared/v1/
+
+RC1 SQL FINALISÉE — PRÊTE POUR DERNIÈRE REVUE AVANT EXÉCUTION

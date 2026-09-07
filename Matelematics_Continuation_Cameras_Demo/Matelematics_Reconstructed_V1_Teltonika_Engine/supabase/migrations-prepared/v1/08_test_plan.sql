@@ -1,0 +1,720 @@
+-- ============================================================
+-- MATELEMATICS V1
+-- 08_test_plan.sql
+-- Authorization / multi-tenant test plan
+--
+-- DOCUMENTATION / TEST PLAN
+-- DO NOT EXECUTE AS A MIGRATION
+-- ============================================================
+
+
+-- ============================================================
+-- PURPOSE
+-- ============================================================
+--
+-- This file defines the authorization tests that must be run
+-- after the V1 schema + RLS migration is applied.
+--
+-- IMPORTANT:
+--
+-- Do NOT simulate Supabase auth.uid() with:
+--
+--   SET LOCAL app.current_user_id = '...';
+--
+-- auth.uid() is based on the authenticated JWT/session.
+--
+-- Recommended strategy:
+--
+-- 1. Create real Supabase Auth test users.
+-- 2. Create corresponding rows in public.profiles.
+-- 3. Authenticate through Supabase using each account.
+-- 4. Run queries through the application/client using the
+--    authenticated session.
+--
+-- This produces a real test of RLS.
+--
+-- ============================================================
+
+
+-- ============================================================
+-- 1. REQUIRED TEST IDENTITIES
+-- ============================================================
+--
+-- COMPANY A
+--
+-- User:
+--   test-user-a@example.invalid
+--
+-- profile:
+--   role = 'user'
+--   company_id = COMPANY_A_ID
+--
+--
+-- Client admin:
+--   test-admin-a@example.invalid
+--
+-- profile:
+--   role = 'client_admin'
+--   company_id = COMPANY_A_ID
+--
+--
+-- COMPANY B
+--
+-- User:
+--   test-user-b@example.invalid
+--
+-- profile:
+--   role = 'user'
+--   company_id = COMPANY_B_ID
+--
+--
+-- Global Matelematics administrator:
+--
+--   test-matelematics-admin@example.invalid
+--
+-- profile:
+--   role = 'matelematics_admin'
+--   company_id may be NULL or an administrative company
+--   according to the final admin model.
+--
+-- ============================================================
+
+
+-- ============================================================
+-- 2. TEST DATA REQUIRED
+-- ============================================================
+--
+-- Company A
+--   vehicle A
+--   driver A
+--   device A
+--   position A
+--   telemetry A
+--   alert A
+--   trip A
+--   camera A
+--   camera_event A
+--   video_clip A
+--
+-- Company B
+--   vehicle B
+--   driver B
+--   device B
+--   position B
+--   telemetry B
+--   alert B
+--   trip B
+--   camera B
+--   camera_event B
+--   video_clip B
+--
+-- ============================================================
+
+
+-- ============================================================
+-- 3. USER A — EXPECTED READ ACCESS
+-- ============================================================
+--
+-- Authenticated as USER A:
+--
+-- SHOULD SUCCEED:
+--
+-- SELECT own company
+-- SELECT vehicle A
+-- SELECT driver A
+-- SELECT device A
+-- SELECT positions A
+-- SELECT telemetry A
+-- SELECT alerts A
+-- SELECT trips A
+-- SELECT cameras A
+-- SELECT camera_events A
+-- SELECT video_clips A
+-- SELECT own profile
+--
+--
+-- SHOULD NOT RETURN COMPANY B DATA:
+--
+-- SELECT company B
+-- SELECT vehicle B
+-- SELECT driver B
+-- SELECT device B
+-- SELECT position B
+-- SELECT telemetry B
+-- SELECT alert B
+-- SELECT trip B
+-- SELECT camera B
+-- SELECT camera_event B
+-- SELECT video_clip B
+--
+-- Expected behavior:
+-- rows are invisible through RLS.
+--
+-- ============================================================
+
+
+-- ============================================================
+-- 4. USER A — EXPECTED WRITE DENIAL
+-- ============================================================
+--
+-- Authenticated as USER A:
+--
+-- MUST FAIL:
+--
+-- INSERT vehicle A
+-- UPDATE vehicle A
+-- DELETE vehicle A
+--
+-- INSERT driver A
+-- UPDATE driver A
+-- DELETE driver A
+--
+-- INSERT device A
+-- UPDATE device A
+-- DELETE device A
+--
+-- INSERT assignment
+-- UPDATE assignment
+-- DELETE assignment
+--
+-- INSERT camera A
+-- UPDATE camera A
+-- DELETE camera A
+--
+-- INSERT position
+-- INSERT telemetry
+-- INSERT alert
+-- INSERT trip
+-- INSERT camera_event
+-- INSERT video_clip
+--
+-- ============================================================
+
+
+-- ============================================================
+-- 5. USER PROFILE SECURITY
+-- ============================================================
+--
+-- Authenticated as USER A:
+--
+-- SHOULD SUCCEED:
+--
+-- UPDATE public.profiles
+-- SET full_name = 'Updated user name'
+-- WHERE id = auth.uid();
+--
+--
+-- MUST FAIL:
+--
+-- UPDATE public.profiles
+-- SET role = 'client_admin'
+-- WHERE id = auth.uid();
+--
+--
+-- MUST FAIL:
+--
+-- UPDATE public.profiles
+-- SET role = 'matelematics_admin'
+-- WHERE id = auth.uid();
+--
+--
+-- MUST FAIL:
+--
+-- UPDATE public.profiles
+-- SET company_id = COMPANY_B_ID
+-- WHERE id = auth.uid();
+--
+-- ============================================================
+
+
+-- ============================================================
+-- 6. CLIENT ADMIN A — EXPECTED READ ACCESS
+-- ============================================================
+--
+-- Authenticated as CLIENT_ADMIN A:
+--
+-- SHOULD SUCCEED:
+--
+-- SELECT company A
+-- SELECT profiles company A according to policy
+-- SELECT vehicles A
+-- SELECT drivers A
+-- SELECT devices A
+-- SELECT assignments A
+-- SELECT positions A
+-- SELECT telemetry A
+-- SELECT alerts A
+-- SELECT trips A
+-- SELECT cameras A
+-- SELECT camera_events A
+-- SELECT video_clips A
+--
+--
+-- MUST NOT SEE:
+--
+-- company B resources
+--
+-- ============================================================
+
+
+-- ============================================================
+-- 7. CLIENT ADMIN A — EXPECTED MANAGEMENT ACCESS
+-- ============================================================
+--
+-- SHOULD SUCCEED:
+--
+-- INSERT vehicle A
+-- UPDATE vehicle A
+-- DELETE vehicle A
+--
+-- INSERT driver A
+-- UPDATE driver A
+-- DELETE driver A
+--
+-- INSERT device A
+-- UPDATE device A
+-- DELETE device A
+--
+-- INSERT assignment A
+-- UPDATE assignment A
+-- DELETE assignment A
+--
+-- INSERT camera A
+-- UPDATE camera A
+-- DELETE camera A
+--
+--
+-- NOTE:
+--
+-- positions / telemetry / trips / camera_events / video_clips
+-- are intended to be generated by the trusted backend.
+--
+-- Client admin should not need direct ingestion writes.
+--
+-- ============================================================
+
+
+-- ============================================================
+-- 8. CLIENT ADMIN A — CROSS-TENANT DENIAL
+-- ============================================================
+--
+-- MUST FAIL:
+--
+-- INSERT vehicle with company_id = COMPANY_B_ID
+--
+-- UPDATE vehicle B
+--
+-- DELETE vehicle B
+--
+-- INSERT driver B
+--
+-- INSERT device A referencing vehicle B
+--
+-- INSERT assignment A referencing driver B
+--
+-- INSERT assignment A referencing vehicle B
+--
+-- INSERT camera A referencing vehicle B
+--
+-- Expected protection:
+--
+-- RLS and/or composite foreign keys.
+--
+-- ============================================================
+
+
+-- ============================================================
+-- 9. CLIENT ADMIN PROFILE SECURITY
+-- ============================================================
+--
+-- Authenticated as CLIENT_ADMIN A:
+--
+-- MUST FAIL:
+--
+-- change own company_id
+--
+-- change own role to matelematics_admin
+--
+-- change another company-A profile role to matelematics_admin
+--
+-- move another company-A profile to company B
+--
+--
+-- SHOULD SUCCEED:
+--
+-- permitted non-sensitive profile updates inside company A,
+-- according to the final profiles policy.
+--
+-- ============================================================
+
+
+-- ============================================================
+-- 10. MATELEMATICS ADMIN
+-- ============================================================
+--
+-- Authenticated as MATELEMATICS_ADMIN:
+--
+-- SHOULD SUCCEED:
+--
+-- SELECT company A
+-- SELECT company B
+--
+-- SELECT vehicles from all companies
+--
+-- INSERT/UPDATE/DELETE company
+--
+-- manage profiles globally
+--
+-- manage vehicles globally
+--
+-- manage drivers globally
+--
+-- manage devices globally
+--
+-- manage assignments globally
+--
+-- manage cameras globally
+--
+-- read telemetry/positions/alerts/trips/camera events globally
+--
+-- ============================================================
+
+
+-- ============================================================
+-- 11. MULTI-TENANT DATABASE CONSTRAINT TESTS
+-- ============================================================
+--
+-- These must fail even if application code has a bug.
+--
+--
+-- ------------------------------------------------------------
+-- DEVICE A -> VEHICLE B
+-- ------------------------------------------------------------
+--
+-- INSERT INTO public.devices (
+--   company_id,
+--   vehicle_id,
+--   imei
+-- )
+-- VALUES (
+--   COMPANY_A_ID,
+--   VEHICLE_B_ID,
+--   'TEST-CROSS-COMPANY-IMEI'
+-- );
+--
+-- EXPECTED:
+-- foreign key violation.
+--
+--
+-- ------------------------------------------------------------
+-- ASSIGNMENT A -> VEHICLE B
+-- ------------------------------------------------------------
+--
+-- INSERT INTO public.vehicle_driver_assignments (
+--   company_id,
+--   vehicle_id,
+--   driver_id
+-- )
+-- VALUES (
+--   COMPANY_A_ID,
+--   VEHICLE_B_ID,
+--   DRIVER_A_ID
+-- );
+--
+-- EXPECTED:
+-- foreign key violation.
+--
+--
+-- ------------------------------------------------------------
+-- ASSIGNMENT A -> DRIVER B
+-- ------------------------------------------------------------
+--
+-- INSERT INTO public.vehicle_driver_assignments (
+--   company_id,
+--   vehicle_id,
+--   driver_id
+-- )
+-- VALUES (
+--   COMPANY_A_ID,
+--   VEHICLE_A_ID,
+--   DRIVER_B_ID
+-- );
+--
+-- EXPECTED:
+-- foreign key violation.
+--
+--
+-- ------------------------------------------------------------
+-- TELEMETRY A -> VEHICLE B
+-- ------------------------------------------------------------
+--
+-- INSERT INTO public.telemetry (
+--   company_id,
+--   vehicle_id,
+--   device_id,
+--   recorded_at
+-- )
+-- VALUES (
+--   COMPANY_A_ID,
+--   VEHICLE_B_ID,
+--   DEVICE_A_ID,
+--   now()
+-- );
+--
+-- EXPECTED:
+-- foreign key violation.
+--
+--
+-- ------------------------------------------------------------
+-- TELEMETRY A -> DEVICE B
+-- ------------------------------------------------------------
+--
+-- INSERT INTO public.telemetry (
+--   company_id,
+--   vehicle_id,
+--   device_id,
+--   recorded_at
+-- )
+-- VALUES (
+--   COMPANY_A_ID,
+--   VEHICLE_A_ID,
+--   DEVICE_B_ID,
+--   now()
+-- );
+--
+-- EXPECTED:
+-- foreign key violation.
+--
+--
+-- ------------------------------------------------------------
+-- CAMERA EVENT A -> TELEMETRY B
+-- ------------------------------------------------------------
+--
+-- INSERT INTO public.camera_events (
+--   company_id,
+--   vehicle_id,
+--   camera_id,
+--   telemetry_id,
+--   event_type,
+--   event_time
+-- )
+-- VALUES (
+--   COMPANY_A_ID,
+--   VEHICLE_A_ID,
+--   CAMERA_A_ID,
+--   TELEMETRY_B_ID,
+--   'test',
+--   now()
+-- );
+--
+-- EXPECTED:
+-- foreign key violation.
+--
+--
+-- ------------------------------------------------------------
+-- CAMERA EVENT A -> ALERT B
+-- ------------------------------------------------------------
+--
+-- Same pattern.
+-- EXPECTED:
+-- foreign key violation.
+--
+--
+-- ------------------------------------------------------------
+-- CAMERA EVENT A -> POSITION B
+-- ------------------------------------------------------------
+--
+-- Same pattern.
+-- EXPECTED:
+-- foreign key violation.
+--
+--
+-- ------------------------------------------------------------
+-- VIDEO CLIP A -> CAMERA EVENT B
+-- ------------------------------------------------------------
+--
+-- INSERT INTO public.video_clips (
+--   company_id,
+--   vehicle_id,
+--   camera_id,
+--   camera_event_id,
+--   storage_path
+-- )
+-- VALUES (
+--   COMPANY_A_ID,
+--   VEHICLE_A_ID,
+--   CAMERA_A_ID,
+--   CAMERA_EVENT_B_ID,
+--   'test/test.mp4'
+-- );
+--
+-- EXPECTED:
+-- foreign key violation.
+--
+-- ============================================================
+
+
+-- ============================================================
+-- 12. ACTIVE DRIVER ASSIGNMENT TEST
+-- ============================================================
+--
+-- Create active assignment:
+--
+-- vehicle A -> driver A
+--
+-- Then try another active assignment:
+--
+-- vehicle A -> driver B
+--
+-- MUST FAIL.
+--
+--
+-- Then try:
+--
+-- vehicle B -> driver A
+--
+-- MUST FAIL.
+--
+--
+-- After ending the first assignment:
+--
+-- status = 'ended'
+-- unassigned_at = now()
+--
+-- a new active assignment may be created.
+--
+-- ============================================================
+
+
+-- ============================================================
+-- 13. TELTONIKA INGESTION TEST
+-- ============================================================
+--
+-- Future trusted backend flow:
+--
+-- IMEI
+--   ->
+-- public.devices
+--   ->
+-- vehicle_id/company_id
+--   ->
+-- positions
+--   ->
+-- telemetry
+--   ->
+-- alerts/trips
+--   ->
+-- camera_events/video_clips when applicable
+--
+--
+-- This test must use a trusted backend identity.
+--
+-- NEVER expose privileged server credentials in:
+--
+-- - browser
+-- - frontend JavaScript
+-- - public environment variables
+-- - repository
+--
+-- ============================================================
+
+
+-- ============================================================
+-- 14. CAMERA TEST
+-- ============================================================
+--
+-- Scenario:
+--
+-- Vehicle A generates simulated hard braking.
+--
+-- Expected:
+--
+-- telemetry A created
+-- alert A created
+-- camera_event A linked to:
+--
+--   vehicle A
+--   camera A
+--   telemetry A
+--   alert A
+--   position A
+--
+-- video_clip A linked to camera_event A
+--
+-- All rows must share COMPANY_A_ID.
+--
+-- Dashboard should then display the same business event in:
+--
+-- alerts
+-- history
+-- cameras
+--
+-- ============================================================
+
+
+-- ============================================================
+-- 15. KPI REGRESSION TEST
+-- ============================================================
+--
+-- The database migration must NOT require removing existing KPI.
+--
+-- Validate that the future data model can provide:
+--
+-- vehicles online
+-- total vehicles
+-- distance traveled
+-- active alerts
+-- active drivers
+-- trips today
+-- fuel/consumption when verified telemetry mapping exists
+--
+-- IMPORTANT:
+--
+-- Fuel consumption must NOT be invented from unknown CAN/IO.
+--
+-- ============================================================
+
+
+-- ============================================================
+-- TEST RESULT TEMPLATE
+-- ============================================================
+--
+-- USER A
+-- [ ] own company visible
+-- [ ] company B invisible
+-- [ ] own vehicle visible
+-- [ ] vehicle B invisible
+-- [ ] vehicle write denied
+-- [ ] role escalation denied
+-- [ ] company change denied
+--
+-- CLIENT ADMIN A
+-- [ ] company A visible
+-- [ ] company B invisible
+-- [ ] vehicle A management allowed
+-- [ ] vehicle B management denied
+-- [ ] cross-company FK denied
+-- [ ] matelematics_admin escalation denied
+--
+-- MATELEMATICS ADMIN
+-- [ ] company A visible
+-- [ ] company B visible
+-- [ ] global management works
+--
+-- DATABASE
+-- [ ] cross-tenant device FK denied
+-- [ ] cross-tenant driver assignment denied
+-- [ ] cross-tenant telemetry denied
+-- [ ] cross-tenant camera event denied
+-- [ ] cross-tenant video clip denied
+--
+-- CAMERA
+-- [ ] telemetry event links to camera event
+-- [ ] camera event links to video clip
+--
+-- DASHBOARD
+-- [ ] existing KPI preserved
+--
+-- ============================================================
+-- END OF FILE
+-- ============================================================
