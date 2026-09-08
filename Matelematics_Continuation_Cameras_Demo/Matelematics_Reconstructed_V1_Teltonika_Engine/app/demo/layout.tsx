@@ -10,6 +10,8 @@ import {
   Map,
   Camera,
   AlertTriangle,
+  Activity,
+  ShieldCheck,
   ClipboardList,
   Wrench,
   Users,
@@ -34,6 +36,7 @@ export default function DemoLayout({
   children: ReactNode;
 }) {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   const notifications = [
@@ -78,6 +81,11 @@ export default function DemoLayout({
       icon: Home,
     },
     {
+      name: "Administration",
+      href: "/demo/admin",
+      icon: ShieldCheck,
+    },
+    {
       name: "Véhicules",
       href: "/demo/vehicles",
       icon: Truck,
@@ -101,6 +109,11 @@ export default function DemoLayout({
       name: "Alertes",
       href: "/demo/alerts",
       icon: AlertTriangle,
+    },
+    {
+      name: "Diagnostic",
+      href: "/demo/diagnostics",
+      icon: Activity,
     },
     {
       name: "Rapports",
@@ -169,13 +182,13 @@ export default function DemoLayout({
   };
 
   return (
-    <div className="flex min-h-screen bg-slate-950 text-white">
+    <div className="flex min-h-screen overflow-x-hidden bg-slate-950 text-white">
 
       {/* ========================================================= */}
       {/* SIDEBAR                                                   */}
       {/* ========================================================= */}
 
-      <aside className="flex w-72 shrink-0 flex-col border-r border-slate-800 bg-slate-900">
+      <aside className="hidden w-72 shrink-0 flex-col border-r border-slate-800 bg-slate-900 lg:flex">
 
         {/* LOGO */}
 
@@ -269,6 +282,70 @@ export default function DemoLayout({
 
       </aside>
 
+      {mobileMenuOpen && (
+        <>
+          <button
+            type="button"
+            onClick={() => setMobileMenuOpen(false)}
+            className="fixed inset-0 z-40 bg-black/60 backdrop-blur-[1px] lg:hidden"
+            aria-label="Fermer le menu"
+          />
+
+          <aside className="fixed inset-y-0 left-0 z-50 flex w-[86vw] max-w-72 flex-col border-r border-slate-800 bg-slate-900 shadow-2xl lg:hidden">
+            <div className="flex h-16 items-center justify-between border-b border-slate-800 px-4">
+              <Link href="/demo" onClick={() => setMobileMenuOpen(false)} className="flex items-center gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-600">
+                  <Menu className="h-5 w-5" />
+                </div>
+                <span className="text-lg font-bold">Matelematics</span>
+              </Link>
+              <button
+                type="button"
+                onClick={() => setMobileMenuOpen(false)}
+                className="flex h-10 w-10 items-center justify-center rounded-lg text-slate-300 hover:bg-slate-800 hover:text-white"
+                aria-label="Fermer"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="mx-4 mt-4 rounded-xl border border-cyan-500/20 bg-cyan-500/5 px-3 py-3">
+              <div className="flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full bg-cyan-400" />
+                <p className="text-xs font-semibold tracking-wide text-cyan-400">MODE DÉMONSTRATION</p>
+              </div>
+              <p className="mt-1 text-[11px] text-slate-500">Données fictives pour présentation</p>
+            </div>
+
+            <nav className="flex-1 space-y-1 overflow-y-auto p-4">
+              {menuItems.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="group flex items-center gap-3 rounded-xl px-4 py-3 text-sm text-slate-300 transition hover:bg-slate-800 hover:text-white"
+                  >
+                    <Icon className="h-5 w-5 shrink-0 text-slate-500 group-hover:text-cyan-400" />
+                    <span>{item.name}</span>
+                  </Link>
+                );
+              })}
+            </nav>
+
+            <div className="border-t border-slate-800 p-4">
+              <Link href="/login" onClick={() => setMobileMenuOpen(false)} className="mb-3 flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-medium">
+                <User className="h-4 w-4" /> Connexion client
+              </Link>
+              <Link href="/" onClick={() => setMobileMenuOpen(false)} className="flex w-full items-center justify-center rounded-xl border border-slate-700 px-4 py-2.5 text-xs text-slate-400">
+                Retour au site
+              </Link>
+            </div>
+          </aside>
+        </>
+      )}
+
       {/* ========================================================= */}
       {/* CONTENU PRINCIPAL                                         */}
       {/* ========================================================= */}
@@ -279,9 +356,18 @@ export default function DemoLayout({
         {/* HEADER                                                   */}
         {/* ======================================================= */}
 
-        <header className="flex h-16 shrink-0 items-center justify-between border-b border-slate-800 bg-slate-900 px-6">
+        <header className="flex h-16 shrink-0 items-center justify-between border-b border-slate-800 bg-slate-900 px-3 sm:px-4 lg:px-6">
 
-          <div className="flex items-center gap-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setMobileMenuOpen(true)}
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-white lg:hidden"
+              aria-label="Ouvrir le menu"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
+            <span className="truncate text-base font-bold sm:text-lg lg:hidden">Matelematics</span>
 
             <div className="hidden items-center gap-2 rounded-lg bg-slate-800 px-3 py-2 md:flex">
 
@@ -304,7 +390,7 @@ export default function DemoLayout({
             <button
               type="button"
               onClick={toggleFullscreen}
-              className="flex h-10 w-10 items-center justify-center rounded-lg text-slate-300 transition hover:bg-slate-800 hover:text-cyan-400"
+              className="hidden sm:flex h-10 w-10 items-center justify-center rounded-lg text-slate-300 transition hover:bg-slate-800 hover:text-cyan-400"
               title={
                 isFullscreen
                   ? "Quitter le plein écran"
@@ -350,7 +436,7 @@ export default function DemoLayout({
 
               {notificationsOpen && (
 
-                <div className="absolute right-0 top-12 z-50 w-[380px] overflow-hidden rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl shadow-black/40">
+                <div className="fixed left-3 right-3 top-20 z-50 overflow-hidden sm:absolute sm:left-auto sm:right-0 sm:top-12 sm:w-[380px] rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl shadow-black/40">
 
                   {/* HEADER NOTIFICATIONS */}
 
@@ -465,7 +551,7 @@ export default function DemoLayout({
 
             <Link
               href="/login"
-              className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium transition hover:bg-blue-700"
+              className="hidden rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium transition hover:bg-blue-700 sm:inline-flex"
             >
               Connexion
             </Link>
@@ -478,7 +564,7 @@ export default function DemoLayout({
         {/* PAGE                                                     */}
         {/* ======================================================= */}
 
-        <main className="min-w-0 flex-1 overflow-auto bg-slate-950 p-6">
+        <main className="min-w-0 flex-1 overflow-auto bg-slate-950 p-0 sm:p-2 lg:p-6">
 
           {children}
 
