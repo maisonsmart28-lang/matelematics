@@ -61,18 +61,8 @@ async function authenticate(
       ? authorization.slice(7)
       : null;
 
-  /*
-   * Compatibilité temporaire :
-   * si la page actuelle n'envoie pas encore le token,
-   * le matelematics_admin pourra être traité par l'API
-   * uniquement lorsque l'authentification est disponible.
-   */
-
   if (!token) {
-    return {
-      admin: getAdmin(),
-      profile: null as Profile | null,
-    };
+    throw new Error("AUTH_REQUIRED");
   }
 
   const admin = getAdmin();

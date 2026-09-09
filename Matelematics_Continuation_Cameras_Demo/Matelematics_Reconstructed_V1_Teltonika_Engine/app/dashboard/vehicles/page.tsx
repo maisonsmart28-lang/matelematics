@@ -23,6 +23,10 @@ import {
   useDashboardAccess,
 } from "../DashboardAccessContext";
 
+import {
+  supabase,
+} from "../../components/supabase";
+
 
 function StatusBadge({
   status,
@@ -107,33 +111,68 @@ export default function VehiclesPage() {
       setLoading(true);
 
       try {
+        const {
+          data: {
+            session,
+          },
+          error: sessionError,
+        } =
+          await supabase.auth.getSession();
+
+        if (
+          sessionError ||
+          !session
+        ) {
+          setVehicles([]);
+
+          return;
+        }
+
         const response =
           await fetch(
             "/api/vehicles",
             {
+              method: "GET",
+
               cache:
                 "no-store",
+
+              headers: {
+                Authorization:
+                  `Bearer ${session.access_token}`,
+              },
             },
           );
 
-        if (
-          response.ok
-        ) {
-          const payload =
-            (await response.json()) as {
-              vehicles:
-                DemoVehicle[];
-            };
+        const payload =
+          (await response.json()) as {
+            vehicles?:
+              DemoVehicle[];
 
-          setVehicles(
-            payload.vehicles,
+            error?: string;
+          };
+
+        if (!response.ok) {
+          throw new Error(
+            payload.error ??
+              "Impossible de charger les véhicules.",
           );
         }
+
+        setVehicles(
+          payload.vehicles ?? [],
+        );
+      } catch (error) {
+        console.error(
+          "[Vehicles Page]",
+          error,
+        );
+
+        setVehicles([]);
       } finally {
         setLoading(false);
       }
     };
-
 
   useEffect(() => {
     const timer =
