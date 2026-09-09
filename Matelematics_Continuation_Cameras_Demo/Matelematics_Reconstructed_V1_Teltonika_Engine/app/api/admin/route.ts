@@ -191,6 +191,38 @@ export async function GET(
       );
     }
 
+    if (
+      auth.profile.role ===
+        "partner_admin" &&
+      !auth.profile.partner_id
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Profil partenaire incomplet.",
+        },
+        {
+          status: 403,
+        }
+      );
+    }
+
+    if (
+      auth.profile.role ===
+        "client_admin" &&
+      !auth.profile.company_id
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Profil client incomplet.",
+        },
+        {
+          status: 403,
+        }
+      );
+    }
+
     let companiesQuery =
       auth.admin
         .from("companies")
@@ -241,16 +273,51 @@ export async function GET(
         )
       );
 
-    const {
-      data: partners,
-      error: partnersError,
-    } =
-      await auth.admin
+    let partnersQuery =
+      auth.admin
         .from("partners")
         .select(
           "id,name,email,phone,address,status"
         )
         .order("name");
+
+    if (
+      auth.profile.role ===
+      "partner_admin"
+    ) {
+      partnersQuery =
+        partnersQuery.eq(
+          "id",
+          auth.profile.partner_id
+        );
+    }
+
+    if (
+      auth.profile.role ===
+      "client_admin"
+    ) {
+      const clientPartnerId =
+        (companies ?? [])[0]
+          ?.partner_id ??
+        null;
+
+      partnersQuery =
+        clientPartnerId
+          ? partnersQuery.eq(
+              "id",
+              clientPartnerId
+            )
+          : partnersQuery.is(
+              "id",
+              null
+            );
+    }
+
+    const {
+      data: partners,
+      error: partnersError,
+    } =
+      await partnersQuery;
 
     if (partnersError) {
       throw partnersError;
@@ -414,6 +481,38 @@ export async function POST(
         {
           error:
             "Opération interdite.",
+        },
+        {
+          status: 403,
+        }
+      );
+    }
+
+    if (
+      auth.profile.role ===
+        "partner_admin" &&
+      !auth.profile.partner_id
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Profil partenaire incomplet.",
+        },
+        {
+          status: 403,
+        }
+      );
+    }
+
+    if (
+      auth.profile.role ===
+        "client_admin" &&
+      !auth.profile.company_id
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Profil client incomplet.",
         },
         {
           status: 403,
