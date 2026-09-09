@@ -1177,6 +1177,46 @@ export async function POST(
     });
 
   } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "SERVER_ERROR";
+
+
+    if (
+      message ===
+      "AUTH_REQUIRED"
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Authentication required.",
+        },
+        {
+          status:
+            401,
+        },
+      );
+    }
+
+
+    if (
+      message ===
+      "PROFILE_REQUIRED"
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "User profile unavailable.",
+        },
+        {
+          status:
+            403,
+        },
+      );
+    }
+
+
     console.error(
       "[Alerts POST]",
       error,
@@ -1186,9 +1226,7 @@ export async function POST(
     return NextResponse.json(
       {
         error:
-          error instanceof Error
-            ? error.message
-            : "SERVER_ERROR",
+          message,
       },
       {
         status:
