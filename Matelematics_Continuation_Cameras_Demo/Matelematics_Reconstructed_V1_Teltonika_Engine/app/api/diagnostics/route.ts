@@ -15,6 +15,17 @@ type Role =
   | "client_admin"
   | "user";
 
+function isRole(
+  value: unknown,
+): value is Role {
+  return (
+    value === "matelematics_admin" ||
+    value === "partner_admin" ||
+    value === "client_admin" ||
+    value === "user"
+  );
+}
+
 type Profile = {
   id: string;
   role: Role;
@@ -88,6 +99,10 @@ async function authenticate(request: NextRequest) {
 
   if (profileError || !profile) {
     throw new Error("PROFILE_REQUIRED");
+  }
+
+  if (!isRole(profile.role)) {
+    throw new Error("FORBIDDEN");
   }
 
   return {
@@ -1380,6 +1395,21 @@ export async function GET(
       );
     }
 
+    if (
+      message ===
+      "FORBIDDEN"
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Access denied.",
+        },
+        {
+          status: 403,
+        },
+      );
+    }
+
     console.error(
       "[Diagnostics GET]",
       error,
@@ -1408,6 +1438,16 @@ export async function POST(
       await authenticate(
         request,
       );
+
+
+    if (
+      profile.role ===
+      "user"
+    ) {
+      throw new Error(
+        "FORBIDDEN",
+      );
+    }
 
 
     const body =
@@ -2139,6 +2179,72 @@ export async function POST(
         ).length,
     });
   } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "SERVER_ERROR";
+
+
+    if (
+      message ===
+      "AUTH_REQUIRED"
+    ) {
+      return NextResponse.json(
+        {
+          stage:
+            "authentication_required",
+
+          error:
+            "Authentication required.",
+        },
+        {
+          status:
+            401,
+        },
+      );
+    }
+
+
+    if (
+      message ===
+      "PROFILE_REQUIRED"
+    ) {
+      return NextResponse.json(
+        {
+          stage:
+            "profile_required",
+
+          error:
+            "User profile unavailable.",
+        },
+        {
+          status:
+            403,
+        },
+      );
+    }
+
+
+    if (
+      message ===
+      "FORBIDDEN"
+    ) {
+      return NextResponse.json(
+        {
+          stage:
+            "forbidden",
+
+          error:
+            "Access denied.",
+        },
+        {
+          status:
+            403,
+        },
+      );
+    }
+
+
     console.error(
       "[Diagnostics POST]",
       error,
@@ -2151,12 +2257,11 @@ export async function POST(
           "server_error",
 
         error:
-          error instanceof Error
-            ? error.message
-            : "SERVER_ERROR",
+          message,
       },
       {
-        status: 500,
+        status:
+          500,
       },
     );
   }
