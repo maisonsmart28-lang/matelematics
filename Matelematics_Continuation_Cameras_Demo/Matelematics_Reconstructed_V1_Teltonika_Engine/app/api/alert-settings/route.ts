@@ -22,6 +22,18 @@ type Role =
   | "user";
 
 
+function isRole(
+  value: unknown,
+): value is Role {
+  return (
+    value === "matelematics_admin" ||
+    value === "partner_admin" ||
+    value === "client_admin" ||
+    value === "user"
+  );
+}
+
+
 type Profile = {
   id: string;
   role: Role;
@@ -475,6 +487,12 @@ async function authenticate(
   ) {
     throw new Error(
       "PROFILE_REQUIRED",
+    );
+  }
+
+  if (!isRole(profile.role)) {
+    throw new Error(
+      "FORBIDDEN",
     );
   }
 
