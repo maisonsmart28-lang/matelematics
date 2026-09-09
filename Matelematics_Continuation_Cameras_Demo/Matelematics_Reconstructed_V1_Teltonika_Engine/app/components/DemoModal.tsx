@@ -24,6 +24,7 @@ const schema = z.object({
     ),
   sector: z.string().min(1, "Secteur d'activité requis"),
   message: z.string().optional(),
+  website: z.string().max(200).optional(),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -46,6 +47,7 @@ export default function DemoModal() {
       vehicleCount: "",
       sector: "",
       message: "",
+      website: "",
     },
   });
 
@@ -136,6 +138,22 @@ export default function DemoModal() {
           onSubmit={handleSubmit(onSubmit)}
           className="space-y-5 p-6"
         >
+          {/* HONEYPOT ANTI-BOT — invisible pour les utilisateurs */}
+          <div
+            aria-hidden="true"
+            className="absolute -left-[10000px] top-auto h-px w-px overflow-hidden"
+          >
+            <label htmlFor="demo-website">
+              Site web
+            </label>
+            <input
+              id="demo-website"
+              {...register("website")}
+              type="text"
+              tabIndex={-1}
+              autoComplete="off"
+            />
+          </div>
 
           {/* NOM */}
           <div>
