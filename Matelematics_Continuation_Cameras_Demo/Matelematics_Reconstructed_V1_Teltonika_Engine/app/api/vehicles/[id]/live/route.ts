@@ -15,6 +15,17 @@ type Role =
   | "client_admin"
   | "user";
 
+function isRole(
+  value: unknown,
+): value is Role {
+  return (
+    value === "matelematics_admin" ||
+    value === "partner_admin" ||
+    value === "client_admin" ||
+    value === "user"
+  );
+}
+
 type Profile = {
   id: string;
   role: Role;
@@ -114,6 +125,12 @@ async function authenticate(
   ) {
     throw new Error(
       "PROFILE_REQUIRED",
+    );
+  }
+
+  if (!isRole(profile.role)) {
+    throw new Error(
+      "FORBIDDEN",
     );
   }
 
@@ -544,6 +561,21 @@ export async function GET(
         {
           error:
             "Profil utilisateur introuvable.",
+        },
+        {
+          status: 403,
+        },
+      );
+    }
+
+    if (
+      message ===
+      "FORBIDDEN"
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Acces refuse.",
         },
         {
           status: 403,
