@@ -336,7 +336,12 @@ export async function GET(
       message ===
         "AUTH_REQUIRED"
         ? 401
-        : 500;
+        : message ===
+            "PROFILE_REQUIRED" ||
+          message ===
+            "FORBIDDEN"
+          ? 403
+          : 500;
 
     return NextResponse.json(
       {
@@ -344,7 +349,13 @@ export async function GET(
           message ===
           "AUTH_REQUIRED"
             ? "Authentification requise."
-            : message,
+            : message ===
+                "PROFILE_REQUIRED"
+              ? "Profil utilisateur introuvable."
+              : message ===
+                  "FORBIDDEN"
+                ? "Acces refuse."
+                : message,
       },
       {
         status,
