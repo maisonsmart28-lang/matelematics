@@ -1,5 +1,7 @@
-import { NextResponse } from "next/server";
+import { createHash } from "node:crypto";
 
+import { createClient } from "@supabase/supabase-js";
+import { NextResponse } from "next/server";
 import nodemailer from "nodemailer";
 import { z } from "zod";
 
@@ -7,6 +9,15 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MAX_BODY_BYTES = 20_000;
+
+const DEMO_RATE_LIMIT = 5;
+const DEMO_RATE_WINDOW_SECONDS = 15 * 60;
+
+type DemoRateLimitRow = {
+  allowed: boolean;
+  remaining: number;
+  retry_after_seconds: number;
+};
 
 const demoRequestSchema = z.object({
   fullName: z
@@ -72,10 +83,14 @@ const demoRequestSchema = z.object({
 function jsonError(
   error: string,
   status: number,
+  headers?: HeadersInit,
 ) {
   return NextResponse.json(
     { error },
-    { status },
+    {
+      status,
+      headers,
+    },
   );
 }
 
@@ -85,6 +100,161 @@ function normalizeMailText(
   return value
     .replace(/\r\n/g, "\n")
     .replace(/\r/g, "\n");
+}
+
+function getClientIp(
+  request: Request,
+) {
+  /*
+   * Sur Vercel, x-forwarded-for contient l'adresse IP publique du client.
+   * En développement local, ce header peut être absent : toutes les
+   * requêtes locales utilisent alors volontairement le même bucket.
+   */
+  const forwardedFor =
+    request.headers.get("x-forwarded-for");
+
+  if (forwardedFor) {
+    const firstAddress =
+      forwardedFor
+        .split(",")[0]
+        ?.trim();
+
+    if (firstAddress) {
+      return firstAddress.slice(0, 200);
+    }
+  }
+
+  const realIp =
+    request.headers
+      .get("x-real-ip")
+      ?.trim();
+
+  if (realIp) {
+    return realIp.slice(0, 200);
+  }
+
+  return "local-development";
+}
+
+function buildRateLimitKey(
+  request: Request,
+) {
+  const clientIp =
+    getClientIp(request);
+
+  /*
+   * Nous ne stockons jamais l'IP brute dans Postgres.
+   * Le préfixe sépare ce compteur d'éventuels futurs rate limiters.
+   */
+  return createHash("sha256")
+    .update(`demo:${clientIp}`)
+    .digest("hex");
+}
+
+function getSupabaseAdmin() {
+  const supabaseUrl =
+    (
+      process.env.SUPABASE_URL ??
+      process.env.NEXT_PUBLIC_SUPABASE_URL
+    )?.trim();
+
+  const secretKey =
+    process.env.SUPABASE_SECRET_KEY?.trim();
+
+  if (!supabaseUrl || !secretKey) {
+    throw new Error(
+      "RATE_LIMIT_CONFIGURATION_MISSING",
+    );
+  }
+
+  return createClient(
+    supabaseUrl,
+    secretKey,
+    {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+      },
+    },
+  );
+}
+
+async function consumeDemoRateLimit(
+  request: Request,
+) {
+  const admin =
+    getSupabaseAdmin();
+
+  const rateKey =
+    buildRateLimitKey(request);
+
+  const {
+    data,
+    error,
+  } =
+    await admin.rpc(
+      "consume_demo_rate_limit",
+      {
+        p_key: rateKey,
+        p_limit: DEMO_RATE_LIMIT,
+        p_window_seconds:
+          DEMO_RATE_WINDOW_SECONDS,
+      },
+    );
+
+  if (error) {
+    console.error(
+      "Erreur rate limiter /api/demo:",
+      error.message,
+    );
+
+    throw new Error(
+      "RATE_LIMIT_UNAVAILABLE",
+    );
+  }
+
+  const row =
+    Array.isArray(data)
+      ? (
+          data[0] as
+            | Partial<DemoRateLimitRow>
+            | undefined
+        )
+      : undefined;
+
+  if (
+    !row ||
+    typeof row.allowed !== "boolean" ||
+    typeof row.remaining !== "number" ||
+    !Number.isFinite(row.remaining) ||
+    typeof row.retry_after_seconds !== "number" ||
+    !Number.isFinite(
+      row.retry_after_seconds,
+    )
+  ) {
+    console.error(
+      "Réponse rate limiter invalide pour /api/demo.",
+    );
+
+    throw new Error(
+      "RATE_LIMIT_INVALID_RESPONSE",
+    );
+  }
+
+  return {
+    allowed: row.allowed,
+    remaining: Math.max(
+      0,
+      Math.trunc(row.remaining),
+    ),
+    retryAfterSeconds: Math.max(
+      0,
+      Math.trunc(
+        row.retry_after_seconds,
+      ),
+    ),
+  };
 }
 
 export async function POST(
@@ -193,12 +363,43 @@ export async function POST(
      * Honeypot :
      * un bot qui remplit automatiquement ce champ reçoit une
      * réponse identique à une soumission réussie, mais aucun
-     * email n'est envoyé.
+     * email n'est envoyé et aucun quota rate-limit n'est consommé.
      */
     if (website.trim()) {
       return NextResponse.json({
         success: true,
       });
+    }
+
+    /*
+     * Rate limiting centralisé dans Supabase/Postgres.
+     * En cas d'indisponibilité du compteur, comportement fail-closed :
+     * aucun email n'est envoyé.
+     */
+    const rateLimit =
+      await consumeDemoRateLimit(
+        request,
+      );
+
+    if (!rateLimit.allowed) {
+      const retryAfter =
+        Math.max(
+          1,
+          rateLimit.retryAfterSeconds,
+        );
+
+      return jsonError(
+        "Trop de demandes. Veuillez réessayer plus tard.",
+        429,
+        {
+          "Retry-After":
+            String(retryAfter),
+          "X-RateLimit-Limit":
+            String(DEMO_RATE_LIMIT),
+          "X-RateLimit-Remaining":
+            "0",
+        },
+      );
     }
 
     const requiredEnv = [
@@ -344,10 +545,46 @@ export async function POST(
       clientMailOptions,
     );
 
-    return NextResponse.json({
-      success: true,
-    });
+    return NextResponse.json(
+      {
+        success: true,
+      },
+      {
+        headers: {
+          "X-RateLimit-Limit":
+            String(DEMO_RATE_LIMIT),
+          "X-RateLimit-Remaining":
+            String(
+              rateLimit.remaining,
+            ),
+        },
+      },
+    );
   } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "UNKNOWN_ERROR";
+
+    if (
+      message ===
+        "RATE_LIMIT_CONFIGURATION_MISSING" ||
+      message ===
+        "RATE_LIMIT_UNAVAILABLE" ||
+      message ===
+        "RATE_LIMIT_INVALID_RESPONSE"
+    ) {
+      console.error(
+        "Protection anti-abus /api/demo indisponible:",
+        message,
+      );
+
+      return jsonError(
+        "Le service de démonstration est temporairement indisponible.",
+        503,
+      );
+    }
+
     console.error(
       "Erreur lors de l'envoi de la demande de démonstration:",
       error,
