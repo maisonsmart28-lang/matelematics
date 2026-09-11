@@ -161,15 +161,17 @@ function mergeDiagnostics(
 }
 
 /*
- * 9001, 9003 and 9004 are MATELEMATICS SIMULATOR ONLY.
+ * 9001, 9003, 9004 and 9005 are MATELEMATICS SIMULATOR ONLY.
  *
  * They are deliberately outside the official Teltonika mapping layer.
- * No production device is allowed to infer DTC payloads from these IDs.
+ * Simulator DTCs are accepted only when AVL 9005 contains an explicit
+ * supported simulator profile marker. A production record that merely
+ * contains one of the diagnostic simulator IDs therefore fails closed.
  *
  * 9001 = simulated light vehicle DTC text
  * 9003 = simulated J1939 DM1 text
  * 9004 = simulated J1939 DM2 text
- * 9005 = simulator profile name
+ * 9005 = simulator profile name ("light" or "j1939")
  */
 export function simulatorDiagnostics(
   io: Record<string, number | string>,
@@ -177,6 +179,19 @@ export function simulatorDiagnostics(
   active: DiagnosticCode[];
   stored: DiagnosticCode[];
 } {
+  const simulatorProfile =
+    asciiIo(io, 9005);
+
+  if (
+    simulatorProfile !== "light" &&
+    simulatorProfile !== "j1939"
+  ) {
+    return {
+      active: [],
+      stored: [],
+    };
+  }
+
   const obdActive =
     parseDiagnosticPayload({
       payload:
