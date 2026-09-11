@@ -1,5 +1,9 @@
 export type CanProfile =
   | "light_vehicle_can"
+  | "can_adapter"
+  | "fmc150_can_chip"
+  | "obd"
+  | "fmc125_peripheral"
   | "j1939_fms"
   | "unknown";
 
@@ -23,7 +27,7 @@ export type NormalizedCanV2 = {
     manufacturer: "teltonika";
     profile: CanProfile;
     simulator: boolean;
-    mappingVersion: "2.0";
+    mappingVersion: string;
   };
 
   engine: {
