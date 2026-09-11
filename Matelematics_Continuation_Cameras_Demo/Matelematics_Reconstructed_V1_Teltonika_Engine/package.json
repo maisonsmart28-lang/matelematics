@@ -10,6 +10,7 @@
     "security:p0-step3": "tsx scripts/security/p0-step3-audit.ts",
     "security:p0-step4": "tsx scripts/security/p0-step4-role-audit.ts",
     "security:p1-step6d": "tsx scripts/security/p1-step6d-tenant-audit.ts",
+    "hardware:step7b:capabilities": "tsx server/hardware/capabilities.selftest.ts",
     "teltonika:server": "tsx server/teltonika/server.ts",
     "teltonika:simulate": "tsx server/teltonika/simulator.ts",
     "teltonika:step5a:catalog": "tsx server/teltonika/avl/catalog.selftest.ts",
