@@ -124,6 +124,7 @@ export class BoundedMediaWriter {
   private readonly stream;
   private written = 0;
   private closed = false;
+  private streamError: Error | null = null;
 
   constructor(public readonly path: string, public readonly expectedBytes: number) {
     if (!Number.isSafeInteger(expectedBytes) || expectedBytes <= 0 || expectedBytes > CAMERA_MAX_FILE_SIZE) {
@@ -131,6 +132,9 @@ export class BoundedMediaWriter {
     }
     mkdirSync(dirname(path), { recursive: true });
     this.stream = createWriteStream(path, { flags: "wx" });
+    this.stream.on("error", (error) => {
+      this.streamError = error instanceof Error ? error : new Error(String(error));
+    });
   }
 
   get bytesWritten(): number {
@@ -139,6 +143,7 @@ export class BoundedMediaWriter {
 
   write(chunk: Buffer): void {
     if (this.closed) throw new Error("camera media writer already closed");
+    if (this.streamError) throw this.streamError;
     if (this.written + chunk.length > this.expectedBytes || this.written + chunk.length > CAMERA_MAX_FILE_SIZE) {
       this.abort();
       throw new Error("camera media exceeded declared or safety size");
@@ -149,21 +154,38 @@ export class BoundedMediaWriter {
 
   async finish(): Promise<void> {
     if (this.closed) throw new Error("camera media writer already closed");
+    if (this.streamError) throw this.streamError;
     if (this.written !== this.expectedBytes) {
       this.abort();
       throw new Error(`camera media incomplete: ${this.written}/${this.expectedBytes}`);
     }
     this.closed = true;
     await new Promise<void>((resolvePromise, reject) => {
-      this.stream.once("error", reject);
-      this.stream.end(resolvePromise);
+      const onError = (error: Error) => {
+        this.stream.off("finish", onFinish);
+        reject(error);
+      };
+      const onFinish = () => {
+        this.stream.off("error", onError);
+        resolvePromise();
+      };
+      this.stream.once("error", onError);
+      this.stream.once("finish", onFinish);
+      this.stream.end();
     });
   }
 
-  abort(): void {
+  async abort(): Promise<void> {
     if (!this.closed) {
       this.closed = true;
-      this.stream.destroy();
+      await new Promise<void>((resolvePromise) => {
+        if (this.stream.destroyed || this.stream.closed) {
+          resolvePromise();
+          return;
+        }
+        this.stream.once("close", () => resolvePromise());
+        this.stream.destroy();
+      });
     }
     try { rmSync(this.path, { force: true }); } catch { /* best effort */ }
   }
