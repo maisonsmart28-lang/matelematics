@@ -29,6 +29,17 @@ async function connect(port: number): Promise<net.Socket> {
   });
 }
 
+async function waitForSocketClose(socket: net.Socket, timeoutMs = 2000): Promise<void> {
+  if (socket.closed) return;
+
+  await Promise.race([
+    new Promise<void>((resolve) => socket.once("close", () => resolve())),
+    new Promise<void>((_, reject) =>
+      setTimeout(() => reject(new Error("timeout waiting for socket close")), timeoutMs),
+    ),
+  ]);
+}
+
 async function main() {
   const seenCommands: string[] = [];
   const disconnectReasons: string[] = [];
@@ -86,12 +97,12 @@ async function main() {
   const replacement = await connect(port);
   replacement.write(buildInitPacket(imei1));
   await waitUntil(() => handle.sessions.get(imei1)?.socket === replacement);
-  await waitUntil(() => socket1.destroyed);
+  await waitForSocketClose(socket1);
   assert.equal(handle.sessions.size, 2);
 
   const unauthorized = await connect(port);
   unauthorized.write(buildInitPacket("000000000000000"));
-  await waitUntil(() => unauthorized.destroyed);
+  await waitForSocketClose(unauthorized);
   assert.equal(handle.sessions.has("000000000000000"), false);
 
   replacement.destroy();
