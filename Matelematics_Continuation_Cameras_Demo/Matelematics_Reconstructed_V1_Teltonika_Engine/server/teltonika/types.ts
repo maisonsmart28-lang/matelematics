@@ -71,4 +71,10 @@ export interface DeviceRegistration {
   clientId: string;
   vehicleId: string;
   label: string;
+  /**
+   * Real device model as loaded from the devices table when available.
+   * Legacy callers may omit it; registerDevice derives it from label so the
+   * existing Supabase loader remains backward-compatible during Step 5A.
+   */
+  model?: string | null;
 }
