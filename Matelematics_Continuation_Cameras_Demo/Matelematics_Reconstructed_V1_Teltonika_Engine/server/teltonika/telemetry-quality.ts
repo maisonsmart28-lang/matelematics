@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import type { NormalizedTelemetry } from "./types";
 
 export type TelemetryQualityReason =
@@ -24,6 +26,30 @@ const MAX_FUTURE_SKEW_MS = 24 * 60 * 60 * 1000;
 
 function finite(value: number) {
   return Number.isFinite(value);
+}
+
+export function buildTelemetryIngestFingerprint(
+  telemetry: NormalizedTelemetry,
+) {
+  const canonical = JSON.stringify({
+    imei: telemetry.imei,
+    codec: telemetry.codec,
+    timestamp: telemetry.timestamp,
+    priority: telemetry.priority,
+    latitude: telemetry.latitude,
+    longitude: telemetry.longitude,
+    altitude: telemetry.altitude,
+    angle: telemetry.angle,
+    satellites: telemetry.satellites,
+    speedKph: telemetry.speedKph,
+    eventId: telemetry.eventId,
+    io: telemetry.io,
+    raw: telemetry.raw,
+  });
+
+  return createHash("sha256")
+    .update(canonical, "utf8")
+    .digest("hex");
 }
 
 export function assessTelemetryQuality(
@@ -103,7 +129,7 @@ export function assessTelemetryQuality(
     accepted: !hardFailure,
     persistPosition: !hardFailure && !noGpsFix,
     gpsFixValid: !hardFailure && !noGpsFix,
-    recordedAt: Number.isFinite(timestampMs)
+    recordedAt: Number.isFinite(timestampMs) && !hardFailure
       ? new Date(timestampMs).toISOString()
       : telemetry.receivedAt,
     reasons,
