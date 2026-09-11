@@ -7,6 +7,10 @@ import {
   createClient,
 } from "@supabase/supabase-js";
 
+import {
+  resolveHardwareCapabilities,
+} from "../../../../../server/hardware/capabilities";
+
 export const runtime = "nodejs";
 
 type Role =
@@ -172,6 +176,38 @@ function extractVehicleId(
   );
 }
 
+function extractSourceProfile(
+  canPayload: unknown,
+): string | null {
+  if (
+    !canPayload ||
+    typeof canPayload !== "object"
+  ) {
+    return null;
+  }
+
+  const source =
+    (canPayload as {
+      source?: unknown;
+    }).source;
+
+  if (
+    !source ||
+    typeof source !== "object"
+  ) {
+    return null;
+  }
+
+  const profile =
+    (source as {
+      profile?: unknown;
+    }).profile;
+
+  return typeof profile === "string"
+    ? profile
+    : null;
+}
+
 export async function GET(
   request: NextRequest,
 ) {
@@ -321,7 +357,7 @@ export async function GET(
 
     /*
      * ---------------------------------------------------------
-     * DEVICE TELTONIKA
+     * DEVICE
      * ---------------------------------------------------------
      */
 
@@ -349,6 +385,38 @@ export async function GET(
 
     if (deviceError) {
       throw deviceError;
+    }
+
+    /*
+     * ---------------------------------------------------------
+     * CAMERA INSTALLEE / CONFIGUREE
+     * ---------------------------------------------------------
+     */
+
+    const {
+      data: activeCamera,
+      error: cameraError,
+    } =
+      await admin
+        .from("cameras")
+        .select("id")
+        .eq(
+          "vehicle_id",
+          vehicle.id,
+        )
+        .eq(
+          "company_id",
+          vehicle.company_id,
+        )
+        .eq(
+          "status",
+          "active",
+        )
+        .limit(1)
+        .maybeSingle();
+
+    if (cameraError) {
+      throw cameraError;
     }
 
     /*
@@ -414,6 +482,24 @@ export async function GET(
     if (telemetryError) {
       throw telemetryError;
     }
+
+    const sourceProfile =
+      extractSourceProfile(
+        telemetry?.can_payload,
+      );
+
+    const hardware =
+      resolveHardwareCapabilities({
+        manufacturer:
+          device?.manufacturer ??
+          null,
+        model:
+          device?.model ??
+          null,
+        sourceProfile,
+        cameraConfigured:
+          Boolean(activeCamera),
+      });
 
     /*
      * ---------------------------------------------------------
@@ -507,6 +593,17 @@ export async function GET(
 
       device:
         device ?? null,
+
+      hardware: {
+        family:
+          hardware.family,
+        source_profile:
+          sourceProfile,
+        camera_configured:
+          Boolean(activeCamera),
+        capabilities:
+          hardware.capabilities,
+      },
 
       position:
         position ?? null,
