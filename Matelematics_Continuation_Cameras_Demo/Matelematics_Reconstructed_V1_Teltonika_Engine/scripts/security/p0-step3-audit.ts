@@ -49,6 +49,10 @@ function isTextFile(file: string) {
     path.basename(file).startsWith(".env");
 }
 
+function isExecutableSourceModule(file: string) {
+  return /\.(?:ts|tsx|js|jsx|mjs|cjs)$/i.test(file);
+}
+
 function readTrackedText(file: string): string | null {
   if (!isTextFile(file)) return null;
 
@@ -101,7 +105,13 @@ function auditTrackedFiles(files: string[]) {
       }
     }
 
-    if (hasUseClientDirective(content)) {
+    // "use client" is meaningful only in executable JS/TS modules.
+    // Audit/preflight .txt/.md files can contain copied source snippets and
+    // must not be treated as client bundles themselves.
+    if (
+      isExecutableSourceModule(file) &&
+      hasUseClientDirective(content)
+    ) {
       for (const variable of SERVER_ONLY_ENV) {
         if (content.includes(variable)) {
           failures.push(`Server-only variable ${variable} referenced by client module: ${file}`);
