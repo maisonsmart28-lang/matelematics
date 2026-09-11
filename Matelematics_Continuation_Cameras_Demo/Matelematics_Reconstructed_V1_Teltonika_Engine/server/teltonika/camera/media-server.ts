@@ -67,22 +67,26 @@ export function createCameraMediaServer(options: CameraMediaServerOptions = {}):
     let processing = false;
     let ended = false;
 
-    const disconnect = async (reason: string) => {
-      if (ended) return;
-      ended = true;
-
+    const cleanupSession = () => {
       if (session && sessions.get(session.imei)?.socket === socket) {
         sessions.delete(session.imei);
       }
+    };
 
-      if (session && options.onDisconnected) {
-        try {
-          await options.onDisconnected(session, reason);
-        } catch {
-          // Disconnect cleanup must never keep a socket alive.
-        }
+    const notifyDisconnected = async (reason: string) => {
+      if (!session || !options.onDisconnected) return;
+      try {
+        await options.onDisconnected(session, reason);
+      } catch {
+        // Disconnect cleanup must never keep a socket alive.
       }
+    };
 
+    const disconnect = async (reason: string) => {
+      if (ended) return;
+      ended = true;
+      cleanupSession();
+      await notifyDisconnected(reason);
       if (!socket.destroyed) socket.destroy();
     };
 
@@ -109,8 +113,9 @@ export function createCameraMediaServer(options: CameraMediaServerOptions = {}):
             }
 
             const previous = sessions.get(init.imei);
-            if (previous && previous.socket !== socket && !previous.socket.destroyed) {
-              previous.socket.destroy();
+            if (previous && previous.socket !== socket) {
+              sessions.delete(init.imei);
+              if (!previous.socket.destroyed) previous.socket.destroy();
             }
 
             session = {
@@ -168,7 +173,12 @@ export function createCameraMediaServer(options: CameraMediaServerOptions = {}):
 
     socket.on("close", () => {
       sockets.delete(socket);
-      void disconnect("closed");
+      cleanupSession();
+
+      if (!ended) {
+        ended = true;
+        void notifyDisconnected("closed");
+      }
     });
   });
 
@@ -182,6 +192,12 @@ export function createCameraMediaServer(options: CameraMediaServerOptions = {}):
       for (const socket of sockets) {
         if (!socket.destroyed) socket.destroy();
       }
+
+      const deadline = Date.now() + 3_000;
+      while (sockets.size > 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+
       sessions.clear();
 
       if (!server.listening) return;
