@@ -7,7 +7,18 @@ import type { DeviceRegistration } from "./types";
 const devices = new Map<string, DeviceRegistration>();
 
 export function registerDevice(device: DeviceRegistration) {
-  devices.set(device.imei, device);
+  const normalized: DeviceRegistration = {
+    ...device,
+    model:
+      device.model ??
+      device.label ??
+      null,
+  };
+
+  devices.set(
+    normalized.imei,
+    normalized,
+  );
 }
 
 export function findDeviceByImei(imei: string) {
