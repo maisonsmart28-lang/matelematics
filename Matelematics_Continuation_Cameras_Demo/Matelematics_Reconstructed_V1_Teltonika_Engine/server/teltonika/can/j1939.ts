@@ -1,4 +1,5 @@
 import type {
+  IoValue,
   NormalizedTelemetry,
 } from "../types";
 
@@ -7,10 +8,117 @@ import {
   simulatorDiagnostics,
 } from "./diagnostics";
 
+import {
+  getFmsJ1939Definition,
+} from "./fms-catalog";
+
 import type {
   NormalizedCanV2,
 } from "./types-v2";
 
+function rawIo(
+  telemetry: NormalizedTelemetry,
+  id: number,
+): IoValue | null {
+  return telemetry.raw.io.find(
+    (item) => item.id === id,
+  ) ?? null;
+}
+
+function decodeUnsigned(
+  io: IoValue,
+): bigint {
+  const bytes = Buffer.from(
+    io.rawHex,
+    "hex",
+  );
+
+  let value = 0n;
+
+  for (const byte of bytes) {
+    value =
+      (value << 8n) |
+      BigInt(byte);
+  }
+
+  return value;
+}
+
+function decodeSigned(
+  io: IoValue,
+): bigint {
+  const unsigned = decodeUnsigned(io);
+  const bits = BigInt(io.size * 8);
+
+  if (bits === 0n) {
+    return 0n;
+  }
+
+  const signBit =
+    1n << (bits - 1n);
+
+  return (
+    unsigned & signBit
+  ) === 0n
+    ? unsigned
+    : unsigned - (1n << bits);
+}
+
+function fmsNumeric(
+  telemetry: NormalizedTelemetry,
+  id: number,
+): number | null {
+  const definition =
+    getFmsJ1939Definition(id);
+
+  const io =
+    rawIo(
+      telemetry,
+      id,
+    );
+
+  if (
+    !definition ||
+    !io
+  ) {
+    return null;
+  }
+
+  if (
+    io.size !==
+    definition.bytes
+  ) {
+    throw new Error(
+      `FMS AVL ${id} (${definition.name}) expected ${definition.bytes} bytes, received ${io.size}`,
+    );
+  }
+
+  const exact =
+    definition.type ===
+      "signed"
+      ? decodeSigned(io)
+      : decodeUnsigned(io);
+
+  if (
+    exact >
+      BigInt(
+        Number.MAX_SAFE_INTEGER,
+      ) ||
+    exact <
+      BigInt(
+        Number.MIN_SAFE_INTEGER,
+      )
+  ) {
+    throw new Error(
+      `FMS AVL ${id} (${definition.name}) exceeds safe JavaScript numeric precision`,
+    );
+  }
+
+  return (
+    Number(exact) *
+    definition.multiplier
+  );
+}
 
 export function normalizeJ1939(
   telemetry: NormalizedTelemetry,
@@ -19,47 +127,66 @@ export function normalizeJ1939(
     telemetry.io;
 
   /*
-   * FMC650 FMS/J1939 relevant AVL elements:
+   * Step 5B source rule:
    *
-   * 80    Wheel Based Speed
-   * 84    Accelerator Pedal Position
-   * 85    Engine Current Load
-   * 86    Engine Total Fuel Used
-   * 87    Fuel Level
-   * 88    Engine Speed
-   * 10349 MIL indicator
-   *
-   * Permanent tracker IO remains shared:
-   * 21 / 66 / 67 / 239 / 240
+   * Only values explicitly defined in the typed FMS/J1939 catalog are
+   * interpreted as FMS vehicle data. Manual CAN and CAN-adapter values are
+   * separate sources and are never guessed here from overlapping AVL IDs.
    */
-
   const rpm =
-    numericIo(io, 88);
+    fmsNumeric(
+      telemetry,
+      88,
+    );
 
   const speed =
-    numericIo(io, 80) ??
+    fmsNumeric(
+      telemetry,
+      80,
+    ) ??
     telemetry.speedKph;
 
   const throttle =
-    numericIo(io, 84);
+    fmsNumeric(
+      telemetry,
+      84,
+    );
 
   const engineLoad =
-    numericIo(io, 85);
+    fmsNumeric(
+      telemetry,
+      85,
+    );
 
   const fuelUsed =
-    numericIo(io, 86);
+    fmsNumeric(
+      telemetry,
+      86,
+    );
 
   const fuelLevel =
-    numericIo(io, 87);
+    fmsNumeric(
+      telemetry,
+      87,
+    );
 
   const mil =
-    numericIo(io, 10349);
+    fmsNumeric(
+      telemetry,
+      10349,
+    );
 
   const ignitionRaw =
-    numericIo(io, 239);
+    numericIo(
+      io,
+      239,
+    );
 
   const movementRaw =
-    numericIo(io, 240);
+    numericIo(
+      io,
+      240,
+    );
 
   const ignition =
     ignitionRaw === null
@@ -72,23 +199,33 @@ export function normalizeJ1939(
       : movementRaw === 1;
 
   /*
-   * FMC650 may also receive CAN adapter values.
-   * Use mileage if present.
+   * Tracker total odometer (AVL 16) remains available as tracker metadata.
+   * AVL 36 is deliberately NOT accepted here because it belongs to a separate
+   * CAN-adapter source and must not be misrepresented as decoded FMS data.
    */
-  const odometerMetres =
-    numericIo(io, 36) ??
-    numericIo(io, 16);
+  const trackerOdometerMetres =
+    numericIo(
+      io,
+      16,
+    );
 
   const odometerKm =
-    odometerMetres === null
+    trackerOdometerMetres === null
       ? null
-      : odometerMetres / 1000;
+      : trackerOdometerMetres /
+        1000;
 
   const externalMv =
-    numericIo(io, 66);
+    numericIo(
+      io,
+      66,
+    );
 
   const internalMv =
-    numericIo(io, 67);
+    numericIo(
+      io,
+      67,
+    );
 
   const simDiagnostics =
     simulatorDiagnostics(io);
@@ -109,6 +246,27 @@ export function normalizeJ1939(
   const simulator =
     io.io_9005 !== undefined;
 
+  /*
+   * IDs 19/20 are not FMS elements. Keep them only for the explicit simulator
+   * profile so legacy development scenarios remain compatible without causing
+   * real-device source confusion.
+   */
+  const simulatorAdBluePercent =
+    simulator
+      ? numericIo(
+          io,
+          19,
+        )
+      : null;
+
+  const simulatorAdBlueRaw =
+    simulator
+      ? numericIo(
+          io,
+          20,
+        )
+      : null;
+
   return {
     version: 2,
 
@@ -116,7 +274,7 @@ export function normalizeJ1939(
       manufacturer: "teltonika",
       profile: "j1939_fms",
       simulator,
-      mappingVersion: "2.0",
+      mappingVersion: "2.1",
     },
 
     engine: {
@@ -151,14 +309,12 @@ export function normalizeJ1939(
       averageL100km:
         null,
       adBluePercent:
-        numericIo(io, 19),
+        simulatorAdBluePercent,
       adBlueLiters:
-        numericIo(io, 20) === null
+        simulatorAdBlueRaw === null
           ? null
-          : (
-              numericIo(io, 20)! /
-              10
-            ),
+          : simulatorAdBlueRaw /
+            10,
     },
 
     doors: {
@@ -197,25 +353,26 @@ export function normalizeJ1939(
 
     tracker: {
       gsmSignal:
-        numericIo(io, 21),
+        numericIo(
+          io,
+          21,
+        ),
 
       externalVoltage:
         externalMv === null
           ? null
-          : externalMv / 1000,
+          : externalMv /
+            1000,
 
       internalBatteryVoltage:
         internalMv === null
           ? null
-          : internalMv / 1000,
+          : internalMv /
+            1000,
 
       satellites:
         telemetry.satellites,
     },
-
-    /*
-     * V1 compatibility
-     */
 
     rpm,
 
