@@ -8,7 +8,11 @@
     "start": "next start",
     "lint": "eslint",
     "teltonika:server": "tsx server/teltonika/server.ts",
-    "teltonika:simulate": "tsx server/teltonika/simulator.ts"
+    "teltonika:simulate": "tsx server/teltonika/simulator.ts",
+    "gt06:server": "tsx server/gt06/server.ts",
+    "gt06:simulate": "tsx server/gt06/simulator.ts",
+    "gt06:selftest": "tsx server/gt06/selftest.ts",
+    "gt06:prepare-sim": "tsx server/gt06/prepare-sim.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",
