@@ -62,7 +62,7 @@ export function createCameraMediaServer(options: CameraMediaServerOptions = {}):
     socket.setKeepAlive(true, Math.min(idleTimeoutMs, 30_000));
     socket.setTimeout(idleTimeoutMs);
 
-    let buffer = Buffer.alloc(0);
+    let buffer: Buffer<ArrayBufferLike> = Buffer.alloc(0);
     let session: CameraMediaSession | null = null;
     let processing = false;
     let ended = false;
