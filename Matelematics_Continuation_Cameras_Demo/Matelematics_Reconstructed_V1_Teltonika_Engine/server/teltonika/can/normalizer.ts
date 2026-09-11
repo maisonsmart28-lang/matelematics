@@ -9,6 +9,7 @@ import type {
 
 import {
   resolveRegisteredCanContext,
+  type RegisteredCanSourceProfile,
 } from "./device-context";
 
 import {
@@ -35,7 +36,7 @@ import type {
 
 export type CanNormalizationContext = {
   model?: SupportedDeviceModel | string | null;
-  sourceProfile?: AvlSourceProfile | null;
+  sourceProfile?: RegisteredCanSourceProfile | null;
 };
 
 function supportedModel(
@@ -53,7 +54,7 @@ function supportedModel(
 }
 
 function explicitLightProfile(
-  sourceProfile: AvlSourceProfile | null | undefined,
+  sourceProfile: RegisteredCanSourceProfile | null | undefined,
 ): LightVehicleSourceProfile | null {
   if (
     sourceProfile === "obd" ||
@@ -188,12 +189,14 @@ function normalizeUnknownRealDevice(
 /**
  * Normalize Teltonika CAN/vehicle telemetry.
  *
- * Step 5A rule: a real light-vehicle AVL ID is only interpreted when both a
- * supported device model and an explicit source profile are known.
+ * Registered production devices are normalized from explicit device context.
+ * FMS/J1939 is never selected for a registered device by observing AVL IDs
+ * alone. The registered model label must explicitly identify FMS/J1939.
  *
- * The real device model is resolved from the in-memory registry, which is
- * populated from Supabase devices.model by loadDevicesFromSupabase. Existing
- * callers can still pass an explicit context for tests or controlled imports.
+ * This is especially important for the requested "FMC600": that exact model
+ * remains unverified in the current Teltonika documentation, so "FMC600"
+ * alone fails closed while "FMC600 J1939" / "FMC600 FMS" explicitly selects
+ * the FMS normalization profile without claiming hardware certification.
  */
 export function normalizeCanV2(
   telemetry: NormalizedTelemetry,
@@ -229,6 +232,17 @@ export function normalizeCanV2(
           telemetry.imei,
         );
 
+  const resolvedSourceProfile =
+    explicitContextSupplied
+      ? context?.sourceProfile ?? null
+      : registeredContext?.sourceProfile ?? null;
+
+  if (resolvedSourceProfile === "j1939_fms") {
+    return normalizeJ1939(
+      telemetry,
+    );
+  }
+
   const model =
     supportedModel(
       explicitContextSupplied
@@ -238,9 +252,7 @@ export function normalizeCanV2(
 
   const sourceProfile =
     explicitLightProfile(
-      explicitContextSupplied
-        ? context?.sourceProfile
-        : registeredContext?.sourceProfile,
+      resolvedSourceProfile,
     );
 
   if (
@@ -256,11 +268,6 @@ export function normalizeCanV2(
     );
   }
 
-  /*
-   * A registered real device or an explicit Step 5A context fails closed when
-   * its model/source combination is incomplete. Raw AVL remains persisted by
-   * the existing storage layer; only physical interpretation is withheld.
-   */
   if (
     explicitContextSupplied ||
     registeredContext?.registered
@@ -271,9 +278,8 @@ export function normalizeCanV2(
   }
 
   /*
-   * Legacy fallback is kept only for unregistered development callers. It
-   * preserves existing simulator/manual tests while registered production
-   * devices no longer rely on heuristic source guessing.
+   * Legacy fallback is intentionally limited to unregistered development
+   * callers. Production-registered devices never use this heuristic.
    */
   const j1939Detected =
     io.io_88 !== undefined ||
