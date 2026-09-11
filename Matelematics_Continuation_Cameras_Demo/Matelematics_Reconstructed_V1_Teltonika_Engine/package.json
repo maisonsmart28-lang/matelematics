@@ -17,7 +17,8 @@
     "teltonika:step5a:device-context": "tsx server/teltonika/can/device-context.selftest.ts",
     "teltonika:step5b:fms-catalog": "tsx server/teltonika/can/fms-catalog.selftest.ts",
     "teltonika:step5b:j1939": "tsx server/teltonika/can/j1939.selftest.ts",
-    "teltonika:step5b:device-context": "tsx server/teltonika/can/fms-device-context.selftest.ts"
+    "teltonika:step5b:device-context": "tsx server/teltonika/can/fms-device-context.selftest.ts",
+    "teltonika:step5c:camera-avl": "tsx server/teltonika/camera/avl-catalog.selftest.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",
