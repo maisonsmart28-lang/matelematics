@@ -24,7 +24,8 @@
     "teltonika:step5c:camera-integration": "tsx server/teltonika/camera/integration.selftest.ts",
     "teltonika:step5c:final": "npm run teltonika:step5c:camera-avl && npm run teltonika:step5c:camera-media && npm run teltonika:step5c:camera-server && npm run teltonika:step5c:camera-integration && npm run teltonika:step5a:catalog && npm run teltonika:step5a:codec && npm run teltonika:step5a:can && npm run teltonika:step5a:device-context && npm run teltonika:step5b:fms-catalog && npm run teltonika:step5b:j1939 && npm run teltonika:step5b:device-context && npm run build",
     "teltonika:step6a:quality": "tsx server/teltonika/telemetry-quality.selftest.ts",
-    "teltonika:step6a:final": "npm run teltonika:step6a:quality && npm run teltonika:step5c:final"
+    "teltonika:step6a:final": "npm run teltonika:step6a:quality && npm run teltonika:step5c:final",
+    "teltonika:step6b:lifecycle": "tsx server/teltonika/can/alert-lifecycle.selftest.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",
