@@ -81,6 +81,7 @@ async function main() {
     const overflow = safeMediaPath(root, imei, "events/overflow.bin");
     const writer2 = new BoundedMediaWriter(overflow, 2);
     assert.throws(() => writer2.write(Buffer.from("abc")), /exceeded/);
+    await writer2.abort();
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
