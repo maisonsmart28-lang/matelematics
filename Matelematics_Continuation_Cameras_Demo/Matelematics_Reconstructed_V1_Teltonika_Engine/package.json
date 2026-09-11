@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "security:p0-step3": "tsx scripts/security/p0-step3-audit.ts",
+    "security:p0-step4": "tsx scripts/security/p0-step4-role-audit.ts",
     "teltonika:server": "tsx server/teltonika/server.ts",
     "teltonika:simulate": "tsx server/teltonika/simulator.ts"
   },
