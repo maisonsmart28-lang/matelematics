@@ -34,28 +34,18 @@ function decodeImei(payload: Buffer): string {
 function verifyPacket(packet: Buffer): boolean {
   const long = packet[0] === 0x79 && packet[1] === 0x79;
   const lengthBytes = long ? 2 : 1;
-  const lengthOffset = 2;
-  const length = long ? packet.readUInt16BE(lengthOffset) : packet[lengthOffset];
+  const length = long ? packet.readUInt16BE(2) : packet[2];
   const expected = 2 + lengthBytes + length + 2;
 
   if (packet.length !== expected || packet.at(-2) !== 0x0d || packet.at(-1) !== 0x0a) {
     return false;
   }
 
-  const crcStart = 2;
-  const crcEnd = packet.length - 4;
   const expectedCrc = packet.readUInt16BE(packet.length - 4);
-  return crc16X25(packet.subarray(crcStart, crcEnd)) === expectedCrc;
+  return crc16X25(packet.subarray(2, packet.length - 4)) === expectedCrc;
 }
 
 export function buildAck(protocol: number, serial: number): Buffer {
-  const body = Buffer.alloc(5);
-  body[0] = 5;
-  body[1] = protocol;
-  body.writeUInt16BE(serial, 2);
-  const crc = crc16X25(body.subarray(0, 4));
-  body.writeUInt16BE(crc, 4 - 0); // overwritten below by complete packet builder
-
   const packet = Buffer.alloc(10);
   packet.writeUInt16BE(0x7878, 0);
   packet[2] = 5;
@@ -77,8 +67,7 @@ function parsePosition(packet: Buffer, imei: string): Gt06Position | null {
   const hour = bcd(info[3]);
   const minute = bcd(info[4]);
   const second = bcd(info[5]);
-  const gpsInfo = info[6];
-  const satellites = gpsInfo & 0x0f;
+  const satellites = info[6] & 0x0f;
   const latitudeRaw = info.readUInt32BE(7);
   const longitudeRaw = info.readUInt32BE(11);
   const speedKph = info[15];
@@ -93,7 +82,7 @@ function parsePosition(packet: Buffer, imei: string): Gt06Position | null {
   if (west) longitude = -longitude;
 
   const date = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
-  const serial = packet.readUInt16BE(packet.length - 6);
+  if (Number.isNaN(date.getTime())) return null;
 
   return {
     imei,
@@ -105,7 +94,7 @@ function parsePosition(packet: Buffer, imei: string): Gt06Position | null {
     satellites,
     gpsValid,
     protocol,
-    serial,
+    serial: packet.readUInt16BE(packet.length - 6),
     rawHex: packet.toString("hex"),
   };
 }
