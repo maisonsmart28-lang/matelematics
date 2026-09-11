@@ -8,7 +8,12 @@ import type {
 } from "../types";
 
 import {
+  resolveRegisteredCanContext,
+} from "./device-context";
+
+import {
   asciiIo,
+  numericIo,
 } from "./diagnostics";
 
 import {
@@ -27,7 +32,6 @@ import {
 import type {
   NormalizedCanV2,
 } from "./types-v2";
-
 
 export type CanNormalizationContext = {
   model?: SupportedDeviceModel | string | null;
@@ -63,20 +67,137 @@ function explicitLightProfile(
   return null;
 }
 
+function normalizeUnknownRealDevice(
+  telemetry: NormalizedTelemetry,
+): NormalizedCanV2 {
+  const ignitionRaw =
+    numericIo(
+      telemetry.io,
+      239,
+    );
+
+  const movementRaw =
+    numericIo(
+      telemetry.io,
+      240,
+    );
+
+  const externalMv =
+    numericIo(
+      telemetry.io,
+      66,
+    );
+
+  const internalMv =
+    numericIo(
+      telemetry.io,
+      67,
+    );
+
+  const speed = telemetry.speedKph;
+
+  return {
+    version: 2,
+    source: {
+      manufacturer: "teltonika",
+      profile: "unknown",
+      simulator: false,
+      mappingVersion: "2.0",
+    },
+    engine: {
+      rpm: null,
+      coolantTemperatureC: null,
+      loadPercent: null,
+      throttlePercent: null,
+      engineHours: null,
+    },
+    vehicle: {
+      speedKph: speed,
+      odometerKm: null,
+      ignition:
+        ignitionRaw === null
+          ? null
+          : ignitionRaw === 1,
+      movement:
+        movementRaw === null
+          ? speed > 0
+          : movementRaw === 1,
+    },
+    fuel: {
+      levelPercent: null,
+      levelLiters: null,
+      consumedLiters: null,
+      rateLph: null,
+      averageL100km: null,
+      adBluePercent: null,
+      adBlueLiters: null,
+    },
+    doors: {
+      frontLeft: null,
+      frontRight: null,
+      rearLeft: null,
+      rearRight: null,
+      hood: null,
+      trunk: null,
+    },
+    safety: {
+      seatbelt: null,
+      handbrake: null,
+    },
+    warnings: {
+      checkEngine: null,
+      abs: null,
+      airbag: null,
+      esp: null,
+      oilPressure: null,
+      tpms: null,
+    },
+    diagnostics: {
+      dtcCount: null,
+      active: [],
+      stored: [],
+    },
+    tracker: {
+      gsmSignal:
+        numericIo(
+          telemetry.io,
+          21,
+        ),
+      externalVoltage:
+        externalMv === null
+          ? null
+          : externalMv / 1000,
+      internalBatteryVoltage:
+        internalMv === null
+          ? null
+          : internalMv / 1000,
+      satellites:
+        telemetry.satellites,
+    },
+    rpm: null,
+    speed_kph: speed,
+    fuel_level_percent: null,
+    fuel_used_litres: null,
+    coolant_temperature_c: null,
+    throttle_percent: null,
+    odometer_km: null,
+    simulator: false,
+  };
+}
+
 /**
  * Normalize Teltonika CAN/vehicle telemetry.
  *
  * Step 5A rule: a real light-vehicle AVL ID is only interpreted when both a
- * supported device model and an explicit source profile are known. This stops
- * identical numeric AVL IDs from being guessed as different physical values.
+ * supported device model and an explicit source profile are known.
  *
- * Simulator profiles remain backward-compatible. The legacy heuristic path is
- * retained only when no Step 5A context is supplied, so existing development
- * and later FMC600/J1939 work are not silently broken by this sub-step.
+ * The real device model is resolved from the in-memory registry, which is
+ * populated from Supabase devices.model by loadDevicesFromSupabase. Existing
+ * callers can still pass an explicit context for tests or controlled imports.
  */
 export function normalizeCanV2(
   telemetry: NormalizedTelemetry,
-  context: CanNormalizationContext = {},
+  context?: CanNormalizationContext,
 ): NormalizedCanV2 {
   const io = telemetry.io;
 
@@ -86,30 +207,40 @@ export function normalizeCanV2(
       9005,
     );
 
-  if (
-    simProfile === "j1939"
-  ) {
+  if (simProfile === "j1939") {
     return normalizeJ1939(
       telemetry,
     );
   }
 
-  if (
-    simProfile === "light"
-  ) {
+  if (simProfile === "light") {
     return normalizeLightVehicle(
       telemetry,
     );
   }
 
+  const explicitContextSupplied =
+    context !== undefined;
+
+  const registeredContext =
+    explicitContextSupplied
+      ? null
+      : resolveRegisteredCanContext(
+          telemetry.imei,
+        );
+
   const model =
     supportedModel(
-      context.model,
+      explicitContextSupplied
+        ? context?.model
+        : registeredContext?.model,
     );
 
   const sourceProfile =
     explicitLightProfile(
-      context.sourceProfile,
+      explicitContextSupplied
+        ? context?.sourceProfile
+        : registeredContext?.sourceProfile,
     );
 
   if (
@@ -126,9 +257,23 @@ export function normalizeCanV2(
   }
 
   /*
-   * Backward-compatible path for callers that do not yet supply the Step 5A
-   * model/source context. This remains isolated from the new source-aware
-   * normalization and will be removed only after persistence wiring is tested.
+   * A registered real device or an explicit Step 5A context fails closed when
+   * its model/source combination is incomplete. Raw AVL remains persisted by
+   * the existing storage layer; only physical interpretation is withheld.
+   */
+  if (
+    explicitContextSupplied ||
+    registeredContext?.registered
+  ) {
+    return normalizeUnknownRealDevice(
+      telemetry,
+    );
+  }
+
+  /*
+   * Legacy fallback is kept only for unregistered development callers. It
+   * preserves existing simulator/manual tests while registered production
+   * devices no longer rely on heuristic source guessing.
    */
   const j1939Detected =
     io.io_88 !== undefined ||
