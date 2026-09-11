@@ -20,7 +20,8 @@
     "teltonika:step5b:device-context": "tsx server/teltonika/can/fms-device-context.selftest.ts",
     "teltonika:step5c:camera-avl": "tsx server/teltonika/camera/avl-catalog.selftest.ts",
     "teltonika:step5c:camera-media": "tsx server/teltonika/camera/media-protocol.selftest.ts",
-    "teltonika:step5c:camera-server": "tsx server/teltonika/camera/media-server.selftest.ts"
+    "teltonika:step5c:camera-server": "tsx server/teltonika/camera/media-server.selftest.ts",
+    "teltonika:step5c:camera-integration": "tsx server/teltonika/camera/integration.selftest.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",
