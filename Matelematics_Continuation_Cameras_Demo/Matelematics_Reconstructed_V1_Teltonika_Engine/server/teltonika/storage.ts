@@ -4,6 +4,11 @@ import { registerDevice } from "./registry";
 import type { NormalizedTelemetry } from "./types";
 
 import {
+  assessTelemetryQuality,
+  buildTelemetryIngestFingerprint,
+} from "./telemetry-quality";
+
+import {
   normalizeCanV2,
 } from "./can/normalizer";
 
@@ -1504,6 +1509,30 @@ async function syncCanAlerts({
     );
   }
 }
+
+async function markDeviceSeen(
+  deviceId: string,
+) {
+  const now =
+    new Date().toISOString();
+
+  const { error } =
+    await getSupabase()
+      .from("devices")
+      .update({
+        status: "online",
+        last_seen_at: now,
+        updated_at: now,
+      })
+      .eq("id", deviceId);
+
+  if (error) {
+    throw new Error(
+      `[Teltonika] Device status update failed: ${error.message}`,
+    );
+  }
+}
+
 /* ============================================================
    PERSISTENCE
    ============================================================ */
@@ -1538,32 +1567,86 @@ export async function persistTelemetry(
     );
   }
 
-  const recordedAt =
-    telemetry.timestamp;
-
-  const positionRow = {
-    company_id: device.company_id,
-    vehicle_id: device.vehicle_id,
-    device_id: device.id,
-
-    latitude: telemetry.latitude,
-    longitude: telemetry.longitude,
-    altitude: telemetry.altitude,
-    speed: telemetry.speedKph,
-    heading: telemetry.angle,
-
-    recorded_at: recordedAt,
-  };
-
-  const { error: positionError } =
-    await getSupabase()
-      .from("positions")
-      .insert(positionRow);
-
-  if (positionError) {
-    throw new Error(
-      `[Teltonika] Position insert failed: ${positionError.message}`,
+  const quality =
+    assessTelemetryQuality(
+      telemetry,
     );
+
+  const recordedAt =
+    quality.recordedAt;
+
+  const ingestFingerprint =
+    buildTelemetryIngestFingerprint(
+      telemetry,
+    );
+
+  const {
+    data: duplicateTelemetry,
+    error: duplicateLookupError,
+  } =
+    await getSupabase()
+      .from("telemetry")
+      .select("id")
+      .eq("device_id", device.id)
+      .contains(
+        "metadata",
+        {
+          ingest_fingerprint:
+            ingestFingerprint,
+        },
+      )
+      .limit(1)
+      .maybeSingle();
+
+  if (duplicateLookupError) {
+    throw new Error(
+      `[Teltonika] Telemetry duplicate lookup failed: ${duplicateLookupError.message}`,
+    );
+  }
+
+  if (duplicateTelemetry) {
+    await markDeviceSeen(
+      device.id,
+    );
+
+    return {
+      deviceId: device.id,
+      companyId: device.company_id,
+      vehicleId: device.vehicle_id,
+      recordedAt,
+      duplicate: true,
+      positionPersisted: false,
+      quality,
+    };
+  }
+
+  if (
+    quality.persistPosition
+  ) {
+    const positionRow = {
+      company_id: device.company_id,
+      vehicle_id: device.vehicle_id,
+      device_id: device.id,
+
+      latitude: telemetry.latitude,
+      longitude: telemetry.longitude,
+      altitude: telemetry.altitude,
+      speed: telemetry.speedKph,
+      heading: telemetry.angle,
+
+      recorded_at: recordedAt,
+    };
+
+    const { error: positionError } =
+      await getSupabase()
+        .from("positions")
+        .insert(positionRow);
+
+    if (positionError) {
+      throw new Error(
+        `[Teltonika] Position insert failed: ${positionError.message}`,
+      );
+    }
   }
 
   const codec =
@@ -1618,6 +1701,30 @@ export async function persistTelemetry(
       priority: telemetry.priority,
       event_id: telemetry.eventId,
       satellites: telemetry.satellites,
+      ingest_fingerprint:
+        ingestFingerprint,
+
+      telemetry_quality: {
+        accepted:
+          quality.accepted,
+
+        gps_fix_valid:
+          quality.gpsFixValid,
+
+        position_persisted:
+          quality.persistPosition,
+
+        reasons:
+          quality.reasons,
+
+        original_timestamp:
+          telemetry.timestamp,
+
+        recorded_at_source:
+          quality.accepted
+            ? "device"
+            : "received_at",
+      },
 
       io_normalized:
         ioMetadata,
@@ -1650,38 +1757,36 @@ export async function persistTelemetry(
     );
   }
 
-  await syncCanAlerts({
-    companyId: device.company_id,
-    vehicleId: device.vehicle_id,
-    deviceId: device.id,
-    recordedAt,
-    telemetry,
-    canPayload,
-  });
-
-  const now =
-    new Date().toISOString();
-
-  const { error: deviceUpdateError } =
-    await getSupabase()
-      .from("devices")
-      .update({
-        status: "online",
-        last_seen_at: now,
-        updated_at: now,
-      })
-      .eq("id", device.id);
-
-  if (deviceUpdateError) {
-    throw new Error(
-      `[Teltonika] Device status update failed: ${deviceUpdateError.message}`,
-    );
+  /*
+   * Hard-invalid telemetry is archived for traceability but is never allowed
+   * to create/resolve business alerts. A valid no-fix record may still carry
+   * useful CAN/diagnostic data, so it remains eligible for alert processing.
+   */
+  if (
+    quality.accepted
+  ) {
+    await syncCanAlerts({
+      companyId: device.company_id,
+      vehicleId: device.vehicle_id,
+      deviceId: device.id,
+      recordedAt,
+      telemetry,
+      canPayload,
+    });
   }
+
+  await markDeviceSeen(
+    device.id,
+  );
 
   return {
     deviceId: device.id,
     companyId: device.company_id,
     vehicleId: device.vehicle_id,
     recordedAt,
+    duplicate: false,
+    positionPersisted:
+      quality.persistPosition,
+    quality,
   };
 }

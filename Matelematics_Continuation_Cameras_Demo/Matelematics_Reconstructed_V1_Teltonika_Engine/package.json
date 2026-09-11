@@ -10,7 +10,21 @@
     "security:p0-step3": "tsx scripts/security/p0-step3-audit.ts",
     "security:p0-step4": "tsx scripts/security/p0-step4-role-audit.ts",
     "teltonika:server": "tsx server/teltonika/server.ts",
-    "teltonika:simulate": "tsx server/teltonika/simulator.ts"
+    "teltonika:simulate": "tsx server/teltonika/simulator.ts",
+    "teltonika:step5a:catalog": "tsx server/teltonika/avl/catalog.selftest.ts",
+    "teltonika:step5a:codec": "tsx server/teltonika/codec8.selftest.ts",
+    "teltonika:step5a:can": "tsx server/teltonika/can/profiled-light-vehicle.selftest.ts",
+    "teltonika:step5a:device-context": "tsx server/teltonika/can/device-context.selftest.ts",
+    "teltonika:step5b:fms-catalog": "tsx server/teltonika/can/fms-catalog.selftest.ts",
+    "teltonika:step5b:j1939": "tsx server/teltonika/can/j1939.selftest.ts",
+    "teltonika:step5b:device-context": "tsx server/teltonika/can/fms-device-context.selftest.ts",
+    "teltonika:step5c:camera-avl": "tsx server/teltonika/camera/avl-catalog.selftest.ts",
+    "teltonika:step5c:camera-media": "tsx server/teltonika/camera/media-protocol.selftest.ts",
+    "teltonika:step5c:camera-server": "tsx server/teltonika/camera/media-server.selftest.ts",
+    "teltonika:step5c:camera-integration": "tsx server/teltonika/camera/integration.selftest.ts",
+    "teltonika:step5c:final": "npm run teltonika:step5c:camera-avl && npm run teltonika:step5c:camera-media && npm run teltonika:step5c:camera-server && npm run teltonika:step5c:camera-integration && npm run teltonika:step5a:catalog && npm run teltonika:step5a:codec && npm run teltonika:step5a:can && npm run teltonika:step5a:device-context && npm run teltonika:step5b:fms-catalog && npm run teltonika:step5b:j1939 && npm run teltonika:step5b:device-context && npm run build",
+    "teltonika:step6a:quality": "tsx server/teltonika/telemetry-quality.selftest.ts",
+    "teltonika:step6a:final": "npm run teltonika:step6a:quality && npm run teltonika:step5c:final"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",

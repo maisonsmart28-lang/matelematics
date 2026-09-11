@@ -1,4 +1,4 @@
-﻿export type TeltonikaCodec = 8 | 142;
+export type TeltonikaCodec = 8 | 142;
 
 export interface GpsData {
   longitude: number;
@@ -11,8 +11,21 @@ export interface GpsData {
 
 export interface IoValue {
   id: number;
+  /**
+   * Compatibility value used by the current normalization layer.
+   *
+   * Fixed-width unsigned values that fit safely in a JavaScript number are
+   * numbers. Fixed-width 64-bit values above Number.MAX_SAFE_INTEGER are kept
+   * as exact decimal strings. Codec 8 Extended NX values remain hexadecimal
+   * strings until a typed AVL catalog definition interprets them.
+   */
   value: number | string;
-  size: 1 | 2 | 4 | 8;
+  /** Exact number of value bytes received on the wire. */
+  size: number;
+  /** Exact raw bytes, lower-case hexadecimal, before any typed interpretation. */
+  rawHex: string;
+  /** Whether the value came from a fixed-width group or Codec 8E NX. */
+  storage: "fixed" | "variable";
 }
 
 export interface TeltonikaRecord {
@@ -58,4 +71,10 @@ export interface DeviceRegistration {
   clientId: string;
   vehicleId: string;
   label: string;
+  /**
+   * Real device model as loaded from the devices table when available.
+   * Legacy callers may omit it; registerDevice derives it from label so the
+   * existing Supabase loader remains backward-compatible during Step 5A.
+   */
+  model?: string | null;
 }
