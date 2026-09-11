@@ -12,7 +12,8 @@
     "teltonika:server": "tsx server/teltonika/server.ts",
     "teltonika:simulate": "tsx server/teltonika/simulator.ts",
     "teltonika:step5a:catalog": "tsx server/teltonika/avl/catalog.selftest.ts",
-    "teltonika:step5a:codec": "tsx server/teltonika/codec8.selftest.ts"
+    "teltonika:step5a:codec": "tsx server/teltonika/codec8.selftest.ts",
+    "teltonika:step5a:can": "tsx server/teltonika/can/profiled-light-vehicle.selftest.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",
