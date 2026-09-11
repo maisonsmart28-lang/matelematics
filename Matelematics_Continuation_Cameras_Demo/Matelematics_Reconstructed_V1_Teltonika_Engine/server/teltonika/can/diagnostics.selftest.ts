@@ -98,8 +98,22 @@ assert.deepEqual(
   "J1939 SPN/FMI diagnostic identities must be canonical and stable",
 );
 
+assert.deepEqual(
+  simulatorDiagnostics({
+    io_9001:
+      hex("P0069"),
+  }),
+  {
+    active: [],
+    stored: [],
+  },
+  "Simulator diagnostic IDs without explicit AVL 9005 profile must fail closed",
+);
+
 const diagnostics =
   simulatorDiagnostics({
+    io_9005:
+      hex("j1939"),
     io_9001:
       hex("p0069;P0101;p0069"),
     io_9003:
