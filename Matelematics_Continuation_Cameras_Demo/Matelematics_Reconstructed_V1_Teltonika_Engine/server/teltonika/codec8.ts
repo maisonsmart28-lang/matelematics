@@ -78,6 +78,49 @@ class Reader {
   }
 }
 
+function exactUnsignedValue(raw: Buffer): number | string {
+  if (raw.length === 1) {
+    return raw.readUInt8(0);
+  }
+
+  if (raw.length === 2) {
+    return raw.readUInt16BE(0);
+  }
+
+  if (raw.length === 4) {
+    return raw.readUInt32BE(0);
+  }
+
+  if (raw.length === 8) {
+    const value = raw.readBigUInt64BE(0);
+    return value <= BigInt(Number.MAX_SAFE_INTEGER)
+      ? Number(value)
+      : value.toString(10);
+  }
+
+  throw new Error(`Unsupported fixed Teltonika IO width: ${raw.length}`);
+}
+
+function fixedIoValue(id: number, size: 1 | 2 | 4 | 8, raw: Buffer): IoValue {
+  return {
+    id,
+    value: exactUnsignedValue(raw),
+    size,
+    rawHex: raw.toString("hex"),
+    storage: "fixed",
+  };
+}
+
+function variableIoValue(id: number, raw: Buffer): IoValue {
+  return {
+    id,
+    value: raw.toString("hex"),
+    size: raw.length,
+    rawHex: raw.toString("hex"),
+    storage: "variable",
+  };
+}
+
 function readGps(reader: Reader): GpsData {
   // Teltonika AVL GPS coordinates are signed integers in 1e-7 degrees.
   const longitude = reader.i32() / 10_000_000;
@@ -97,7 +140,10 @@ function readGps(reader: Reader): GpsData {
   };
 }
 
-function readIo(reader: Reader, codec: TeltonikaCodec): { eventId: number; io: IoValue[] } {
+function readIo(
+  reader: Reader,
+  codec: TeltonikaCodec,
+): { eventId: number; io: IoValue[] } {
   const extended = codec === 142;
   const idWidth = extended ? 2 : 1;
   const countWidth = extended ? 2 : 1;
@@ -107,7 +153,8 @@ function readIo(reader: Reader, codec: TeltonikaCodec): { eventId: number; io: I
   const readCount = () => (countWidth === 2 ? reader.u16() : reader.u8());
 
   const eventId = readId();
-  readCount(); // total IO count; group counts follow.
+  const totalIoCount = readCount();
+  let parsedIoCount = 0;
 
   const groups: Array<1 | 2 | 4 | 8> = [1, 2, 4, 8];
 
@@ -116,22 +163,13 @@ function readIo(reader: Reader, codec: TeltonikaCodec): { eventId: number; io: I
 
     for (let index = 0; index < count; index += 1) {
       const id = readId();
-      let value: number;
-
-      if (size === 1) value = reader.u8();
-      else if (size === 2) value = reader.u16();
-      else if (size === 4) value = reader.u32();
-      else {
-        const raw = reader.u64();
-        const maxSafe = BigInt(Number.MAX_SAFE_INTEGER);
-        value = raw <= maxSafe ? Number(raw) : Number(raw % (maxSafe + 1n));
-      }
-
-      values.push({ id, value, size });
+      const raw = reader.bytes(size);
+      values.push(fixedIoValue(id, size, raw));
+      parsedIoCount += 1;
     }
   }
 
-  // Codec 8 Extended additionally supports variable-length IO elements (NX).
+  // Codec 8 Extended additionally supports NX variable-length IO elements.
   if (extended) {
     const variableCount = readCount();
 
@@ -139,8 +177,15 @@ function readIo(reader: Reader, codec: TeltonikaCodec): { eventId: number; io: I
       const id = readId();
       const length = reader.u16();
       const raw = reader.bytes(length);
-      values.push({ id, value: raw.toString("hex"), size: 8 });
+      values.push(variableIoValue(id, raw));
+      parsedIoCount += 1;
     }
+  }
+
+  if (parsedIoCount !== totalIoCount) {
+    throw new Error(
+      `Teltonika IO count mismatch: header says ${totalIoCount}, parsed ${parsedIoCount}`,
+    );
   }
 
   return { eventId, io: values };
@@ -148,6 +193,10 @@ function readIo(reader: Reader, codec: TeltonikaCodec): { eventId: number; io: I
 
 function parseRecord(reader: Reader, codec: TeltonikaCodec): TeltonikaRecord {
   const timestampMs = reader.u64();
+  if (timestampMs > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error(`Teltonika timestamp exceeds JavaScript safe integer range: ${timestampMs}`);
+  }
+
   const priority = reader.u8();
   const gps = readGps(reader);
   const { eventId, io } = readIo(reader, codec);
