@@ -26,7 +26,9 @@
     "teltonika:step6a:quality": "tsx server/teltonika/telemetry-quality.selftest.ts",
     "teltonika:step6a:final": "npm run teltonika:step6a:quality && npm run teltonika:step5c:final",
     "teltonika:step6b:lifecycle": "tsx server/teltonika/can/alert-lifecycle.selftest.ts",
-    "teltonika:step6b:final": "npm run teltonika:step6b:lifecycle && npm run teltonika:step6a:final"
+    "teltonika:step6b:final": "npm run teltonika:step6b:lifecycle && npm run teltonika:step6a:final",
+    "teltonika:step6c:diagnostics": "tsx server/teltonika/can/diagnostics.selftest.ts",
+    "teltonika:step6c:final": "npm run teltonika:step6c:diagnostics && npm run teltonika:step6b:final"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",

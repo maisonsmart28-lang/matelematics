@@ -2,6 +2,8 @@ import type {
   DiagnosticCode,
 } from "./types-v2";
 
+const MAX_DIAGNOSTIC_CODE_LENGTH = 80;
+
 export function numericIo(
   io: Record<string, number | string>,
   id: number,
@@ -35,77 +37,194 @@ export function asciiIo(
 
   if (
     typeof value !== "string" ||
-    value.length === 0
+    value.length === 0 ||
+    value.length % 2 !== 0 ||
+    !/^[0-9a-fA-F]+$/.test(value)
   ) {
     return null;
   }
 
-  try {
-    return Buffer
+  const decoded =
+    Buffer
       .from(value, "hex")
       .toString("utf8")
       .replace(/\0/g, "")
       .trim();
-  } catch {
+
+  if (
+    decoded.length === 0 ||
+    decoded.includes("\uFFFD")
+  ) {
     return null;
   }
+
+  return decoded;
+}
+
+function canonicalDiagnosticCode(
+  value: string,
+) {
+  const cleaned =
+    value
+      .replace(/[\u0000-\u001F\u007F]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, MAX_DIAGNOSTIC_CODE_LENGTH);
+
+  if (!cleaned) {
+    return null;
+  }
+
+  if (/^[PCBU][0-9A-F]{4}$/i.test(cleaned)) {
+    return cleaned.toUpperCase();
+  }
+
+  const j1939 =
+    cleaned.match(
+      /^SPN\s*[:#-]?\s*(\d+)\s+FMI\s*[:#-]?\s*(\d+)$/i,
+    );
+
+  if (j1939) {
+    return `SPN ${j1939[1]} FMI ${j1939[2]}`;
+  }
+
+  return cleaned;
+}
+
+export function parseDiagnosticPayload({
+  payload,
+  source,
+  status,
+}: {
+  payload: string | null;
+  source: DiagnosticCode["source"];
+  status: DiagnosticCode["status"];
+}): DiagnosticCode[] {
+  if (!payload) {
+    return [];
+  }
+
+  const result: DiagnosticCode[] = [];
+  const seen = new Set<string>();
+
+  for (
+    const rawCode of
+    payload.split(/[\r\n,;|]+/)
+  ) {
+    const code =
+      canonicalDiagnosticCode(rawCode);
+
+    if (!code) {
+      continue;
+    }
+
+    const key =
+      `${source}|${status}|${code.toUpperCase()}`;
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+
+    result.push({
+      code,
+      source,
+      status,
+    });
+  }
+
+  return result;
+}
+
+function mergeDiagnostics(
+  ...groups: DiagnosticCode[][]
+) {
+  const result: DiagnosticCode[] = [];
+  const seen = new Set<string>();
+
+  for (const group of groups) {
+    for (const diagnostic of group) {
+      const key =
+        `${diagnostic.source}|${diagnostic.status}|${diagnostic.code.toUpperCase()}`;
+
+      if (seen.has(key)) {
+        continue;
+      }
+
+      seen.add(key);
+      result.push(diagnostic);
+    }
+  }
+
+  return result;
 }
 
 /*
- * 9001 and 9003 are MATELEMATICS SIMULATOR ONLY.
+ * 9001, 9003, 9004 and 9005 are MATELEMATICS SIMULATOR ONLY.
  *
- * They are deliberately outside the official mapping layer.
+ * They are deliberately outside the official Teltonika mapping layer.
+ * Simulator DTCs are accepted only when AVL 9005 contains an explicit
+ * supported simulator profile marker. A production record that merely
+ * contains one of the diagnostic simulator IDs therefore fails closed.
  *
  * 9001 = simulated light vehicle DTC text
  * 9003 = simulated J1939 DM1 text
  * 9004 = simulated J1939 DM2 text
- * 9005 = simulator profile name
+ * 9005 = simulator profile name ("light" or "j1939")
  */
-
 export function simulatorDiagnostics(
   io: Record<string, number | string>,
 ): {
   active: DiagnosticCode[];
   stored: DiagnosticCode[];
 } {
-  const active: DiagnosticCode[] = [];
-  const stored: DiagnosticCode[] = [];
+  const simulatorProfile =
+    asciiIo(io, 9005);
 
-  const obd =
-    asciiIo(io, 9001);
+  if (
+    simulatorProfile !== "light" &&
+    simulatorProfile !== "j1939"
+  ) {
+    return {
+      active: [],
+      stored: [],
+    };
+  }
 
-  if (obd) {
-    active.push({
-      code: obd,
+  const obdActive =
+    parseDiagnosticPayload({
+      payload:
+        asciiIo(io, 9001),
       source: "simulator",
       status: "active",
     });
-  }
 
-  const dm1 =
-    asciiIo(io, 9003);
-
-  if (dm1) {
-    active.push({
-      code: dm1,
+  const dm1Active =
+    parseDiagnosticPayload({
+      payload:
+        asciiIo(io, 9003),
       source: "j1939_dm1",
       status: "active",
     });
-  }
 
-  const dm2 =
-    asciiIo(io, 9004);
-
-  if (dm2) {
-    stored.push({
-      code: dm2,
+  const dm2Stored =
+    parseDiagnosticPayload({
+      payload:
+        asciiIo(io, 9004),
       source: "j1939_dm2",
       status: "stored",
     });
-  }
 
   return {
-    active,
-    stored,
+    active:
+      mergeDiagnostics(
+        obdActive,
+        dm1Active,
+      ),
+    stored:
+      mergeDiagnostics(
+        dm2Stored,
+      ),
   };
 }
