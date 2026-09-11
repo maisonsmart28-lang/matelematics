@@ -10,13 +10,14 @@
     "security:p0-step3": "tsx scripts/security/p0-step3-audit.ts",
     "security:p0-step4": "tsx scripts/security/p0-step4-role-audit.ts",
     "teltonika:server": "tsx server/teltonika/server.ts",
-    "teltonika:simulate": "tsx server/teltonika/simulator.ts"
+    "teltonika:simulate": "tsx server/teltonika/simulator.ts",
+    "teltonika:step5a:catalog": "tsx server/teltonika/avl/catalog.selftest.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",
     "@supabase/supabase-js": "^2.112.4",
     "framer-motion": "^12.42.2",
-    "leaflet": "^1.9.4",
+    "leaflet": "^1.9.22",
     "lucide-react": "^1.21.0",
     "next": "16.2.9",
     "nodemailer": "^9.0.3",
