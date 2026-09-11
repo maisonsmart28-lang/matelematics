@@ -37,12 +37,18 @@ function verifyPacket(packet: Buffer): boolean {
   const length = long ? packet.readUInt16BE(2) : packet[2];
   const expected = 2 + lengthBytes + length + 2;
 
-  if (packet.length !== expected || packet.at(-2) !== 0x0d || packet.at(-1) !== 0x0a) {
+  if (
+    packet.length !== expected ||
+    packet.at(-2) !== 0x0d ||
+    packet.at(-1) !== 0x0a
+  ) {
     return false;
   }
 
+  const crcStart = 2;
+  const crcEnd = packet.length - 4;
   const expectedCrc = packet.readUInt16BE(packet.length - 4);
-  return crc16X25(packet.subarray(2, packet.length - 4)) === expectedCrc;
+  return crc16X25(packet.subarray(crcStart, crcEnd)) === expectedCrc;
 }
 
 export function buildAck(protocol: number, serial: number): Buffer {
@@ -50,7 +56,7 @@ export function buildAck(protocol: number, serial: number): Buffer {
   packet.writeUInt16BE(0x7878, 0);
   packet[2] = 5;
   packet[3] = protocol;
-  packet.writeUInt16BE(serial, 4);
+  packet.writeUInt16BE(serial & 0xffff, 4);
   packet.writeUInt16BE(crc16X25(packet.subarray(2, 6)), 6);
   packet.writeUInt16BE(0x0d0a, 8);
   return packet;
@@ -76,13 +82,14 @@ function parsePosition(packet: Buffer, imei: string): Gt06Position | null {
   const west = (courseStatus & 0x0800) !== 0;
   const north = (courseStatus & 0x0400) !== 0;
   const angle = courseStatus & 0x03ff;
-  let latitude = latitudeRaw / 1800000;
-  let longitude = longitudeRaw / 1800000;
+
+  let latitude = latitudeRaw / 1_800_000;
+  let longitude = longitudeRaw / 1_800_000;
   if (!north) latitude = -latitude;
   if (west) longitude = -longitude;
 
   const date = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
-  if (Number.isNaN(date.getTime())) return null;
+  const serial = packet.readUInt16BE(packet.length - 6);
 
   return {
     imei,
@@ -94,7 +101,7 @@ function parsePosition(packet: Buffer, imei: string): Gt06Position | null {
     satellites,
     gpsValid,
     protocol,
-    serial: packet.readUInt16BE(packet.length - 6),
+    serial,
     rawHex: packet.toString("hex"),
   };
 }
@@ -108,25 +115,35 @@ export function attachGt06Protocol(socket: net.Socket, hooks: Hooks): void {
 
     while (buffer.length >= 5) {
       let start = -1;
-      for (let i = 0; i < buffer.length - 1; i += 1) {
-        if ((buffer[i] === 0x78 && buffer[i + 1] === 0x78) ||
-            (buffer[i] === 0x79 && buffer[i + 1] === 0x79)) {
-          start = i;
+
+      for (let index = 0; index < buffer.length - 1; index += 1) {
+        if (
+          (buffer[index] === 0x78 && buffer[index + 1] === 0x78) ||
+          (buffer[index] === 0x79 && buffer[index + 1] === 0x79)
+        ) {
+          start = index;
           break;
         }
       }
-      if (start < 0) { buffer = Buffer.alloc(0); return; }
+
+      if (start < 0) {
+        buffer = Buffer.alloc(0);
+        return;
+      }
+
       if (start > 0) buffer = buffer.subarray(start);
 
-      const long = buffer[0] === 0x79;
+      const long = buffer[0] === 0x79 && buffer[1] === 0x79;
       const lengthBytes = long ? 2 : 1;
       if (buffer.length < 2 + lengthBytes) return;
+
       const length = long ? buffer.readUInt16BE(2) : buffer[2];
       const total = 2 + lengthBytes + length + 2;
       if (buffer.length < total) return;
 
       const packet = buffer.subarray(0, total);
       buffer = buffer.subarray(total);
+
       if (!verifyPacket(packet)) {
         console.warn(`[GT06] invalid CRC/frame ${packet.toString("hex")}`);
         continue;
