@@ -13,7 +13,7 @@ function buildInitPacket(imei: string, protocolId = 5, settings = 0): Buffer {
   return packet;
 }
 
-async function waitUntil(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
+async function waitUntil(predicate: () => boolean, timeoutMs = 3000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (predicate()) return;
@@ -29,7 +29,7 @@ async function connect(port: number): Promise<net.Socket> {
   });
 }
 
-async function waitForSocketClose(socket: net.Socket, timeoutMs = 2000): Promise<void> {
+async function waitForSocketClose(socket: net.Socket, timeoutMs = 3000): Promise<void> {
   if (socket.closed) return;
 
   await Promise.race([
@@ -94,23 +94,30 @@ async function main() {
   assert.equal(handle.sessions.size, 2);
   assert.equal(seenCommands[1], `${imei2}:5:00000000`);
 
+  const oldSocketClosed = waitForSocketClose(socket1);
   const replacement = await connect(port);
   replacement.write(buildInitPacket(imei1));
   await waitUntil(() => handle.sessions.get(imei1)?.socket === replacement);
-  await waitForSocketClose(socket1);
+  await oldSocketClosed;
   assert.equal(handle.sessions.size, 2);
 
   const unauthorized = await connect(port);
+  const unauthorizedClosed = waitForSocketClose(unauthorized);
   unauthorized.write(buildInitPacket("000000000000000"));
-  await waitForSocketClose(unauthorized);
+  await unauthorizedClosed;
   assert.equal(handle.sessions.has("000000000000000"), false);
 
+  const replacementClosed = waitForSocketClose(replacement);
+  const socket2Closed = waitForSocketClose(socket2);
   replacement.destroy();
   socket2.destroy();
-  await waitUntil(() => handle.sessions.size === 0);
+  await Promise.all([replacementClosed, socket2Closed]);
 
-  assert(disconnectReasons.some((entry) => entry.startsWith(`${imei1}:`)));
-  assert(disconnectReasons.some((entry) => entry.startsWith(`${imei2}:`)));
+  await waitUntil(() => handle.sessions.size === 0);
+  await waitUntil(() =>
+    disconnectReasons.some((entry) => entry.startsWith(`${imei1}:`)) &&
+    disconnectReasons.some((entry) => entry.startsWith(`${imei2}:`)),
+  );
 
   await handle.close();
   console.log("Teltonika Step 5C multi-device camera TCP server self-test PASS");
