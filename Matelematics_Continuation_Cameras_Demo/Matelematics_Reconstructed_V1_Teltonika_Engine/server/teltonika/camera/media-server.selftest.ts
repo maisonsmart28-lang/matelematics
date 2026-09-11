@@ -83,6 +83,9 @@ async function main() {
   assert.equal(handle.sessions.size, 1);
   assert.equal(seenCommands[0], `${imei1}:3:00000001`);
 
+  const firstServerSocket = handle.sessions.get(imei1)?.socket;
+  assert(firstServerSocket);
+
   const socket2 = await connect(port);
   socket2.write(Buffer.concat([
     buildInitPacket(imei2),
@@ -97,7 +100,11 @@ async function main() {
   const oldSocketClosed = waitForSocketClose(socket1);
   const replacement = await connect(port);
   replacement.write(buildInitPacket(imei1));
-  await waitUntil(() => handle.sessions.get(imei1)?.socket === replacement);
+
+  await waitUntil(() => {
+    const current = handle.sessions.get(imei1);
+    return Boolean(current && current.socket !== firstServerSocket);
+  });
   await oldSocketClosed;
   assert.equal(handle.sessions.size, 2);
 
