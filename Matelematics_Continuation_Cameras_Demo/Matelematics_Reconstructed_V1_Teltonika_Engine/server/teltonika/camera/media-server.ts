@@ -54,8 +54,10 @@ export function createCameraMediaServer(options: CameraMediaServerOptions = {}):
   }
 
   const sessions = new Map<string, CameraMediaSession>();
+  const sockets = new Set<net.Socket>();
 
   const server = net.createServer((socket) => {
+    sockets.add(socket);
     socket.setNoDelay(true);
     socket.setKeepAlive(true, Math.min(idleTimeoutMs, 30_000));
     socket.setTimeout(idleTimeoutMs);
@@ -108,7 +110,7 @@ export function createCameraMediaServer(options: CameraMediaServerOptions = {}):
 
             const previous = sessions.get(init.imei);
             if (previous && previous.socket !== socket && !previous.socket.destroyed) {
-              previous.socket.destroy(new Error("camera session replaced by newer connection"));
+              previous.socket.destroy();
             }
 
             session = {
@@ -165,6 +167,7 @@ export function createCameraMediaServer(options: CameraMediaServerOptions = {}):
     });
 
     socket.on("close", () => {
+      sockets.delete(socket);
       void disconnect("closed");
     });
   });
@@ -176,8 +179,8 @@ export function createCameraMediaServer(options: CameraMediaServerOptions = {}):
     sessions,
     address: () => server.address(),
     close: async () => {
-      for (const session of sessions.values()) {
-        if (!session.socket.destroyed) session.socket.destroy();
+      for (const socket of sockets) {
+        if (!socket.destroyed) socket.destroy();
       }
       sessions.clear();
 
