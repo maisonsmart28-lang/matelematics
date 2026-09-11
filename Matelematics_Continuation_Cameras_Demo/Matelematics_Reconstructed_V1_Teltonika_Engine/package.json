@@ -14,7 +14,8 @@
     "teltonika:step5a:catalog": "tsx server/teltonika/avl/catalog.selftest.ts",
     "teltonika:step5a:codec": "tsx server/teltonika/codec8.selftest.ts",
     "teltonika:step5a:can": "tsx server/teltonika/can/profiled-light-vehicle.selftest.ts",
-    "teltonika:step5a:device-context": "tsx server/teltonika/can/device-context.selftest.ts"
+    "teltonika:step5a:device-context": "tsx server/teltonika/can/device-context.selftest.ts",
+    "teltonika:step5b:fms-catalog": "tsx server/teltonika/can/fms-catalog.selftest.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",
@@ -26,7 +27,7 @@
     "nodemailer": "^9.0.3",
     "pdf-lib": "^1.17.1",
     "react": "19.2.4",
-    "react-dom": "^19.2.4",
+    "react-dom": "19.2.4",
     "react-hook-form": "^7.80.0",
     "react-leaflet": "^5.0.0",
     "recharts": "^3.10.1",
