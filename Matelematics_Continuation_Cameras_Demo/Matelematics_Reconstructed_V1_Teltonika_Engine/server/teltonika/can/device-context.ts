@@ -7,9 +7,13 @@ import {
   findDeviceByImei,
 } from "../registry";
 
+export type RegisteredCanSourceProfile =
+  | AvlSourceProfile
+  | "j1939_fms";
+
 export type RegisteredCanContext = {
   model: SupportedDeviceModel | null;
-  sourceProfile: AvlSourceProfile | null;
+  sourceProfile: RegisteredCanSourceProfile | null;
   registered: boolean;
   rawModel: string | null;
 };
@@ -42,11 +46,32 @@ export function parseSupportedDeviceModel(
   return null;
 }
 
+function explicitlyRequestsFmsJ1939(
+  rawModel: string | null | undefined,
+) {
+  const text = canonicalText(rawModel);
+
+  return (
+    text.includes("J1939") ||
+    text.includes("FMS")
+  );
+}
+
 export function inferSourceProfileFromDeviceModel(
   model: SupportedDeviceModel | null,
   rawModel: string | null | undefined,
-): AvlSourceProfile | null {
+): RegisteredCanSourceProfile | null {
   const text = canonicalText(rawModel);
+
+  /*
+   * Step 5B: FMS/J1939 must be explicitly configured in the registered device
+   * label/model metadata. We deliberately do not infer FMS from "FMC600" alone
+   * because that exact hardware model is not verified in the current official
+   * Teltonika documentation set.
+   */
+  if (explicitlyRequestsFmsJ1939(rawModel)) {
+    return "j1939_fms";
+  }
 
   if (
     text.includes("ALL-CAN300") ||
@@ -74,20 +99,10 @@ export function inferSourceProfileFromDeviceModel(
     return "fmc125_peripheral";
   }
 
-  /*
-   * FMC150 is the Step 5A model with an integrated CAN chip profile in the
-   * current catalog. External adapter / OBD markers above always win.
-   */
   if (model === "FMC150") {
     return "fmc150_can_chip";
   }
 
-  /*
-   * FMB140 and FMC125 are intentionally not guessed from the base model alone.
-   * Their CAN/OBD/peripheral source must be explicit in the configured model
-   * label, otherwise normalization fails closed instead of assigning false
-   * physical meanings to overlapping AVL IDs.
-   */
   return null;
 }
 
