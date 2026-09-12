@@ -78,6 +78,7 @@ export default function MapComponent() {
         const mapped: Vehicle[] = (payload.vehicles ?? [])
           .filter(
             (vehicle) =>
+              vehicle.motionStatus !== "Hors ligne" &&
               vehicle.position?.lat !== null &&
               vehicle.position?.lat !== undefined &&
               vehicle.position?.lng !== null &&
@@ -89,9 +90,7 @@ export default function MapComponent() {
             status:
               vehicle.motionStatus === "En mouvement"
                 ? ("en route" as const)
-                : vehicle.motionStatus === "Hors ligne"
-                  ? ("offline" as const)
-                  : ("online" as const),
+                : ("online" as const),
             vehicleId: vehicle.id,
           }));
 
