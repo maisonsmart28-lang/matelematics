@@ -78,14 +78,8 @@ async function authenticate(request: NextRequest) {
   return { admin, profile: profile as Profile };
 }
 
-function getMotionStatus(lastSeenAt: string | null, speed: number | null) {
-  if (!lastSeenAt) {
-    return "Hors ligne" as const;
-  }
-
-  const lastSeenMs = new Date(lastSeenAt).getTime();
-
-  if (!Number.isFinite(lastSeenMs) || Date.now() - lastSeenMs > 120_000) {
+function getMotionStatus(connectivityStatus: string, speed: number | null) {
+  if (connectivityStatus !== "En ligne") {
     return "Hors ligne" as const;
   }
 
@@ -228,7 +222,7 @@ export async function GET(request: NextRequest) {
         registration: vehicle.registration,
         driver: "Non affecté",
         status: connectivityStatus,
-        motionStatus: getMotionStatus(device?.last_seen_at ?? null, speed),
+        motionStatus: getMotionStatus(connectivityStatus, speed),
         trackerId: device?.id ?? null,
         trackerStatus: device?.status ?? null,
         lastSeenAt: device?.last_seen_at ?? null,
