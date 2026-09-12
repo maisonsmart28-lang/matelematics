@@ -16,6 +16,7 @@ import {
 import { supabase } from "../../components/supabase";
 
 type VehicleStatus = "En mouvement" | "À l'arrêt" | "Hors ligne";
+type HistoryWindowHours = 1 | 6 | 24 | 168 | 720 | 2160 | 4320 | 8760;
 
 type FleetVehicle = {
   id: string;
@@ -45,6 +46,14 @@ type HistoryPoint = {
   recordedAt: string;
 };
 
+type HistoryMeta = {
+  hours: HistoryWindowHours;
+  from: string;
+  to: string;
+  truncated: boolean;
+  maxPoints: number;
+};
+
 type RoutePoint = {
   lat: number;
   lng: number;
@@ -56,6 +65,17 @@ type LeafletVehicle = {
   status: "online" | "en route" | "offline";
   vehicleId: string;
 };
+
+const HISTORY_WINDOWS: Array<{ value: HistoryWindowHours; label: string }> = [
+  { value: 1, label: "1 h" },
+  { value: 6, label: "6 h" },
+  { value: 24, label: "24 h" },
+  { value: 168, label: "7 jours" },
+  { value: 720, label: "30 jours" },
+  { value: 2160, label: "3 mois" },
+  { value: 4320, label: "6 mois" },
+  { value: 8760, label: "1 an" },
+];
 
 const LeafletMap = dynamic(() => import("../LeafletMap"), {
   ssr: false,
@@ -130,6 +150,9 @@ export default function MapPage() {
   const [vehicles, setVehicles] = useState<FleetVehicle[]>([]);
   const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null);
   const [historyPoints, setHistoryPoints] = useState<HistoryPoint[]>([]);
+  const [historyWindowHours, setHistoryWindowHours] =
+    useState<HistoryWindowHours>(24);
+  const [historyMeta, setHistoryMeta] = useState<HistoryMeta | null>(null);
   const [loading, setLoading] = useState(true);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -213,6 +236,7 @@ export default function MapPage() {
 
     if (!vehicleId) {
       setHistoryPoints([]);
+      setHistoryMeta(null);
       setHistoryError(null);
       return () => {
         cancelled = true;
@@ -233,7 +257,7 @@ export default function MapPage() {
         }
 
         const response = await fetch(
-          `/api/dashboard/vehicles/${encodeURIComponent(currentVehicleId)}/history`,
+          `/api/dashboard/vehicles/${encodeURIComponent(currentVehicleId)}/history?hours=${historyWindowHours}`,
           {
             cache: "no-store",
             headers: {
@@ -243,7 +267,14 @@ export default function MapPage() {
         );
 
         const payload = (await response.json()) as {
+          window?: {
+            hours?: HistoryWindowHours;
+            from?: string;
+            to?: string;
+          };
           points?: HistoryPoint[];
+          truncated?: boolean;
+          maxPoints?: number;
           error?: string;
         };
 
@@ -256,6 +287,13 @@ export default function MapPage() {
         }
 
         setHistoryPoints(payload.points ?? []);
+        setHistoryMeta({
+          hours: payload.window?.hours ?? historyWindowHours,
+          from: payload.window?.from ?? "",
+          to: payload.window?.to ?? "",
+          truncated: payload.truncated ?? false,
+          maxPoints: payload.maxPoints ?? 500,
+        });
         setHistoryError(null);
       } catch (cause) {
         if (cancelled) {
@@ -264,6 +302,7 @@ export default function MapPage() {
 
         console.error("[Dashboard map history]", cause);
         setHistoryPoints([]);
+        setHistoryMeta(null);
         setHistoryError(
           cause instanceof Error
             ? cause.message
@@ -283,7 +322,7 @@ export default function MapPage() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [selectedVehicleId]);
+  }, [selectedVehicleId, historyWindowHours]);
 
   const selectedVehicle = useMemo(
     () =>
@@ -336,6 +375,9 @@ export default function MapPage() {
   const selectedIsLive = selectedVehicle?.motionStatus !== "Hors ligne";
   const selectedSpeed = selectedIsLive ? selectedVehicle?.position?.speed : null;
   const selectedHeading = selectedIsLive ? selectedVehicle?.position?.heading : null;
+  const selectedHistoryLabel =
+    HISTORY_WINDOWS.find((window) => window.value === historyWindowHours)?.label ??
+    `${historyWindowHours} h`;
 
   return (
     <div className="space-y-6">
@@ -462,6 +504,29 @@ export default function MapPage() {
         <div className="relative min-h-[600px] bg-slate-950">
           <LeafletMap vehicles={leafletVehicles} route={route} />
 
+          <div className="absolute right-5 top-5 z-[500] rounded-xl border border-slate-700 bg-slate-900/95 p-3 shadow-xl backdrop-blur">
+            <label
+              htmlFor="map-history-window"
+              className="mb-2 block text-[11px] font-medium uppercase tracking-wide text-slate-400"
+            >
+              Historique GPS
+            </label>
+            <select
+              id="map-history-window"
+              value={historyWindowHours}
+              onChange={(event) =>
+                setHistoryWindowHours(Number(event.target.value) as HistoryWindowHours)
+              }
+              className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-blue-500"
+            >
+              {HISTORY_WINDOWS.map((window) => (
+                <option key={window.value} value={window.value}>
+                  {window.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
           {selectedVehicle && (
             <div className="absolute bottom-5 left-5 right-5 z-[500]">
               <div className="rounded-xl border border-slate-700 bg-slate-900/95 p-4 shadow-2xl backdrop-blur">
@@ -501,8 +566,8 @@ export default function MapPage() {
                     <div className="flex items-center gap-2 text-sm text-slate-300">
                       <Route className="h-4 w-4 text-cyan-400" />
                       {historyLoading
-                        ? "Historique..."
-                        : `${historyPoints.length} points GPS`}
+                        ? `Historique ${selectedHistoryLabel}...`
+                        : `${historyPoints.length} points GPS · ${selectedHistoryLabel}`}
                     </div>
                   </div>
                 </div>
@@ -515,10 +580,20 @@ export default function MapPage() {
                     </p>
                   )}
 
+                {historyMeta?.truncated && (
+                  <p className="mt-3 text-xs text-amber-300/90">
+                    La période demandée contient plus de {historyMeta.maxPoints} points GPS.
+                    Le tracé affiche actuellement les {historyMeta.maxPoints} points les plus
+                    récents de cette période ; la période sélectionnée reste bien limitée à
+                    {` ${selectedHistoryLabel}`}.
+                  </p>
+                )}
+
                 {historyPoints.length > 1 && (
                   <p className="mt-3 text-xs text-cyan-300/80">
-                    Le tracé affiché correspond aux derniers points GPS réellement enregistrés
-                    pour ce véhicule ; il s'agit d'un historique, pas d'une position live.
+                    Le tracé affiché correspond aux points GPS réellement enregistrés pour ce
+                    véhicule sur la période sélectionnée ; il s'agit d'un historique, pas d'une
+                    position live.
                   </p>
                 )}
               </div>
@@ -538,8 +613,8 @@ export default function MapPage() {
             <p className="mt-1 text-xs leading-5 text-slate-400">
               Les positions en direct utilisent l'API flotte Matelematics. Le trajet du véhicule
               sélectionné provient d'une API serveur sécurisée qui vérifie votre périmètre avant
-              de lire les derniers points GPS enregistrés. Aucun trajet de démonstration n'est
-              utilisé sur cette page.
+              de lire les points GPS de la période choisie, jusqu'à 1 an. Aucun trajet de
+              démonstration n'est utilisé sur cette page.
             </p>
           </div>
         </div>
