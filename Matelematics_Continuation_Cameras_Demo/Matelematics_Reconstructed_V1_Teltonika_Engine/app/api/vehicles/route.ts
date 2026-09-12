@@ -10,6 +10,8 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const TRACKER_FRESHNESS_MS = 120_000;
+
 type Role =
   | "matelematics_admin"
   | "partner_admin"
@@ -120,6 +122,21 @@ async function authenticate(
   };
 }
 
+function isTrackerFresh(lastSeenAt: string | null) {
+  if (!lastSeenAt) {
+    return false;
+  }
+
+  const timestamp = new Date(lastSeenAt).getTime();
+
+  if (!Number.isFinite(timestamp)) {
+    return false;
+  }
+
+  const ageMs = Date.now() - timestamp;
+  return ageMs >= 0 && ageMs <= TRACKER_FRESHNESS_MS;
+}
+
 export async function GET(
   request: NextRequest,
 ) {
@@ -129,12 +146,6 @@ export async function GET(
       profile,
     } =
       await authenticate(request);
-
-    /*
-     * -------------------------------------------------------
-     * DETERMINER LES ENTREPRISES AUTORISEES
-     * -------------------------------------------------------
-     */
 
     let allowedCompanyIds:
       string[] | null = null;
@@ -177,12 +188,6 @@ export async function GET(
           );
       }
     }
-
-    /*
-     * -------------------------------------------------------
-     * VEHICULES
-     * -------------------------------------------------------
-     */
 
     let vehicleQuery =
       admin
@@ -230,12 +235,6 @@ export async function GET(
       });
     }
 
-    /*
-     * -------------------------------------------------------
-     * ENTREPRISES
-     * -------------------------------------------------------
-     */
-
     const companyIds =
       Array.from(
         new Set(
@@ -271,25 +270,6 @@ export async function GET(
         company.name,
       );
     }
-
-    /*
-     * -------------------------------------------------------
-     * TRACKERS
-     *
-     * IMPORTANT :
-     *
-     * La relation réelle est :
-     *
-     * devices.vehicle_id -> vehicles.id
-     *
-     * et NON :
-     *
-     * vehicles.device_id -> devices.id
-     *
-     * vehicles.device_id contient actuellement des valeurs
-     * legacy telles que DEMO-FMC125-A.
-     * -------------------------------------------------------
-     */
 
     const vehicleIds =
       vehicleRows.map(
@@ -368,12 +348,6 @@ export async function GET(
       }
     }
 
-    /*
-     * -------------------------------------------------------
-     * FORMAT COMPATIBLE AVEC VEHICLES/PAGE.TSX
-     * -------------------------------------------------------
-     */
-
     const result =
       vehicleRows.map(
         (vehicle) => {
@@ -382,31 +356,30 @@ export async function GET(
               vehicle.id,
             );
 
+          const trackerFresh =
+            isTrackerFresh(
+              device?.last_seen_at ?? null,
+            );
+
           let displayStatus =
             "Hors ligne";
 
           if (
-            device?.status ===
-            "online"
+            device &&
+            trackerFresh
           ) {
             displayStatus =
               "En ligne";
           } else if (
+            !device &&
             vehicle.status ===
             "active"
           ) {
             displayStatus =
-              device
-                ? "En ligne"
-                : "Actif";
+              "Actif";
           }
 
           return {
-            /*
-             * CET ID EST LE VRAI UUID VEHICLE.
-             * C'est lui qui sera envoyé à :
-             * /dashboard/vehicle/[id]
-             */
             id: vehicle.id,
 
             companyId:
@@ -456,9 +429,6 @@ export async function GET(
               device?.last_seen_at ??
               null,
 
-            /*
-             * Conducteurs pas encore reliés au schéma réel.
-             */
             driver:
               "Non affecté",
           };
