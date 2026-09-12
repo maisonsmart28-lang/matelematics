@@ -7,6 +7,21 @@ import { supabase } from "../components/supabase";
 
 type VehicleStatus = "En mouvement" | "À l'arrêt" | "Hors ligne";
 
+type FleetVehicle = {
+  id: string;
+  name: string;
+  registration: string;
+  driver: string;
+  motionStatus: VehicleStatus;
+  position: {
+    lat: number | null;
+    lng: number | null;
+    speed: number | null;
+    heading: number | null;
+    recordedAt: string;
+  } | null;
+};
+
 type VehicleRow = {
   id: string;
   name: string;
@@ -17,20 +32,6 @@ type VehicleRow = {
   fuel: number | null;
   status: VehicleStatus;
 };
-
-function getStatus(lastSeenAt: string | null, speed: number) {
-  if (!lastSeenAt) {
-    return "Hors ligne" as const;
-  }
-
-  const ageMs = Date.now() - new Date(lastSeenAt).getTime();
-
-  if (ageMs > 120_000) {
-    return "Hors ligne" as const;
-  }
-
-  return speed > 2 ? ("En mouvement" as const) : ("À l'arrêt" as const);
-}
 
 function formatCoordinates(latitude: number | null, longitude: number | null) {
   if (latitude === null || longitude === null) {
@@ -49,89 +50,45 @@ export default function VehicleTable() {
     const load = async () => {
       try {
         const {
-          data: vehicleRows,
-          error: vehiclesError,
-        } = await supabase
-          .from("vehicles")
-          .select("id,name,registration")
-          .order("name", { ascending: true })
-          .limit(6);
+          data: { session },
+          error: sessionError,
+        } = await supabase.auth.getSession();
 
-        if (vehiclesError) {
-          throw vehiclesError;
+        if (sessionError || !session) {
+          throw new Error("Session expirée.");
         }
 
-        if (!vehicleRows || vehicleRows.length === 0) {
-          if (!cancelled) {
-            setVehicles([]);
-          }
-          return;
+        const response = await fetch("/api/dashboard/fleet", {
+          cache: "no-store",
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+          },
+        });
+
+        const payload = (await response.json()) as {
+          vehicles?: FleetVehicle[];
+          error?: string;
+        };
+
+        if (!response.ok) {
+          throw new Error(payload.error ?? "Impossible de charger les véhicules.");
         }
 
-        const vehicleIds = vehicleRows.map((vehicle) => vehicle.id);
-
-        const [devicesResult, positionsResult] = await Promise.all([
-          supabase
-            .from("devices")
-            .select("vehicle_id,last_seen_at")
-            .in("vehicle_id", vehicleIds),
-          supabase
-            .from("positions")
-            .select("vehicle_id,latitude,longitude,speed,recorded_at")
-            .in("vehicle_id", vehicleIds)
-            .order("recorded_at", { ascending: false })
-            .limit(500),
-        ]);
-
-        if (devicesResult.error) {
-          throw devicesResult.error;
-        }
-
-        if (positionsResult.error) {
-          throw positionsResult.error;
-        }
-
-        const latestDevice = new Map<
-          string,
-          NonNullable<typeof devicesResult.data>[number]
-        >();
-
-        for (const device of devicesResult.data ?? []) {
-          if (!latestDevice.has(device.vehicle_id)) {
-            latestDevice.set(device.vehicle_id, device);
-          }
-        }
-
-        const latestPosition = new Map<
-          string,
-          NonNullable<typeof positionsResult.data>[number]
-        >();
-
-        for (const position of positionsResult.data ?? []) {
-          if (!latestPosition.has(position.vehicle_id)) {
-            latestPosition.set(position.vehicle_id, position);
-          }
-        }
-
-        const mapped: VehicleRow[] = vehicleRows.map((vehicle) => {
-          const device = latestDevice.get(vehicle.id);
-          const position = latestPosition.get(vehicle.id);
-          const speed = position?.speed ?? 0;
-
-          return {
+        const mapped: VehicleRow[] = (payload.vehicles ?? [])
+          .slice(0, 6)
+          .map((vehicle) => ({
             id: vehicle.id,
             name: vehicle.name,
             registration: vehicle.registration,
-            driver: "Non affecté",
+            driver: vehicle.driver,
             location: formatCoordinates(
-              position?.latitude ?? null,
-              position?.longitude ?? null,
+              vehicle.position?.lat ?? null,
+              vehicle.position?.lng ?? null,
             ),
-            speed: position ? speed : null,
+            speed: vehicle.position?.speed ?? null,
             fuel: null,
-            status: getStatus(device?.last_seen_at ?? null, speed),
-          };
-        });
+            status: vehicle.motionStatus,
+          }));
 
         if (!cancelled) {
           setVehicles(mapped);
