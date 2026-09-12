@@ -209,8 +209,9 @@ export default function MapPage() {
 
   useEffect(() => {
     let cancelled = false;
+    const vehicleId = selectedVehicleId;
 
-    if (!selectedVehicleId) {
+    if (!vehicleId) {
       setHistoryPoints([]);
       setHistoryError(null);
       return () => {
@@ -232,7 +233,7 @@ export default function MapPage() {
         }
 
         const response = await fetch(
-          `/api/dashboard/vehicles/${encodeURIComponent(selectedVehicleId)}/history`,
+          `/api/dashboard/vehicles/${encodeURIComponent(vehicleId)}/history`,
           {
             cache: "no-store",
             headers: {
