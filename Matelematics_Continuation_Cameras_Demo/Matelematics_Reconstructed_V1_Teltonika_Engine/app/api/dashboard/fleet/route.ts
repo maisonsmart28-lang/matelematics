@@ -4,6 +4,8 @@ import { createClient } from "@supabase/supabase-js";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const TRACKER_FRESHNESS_MS = 120_000;
+
 type Role =
   | "matelematics_admin"
   | "partner_admin"
@@ -76,6 +78,21 @@ async function authenticate(request: NextRequest) {
   }
 
   return { admin, profile: profile as Profile };
+}
+
+function isTrackerFresh(lastSeenAt: string | null) {
+  if (!lastSeenAt) {
+    return false;
+  }
+
+  const timestamp = new Date(lastSeenAt).getTime();
+
+  if (!Number.isFinite(timestamp)) {
+    return false;
+  }
+
+  const ageMs = Date.now() - timestamp;
+  return ageMs >= 0 && ageMs <= TRACKER_FRESHNESS_MS;
 }
 
 function getMotionStatus(connectivityStatus: string, speed: number | null) {
@@ -206,13 +223,14 @@ export async function GET(request: NextRequest) {
       const device = latestDevice.get(vehicle.id);
       const position = latestPosition.get(vehicle.id);
       const speed = position?.speed ?? null;
+      const trackerFresh = isTrackerFresh(device?.last_seen_at ?? null);
 
       let connectivityStatus = "Hors ligne";
 
-      if (device?.status === "online") {
+      if (device && trackerFresh) {
         connectivityStatus = "En ligne";
-      } else if (vehicle.status === "active") {
-        connectivityStatus = device ? "En ligne" : "Actif";
+      } else if (!device && vehicle.status === "active") {
+        connectivityStatus = "Actif";
       }
 
       return {
