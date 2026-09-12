@@ -73,6 +73,17 @@ const CAN_ADAPTER: readonly HardwareCapability[] = [
   "adblue",
 ];
 
+const LIGHT_VEHICLE_CAN: readonly HardwareCapability[] = [
+  "can_rpm",
+  "can_speed",
+  "can_coolant",
+  "can_throttle",
+  "can_odometer",
+  "fuel_level",
+  "fuel_used",
+  "adblue",
+];
+
 const J1939_FMS: readonly HardwareCapability[] = [
   "j1939_fms",
   "can_rpm",
@@ -162,21 +173,19 @@ export function resolveHardwareCapabilities(
     capabilities = unique(capabilities, FMC150_CAN);
   }
 
-  if (
-    sourceProfile === "can-adapter" ||
-    sourceProfile === "can_adapter"
-  ) {
+  if (sourceProfile === "can-adapter") {
     capabilities = unique(capabilities, CAN_ADAPTER);
+  }
+
+  if (sourceProfile === "light-vehicle-can") {
+    capabilities = unique(capabilities, LIGHT_VEHICLE_CAN);
   }
 
   if (sourceProfile === "obd") {
     capabilities = unique(capabilities, ["can_rpm"]);
   }
 
-  if (
-    sourceProfile === "j1939-fms" ||
-    sourceProfile === "j1939_fms"
-  ) {
+  if (sourceProfile === "j1939-fms") {
     capabilities = unique(capabilities, J1939_FMS);
   }
 
