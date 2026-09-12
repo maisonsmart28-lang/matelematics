@@ -249,6 +249,27 @@ export default function DashboardPage() {
     return Math.round((stats.online / stats.total) * 100);
   }, [stats.online, stats.total]);
 
+  const dashboardHealth = statsLoading
+    ? {
+        label: "Vérification...",
+        textClass: "text-zinc-400",
+        borderClass: "border-zinc-700 bg-zinc-900/60",
+        iconClass: "bg-zinc-800 text-zinc-400",
+      }
+    : statsError
+      ? {
+          label: "Données indisponibles",
+          textClass: "text-red-400",
+          borderClass: "border-red-500/20 bg-red-500/5",
+          iconClass: "bg-red-500/10 text-red-400",
+        }
+      : {
+          label: "Données disponibles",
+          textClass: "text-emerald-400",
+          borderClass: "border-emerald-500/20 bg-emerald-500/5",
+          iconClass: "bg-emerald-500/10 text-emerald-400",
+        };
+
   const cards: KPI[] = [
     {
       title: "Véhicules en ligne",
@@ -341,14 +362,14 @@ export default function DashboardPage() {
               </div>
             </button>
 
-            <div className="flex items-center gap-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-2.5">
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-500/10">
-                <ShieldCheck className="h-5 w-5 text-emerald-400" />
+            <div className={`flex items-center gap-3 rounded-xl border px-4 py-2.5 ${dashboardHealth.borderClass}`}>
+              <div className={`flex h-9 w-9 items-center justify-center rounded-lg ${dashboardHealth.iconClass}`}>
+                <ShieldCheck className="h-5 w-5" />
               </div>
               <div>
-                <p className="text-xs text-zinc-500">État du système</p>
-                <p className="text-sm font-semibold text-emerald-400">
-                  Opérationnel
+                <p className="text-xs text-zinc-500">Données dashboard</p>
+                <p className={`text-sm font-semibold ${dashboardHealth.textClass}`}>
+                  {dashboardHealth.label}
                 </p>
               </div>
             </div>
@@ -613,46 +634,58 @@ export default function DashboardPage() {
 
         <div className="rounded-2xl border border-zinc-800 bg-zinc-950 p-5">
           <div className="mb-5 flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/10">
-              <Server className="h-5 w-5 text-emerald-400" />
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-zinc-800">
+              <Server className="h-5 w-5 text-zinc-300" />
             </div>
             <div>
               <h3 className="font-semibold text-white">État du système</h3>
-              <p className="text-xs text-zinc-500">Services Matelematics</p>
+              <p className="text-xs text-zinc-500">Indicateurs réellement vérifiés</p>
             </div>
           </div>
 
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-3">
                 <Wifi className="h-4 w-4 text-zinc-500" />
-                <span className="text-sm text-zinc-400">Serveur Traccar</span>
+                <span className="text-sm text-zinc-400">Ingestion trackers</span>
               </div>
-              <span className="rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-400">
-                En ligne
+              <span className="rounded-full bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-400">
+                Non mesurée
               </span>
             </div>
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-3">
                 <Activity className="h-4 w-4 text-zinc-500" />
                 <span className="text-sm text-zinc-400">API Matelematics</span>
               </div>
-              <span className="rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-400">
-                Active
+              <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+                statsLoading
+                  ? "bg-zinc-800 text-zinc-400"
+                  : statsError
+                    ? "bg-red-500/10 text-red-400"
+                    : "bg-emerald-500/10 text-emerald-400"
+              }`}>
+                {statsLoading ? "Vérification" : statsError ? "Indisponible" : "Disponible"}
               </span>
             </div>
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-3">
                 <Server className="h-4 w-4 text-zinc-500" />
-                <span className="text-sm text-zinc-400">Base de données</span>
+                <span className="text-sm text-zinc-400">Accès aux données</span>
               </div>
-              <span className="rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-400">
-                Connectée
+              <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+                statsLoading
+                  ? "bg-zinc-800 text-zinc-400"
+                  : statsError
+                    ? "bg-red-500/10 text-red-400"
+                    : "bg-emerald-500/10 text-emerald-400"
+              }`}>
+                {statsLoading ? "Vérification" : statsError ? "Non confirmé" : "Confirmé"}
               </span>
             </div>
             <div className="border-t border-zinc-800 pt-4">
               <div className="flex items-center justify-between">
-                <span className="text-xs text-zinc-500">Synchronisation</span>
+                <span className="text-xs text-zinc-500">Dernière vérification</span>
                 <span className="text-xs font-medium text-zinc-300">
                   Il y a {lastSync} sec
                 </span>
