@@ -8,6 +8,7 @@ import {
   MapPin,
   Navigation,
   Radio,
+  Route,
   Truck,
   Wifi,
 } from "lucide-react";
@@ -34,6 +35,14 @@ type FleetVehicle = {
     heading: number | null;
     recordedAt: string;
   } | null;
+};
+
+type HistoryPoint = {
+  lat: number;
+  lng: number;
+  speed: number | null;
+  heading: number | null;
+  recordedAt: string;
 };
 
 type RoutePoint = {
@@ -120,8 +129,11 @@ function StatusBadge({ status }: { status: VehicleStatus }) {
 export default function MapPage() {
   const [vehicles, setVehicles] = useState<FleetVehicle[]>([]);
   const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null);
+  const [historyPoints, setHistoryPoints] = useState<HistoryPoint[]>([]);
   const [loading, setLoading] = useState(true);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [historyError, setHistoryError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -195,6 +207,83 @@ export default function MapPage() {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!selectedVehicleId) {
+      setHistoryPoints([]);
+      setHistoryError(null);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    async function loadHistory() {
+      try {
+        setHistoryLoading(true);
+
+        const {
+          data: { session },
+          error: sessionError,
+        } = await supabase.auth.getSession();
+
+        if (sessionError || !session) {
+          throw new Error("Session expirée.");
+        }
+
+        const response = await fetch(
+          `/api/dashboard/vehicles/${encodeURIComponent(selectedVehicleId)}/history`,
+          {
+            cache: "no-store",
+            headers: {
+              Authorization: `Bearer ${session.access_token}`,
+            },
+          },
+        );
+
+        const payload = (await response.json()) as {
+          points?: HistoryPoint[];
+          error?: string;
+        };
+
+        if (!response.ok) {
+          throw new Error(payload.error ?? "Impossible de charger l'historique GPS.");
+        }
+
+        if (cancelled) {
+          return;
+        }
+
+        setHistoryPoints(payload.points ?? []);
+        setHistoryError(null);
+      } catch (cause) {
+        if (cancelled) {
+          return;
+        }
+
+        console.error("[Dashboard map history]", cause);
+        setHistoryPoints([]);
+        setHistoryError(
+          cause instanceof Error
+            ? cause.message
+            : "Impossible de charger l'historique GPS.",
+        );
+      } finally {
+        if (!cancelled) {
+          setHistoryLoading(false);
+        }
+      }
+    }
+
+    void loadHistory();
+    const timer = window.setInterval(() => void loadHistory(), 10000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [selectedVehicleId]);
+
   const selectedVehicle = useMemo(
     () =>
       vehicles.find((vehicle) => vehicle.id === selectedVehicleId) ??
@@ -228,7 +317,10 @@ export default function MapPage() {
           : "offline",
   }));
 
-  const route: RoutePoint[] = [];
+  const route: RoutePoint[] = historyPoints.map((point) => ({
+    lat: point.lat,
+    lng: point.lng,
+  }));
 
   const moving = vehicles.filter(
     (vehicle) => vehicle.motionStatus === "En mouvement",
@@ -289,6 +381,15 @@ export default function MapPage() {
             Impossible de charger les données de flotte
           </p>
           <p className="mt-1 text-xs text-red-200/70">{error}</p>
+        </div>
+      )}
+
+      {historyError && (
+        <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
+          <p className="text-sm font-medium text-amber-300">
+            Historique GPS indisponible
+          </p>
+          <p className="mt-1 text-xs text-amber-200/70">{historyError}</p>
         </div>
       )}
 
@@ -368,7 +469,9 @@ export default function MapPage() {
                     <p className="font-semibold text-white">{selectedVehicle.name}</p>
                     <p className="mt-1 text-xs text-slate-500">
                       {selectedVehicle.registration}
-                      {selectedVehicle.trackerId ? ` · Tracker ${selectedVehicle.trackerId}` : " · Aucun tracker associé"}
+                      {selectedVehicle.trackerId
+                        ? ` · Tracker ${selectedVehicle.trackerId}`
+                        : " · Aucun tracker associé"}
                     </p>
                   </div>
 
@@ -393,6 +496,13 @@ export default function MapPage() {
                       <Clock3 className="h-4 w-4 text-slate-400" />
                       {formatLastSeen(selectedVehicle.lastSeenAt)}
                     </div>
+
+                    <div className="flex items-center gap-2 text-sm text-slate-300">
+                      <Route className="h-4 w-4 text-cyan-400" />
+                      {historyLoading
+                        ? "Historique..."
+                        : `${historyPoints.length} points GPS`}
+                    </div>
                   </div>
                 </div>
 
@@ -403,6 +513,13 @@ export default function MapPage() {
                       comme position en direct tant que le tracker reste hors ligne.
                     </p>
                   )}
+
+                {historyPoints.length > 1 && (
+                  <p className="mt-3 text-xs text-cyan-300/80">
+                    Le tracé affiché correspond aux derniers points GPS réellement enregistrés
+                    pour ce véhicule ; il s'agit d'un historique, pas d'une position live.
+                  </p>
+                )}
               </div>
             </div>
           )}
@@ -415,12 +532,13 @@ export default function MapPage() {
 
           <div>
             <p className="text-sm font-medium text-white">
-              Carte alignée sur la flotte Matelematics
+              Carte et historique connectés aux données réelles
             </p>
             <p className="mt-1 text-xs leading-5 text-slate-400">
-              La liste, les statuts et les positions en direct utilisent maintenant la même
-              API serveur que le dashboard principal. L'historique GPS détaillé sera connecté
-              séparément à une source serveur dédiée ; aucun trajet n'est inventé ici.
+              Les positions en direct utilisent l'API flotte Matelematics. Le trajet du véhicule
+              sélectionné provient d'une API serveur sécurisée qui vérifie votre périmètre avant
+              de lire les derniers points GPS enregistrés. Aucun trajet de démonstration n'est
+              utilisé sur cette page.
             </p>
           </div>
         </div>
