@@ -85,7 +85,10 @@ export default function VehicleTable() {
               vehicle.position?.lat ?? null,
               vehicle.position?.lng ?? null,
             ),
-            speed: vehicle.position?.speed ?? null,
+            speed:
+              vehicle.motionStatus === "Hors ligne"
+                ? null
+                : (vehicle.position?.speed ?? null),
             fuel: null,
             status: vehicle.motionStatus,
           }));
@@ -114,7 +117,7 @@ export default function VehicleTable() {
           <tr className="border-b border-zinc-800 text-left text-sm text-zinc-400">
             <th className="py-4">Véhicule</th>
             <th>Conducteur</th>
-            <th>Position</th>
+            <th>Dernière position</th>
             <th>Vitesse</th>
             <th>Carburant</th>
             <th>État</th>
