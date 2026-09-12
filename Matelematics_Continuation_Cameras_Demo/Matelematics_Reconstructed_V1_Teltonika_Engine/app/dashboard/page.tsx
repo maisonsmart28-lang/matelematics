@@ -122,6 +122,7 @@ export default function DashboardPage() {
     alerts: 0,
   });
   const [priorityAlerts, setPriorityAlerts] = useState<AlertSummary[]>([]);
+  const [recentAlerts, setRecentAlerts] = useState<AlertSummary[]>([]);
   const [statsLoading, setStatsLoading] = useState(true);
   const [statsError, setStatsError] = useState<string | null>(null);
   const [lastSync, setLastSync] = useState(0);
@@ -173,7 +174,8 @@ export default function DashboardPage() {
     }
 
     const vehicles = vehiclesPayload.vehicles ?? [];
-    const activeAlerts = (alertsPayload.alerts ?? []).filter(
+    const alerts = alertsPayload.alerts ?? [];
+    const activeAlerts = alerts.filter(
       (alert) => alert.lifecycle === "active",
     );
 
@@ -183,6 +185,7 @@ export default function DashboardPage() {
       alerts: alertsPayload.metrics?.active ?? 0,
     });
     setPriorityAlerts(activeAlerts.slice(0, 3));
+    setRecentAlerts(alerts.slice(0, 3));
     setStatsError(null);
     setLastSync(0);
   };
@@ -557,36 +560,54 @@ export default function DashboardPage() {
               <Clock className="h-5 w-5 text-purple-400" />
             </div>
             <div>
-              <h3 className="font-semibold text-white">Activité récente</h3>
-              <p className="text-xs text-zinc-500">Dernières opérations</p>
+              <h3 className="font-semibold text-white">Événements récents</h3>
+              <p className="text-xs text-zinc-500">
+                Derniers événements d&apos;alerte enregistrés
+              </p>
             </div>
           </div>
 
           <div className="space-y-4">
-            <div className="flex gap-3">
-              <div className="mt-1 h-2 w-2 rounded-full bg-emerald-400" />
-              <div>
-                <p className="text-sm font-medium text-white">Ahmed Benali</p>
-                <p className="text-xs text-zinc-500">Départ de Casablanca</p>
-                <p className="mt-1 text-[11px] text-zinc-600">Il y a 4 min</p>
+            {statsLoading ? (
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-3 text-xs text-zinc-500">
+                Chargement des événements réels...
               </div>
-            </div>
-            <div className="flex gap-3">
-              <div className="mt-1 h-2 w-2 rounded-full bg-blue-400" />
-              <div>
-                <p className="text-sm font-medium text-white">Youssef Karim</p>
-                <p className="text-xs text-zinc-500">Arrivée à Rabat</p>
-                <p className="mt-1 text-[11px] text-zinc-600">Il y a 9 min</p>
+            ) : recentAlerts.length === 0 ? (
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-3 text-xs text-zinc-500">
+                Aucun événement d&apos;alerte enregistré.
               </div>
-            </div>
-            <div className="flex gap-3">
-              <div className="mt-1 h-2 w-2 rounded-full bg-amber-400" />
-              <div>
-                <p className="text-sm font-medium text-white">Samir El Idrissi</p>
-                <p className="text-xs text-zinc-500">Véhicule arrêté</p>
-                <p className="mt-1 text-[11px] text-zinc-600">Il y a 13 min</p>
-              </div>
-            </div>
+            ) : (
+              recentAlerts.map((alert) => {
+                const classes = alertClasses(alert.severity);
+
+                return (
+                  <Link
+                    key={alert.id}
+                    href="/dashboard/alerts"
+                    className="flex gap-3 rounded-xl p-1 transition hover:bg-zinc-900/70"
+                  >
+                    <div className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${
+                      classes.icon === "text-red-400"
+                        ? "bg-red-400"
+                        : classes.icon === "text-amber-400"
+                          ? "bg-amber-400"
+                          : "bg-cyan-400"
+                    }`} />
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-white">
+                        {alert.label}
+                      </p>
+                      <p className="text-xs text-zinc-500">
+                        {alert.vehicleName} • {alert.registration}
+                      </p>
+                      <p className="mt-1 text-[11px] text-zinc-600">
+                        {formatAlertTime(alert.triggeredAt)}
+                      </p>
+                    </div>
+                  </Link>
+                );
+              })
+            )}
           </div>
         </div>
 
