@@ -17,6 +17,11 @@ type Profile = {
   partner_id: string | null;
 };
 
+type HistoryWindowHours = 1 | 6 | 24 | 168;
+
+const DEFAULT_HISTORY_WINDOW_HOURS: HistoryWindowHours = 24;
+const MAX_HISTORY_POINTS = 500;
+
 function isRole(value: unknown): value is Role {
   return (
     value === "matelematics_admin" ||
@@ -24,6 +29,22 @@ function isRole(value: unknown): value is Role {
     value === "client_admin" ||
     value === "user"
   );
+}
+
+function parseHistoryWindow(request: NextRequest): HistoryWindowHours {
+  const raw = request.nextUrl.searchParams.get("hours");
+
+  if (!raw) {
+    return DEFAULT_HISTORY_WINDOW_HOURS;
+  }
+
+  const value = Number(raw);
+
+  if (value === 1 || value === 6 || value === 24 || value === 168) {
+    return value;
+  }
+
+  throw new Error("INVALID_HISTORY_WINDOW");
 }
 
 const supabaseUrl =
@@ -93,6 +114,7 @@ export async function GET(request: NextRequest) {
   try {
     const { admin, profile } = await authenticate(request);
     const vehicleId = extractVehicleId(request);
+    const historyWindowHours = parseHistoryWindow(request);
 
     const { data: vehicle, error: vehicleError } = await admin
       .from("vehicles")
@@ -147,14 +169,21 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    const to = new Date();
+    const from = new Date(
+      to.getTime() - historyWindowHours * 60 * 60 * 1000,
+    );
+
     const { data: positionRows, error: positionsError } = await admin
       .from("positions")
       .select("latitude,longitude,speed,heading,recorded_at")
       .eq("vehicle_id", vehicleId)
       .not("latitude", "is", null)
       .not("longitude", "is", null)
+      .gte("recorded_at", from.toISOString())
+      .lte("recorded_at", to.toISOString())
       .order("recorded_at", { ascending: false })
-      .limit(500);
+      .limit(MAX_HISTORY_POINTS);
 
     if (positionsError) {
       throw positionsError;
@@ -177,8 +206,15 @@ export async function GET(request: NextRequest) {
         name: vehicle.name,
         registration: vehicle.registration,
       },
+      window: {
+        hours: historyWindowHours,
+        from: from.toISOString(),
+        to: to.toISOString(),
+      },
       points,
       count: points.length,
+      truncated: points.length === MAX_HISTORY_POINTS,
+      maxPoints: MAX_HISTORY_POINTS,
     });
   } catch (error) {
     console.error("[Dashboard Vehicle History API]", error);
@@ -202,6 +238,13 @@ export async function GET(request: NextRequest) {
     if (message === "VEHICLE_ID_REQUIRED") {
       return NextResponse.json(
         { error: "Identifiant véhicule requis." },
+        { status: 400 },
+      );
+    }
+
+    if (message === "INVALID_HISTORY_WINDOW") {
+      return NextResponse.json(
+        { error: "Période d'historique invalide. Valeurs autorisées : 1, 6, 24 ou 168 heures." },
         { status: 400 },
       );
     }
