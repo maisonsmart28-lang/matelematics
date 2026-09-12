@@ -17,10 +17,20 @@ type Profile = {
   partner_id: string | null;
 };
 
-type HistoryWindowHours = 1 | 6 | 24 | 168;
+type HistoryWindowHours = 1 | 6 | 24 | 168 | 720 | 2160 | 4320 | 8760;
 
 const DEFAULT_HISTORY_WINDOW_HOURS: HistoryWindowHours = 24;
 const MAX_HISTORY_POINTS = 500;
+const ALLOWED_HISTORY_WINDOWS = new Set<number>([
+  1,
+  6,
+  24,
+  168,
+  720,
+  2160,
+  4320,
+  8760,
+]);
 
 function isRole(value: unknown): value is Role {
   return (
@@ -40,8 +50,8 @@ function parseHistoryWindow(request: NextRequest): HistoryWindowHours {
 
   const value = Number(raw);
 
-  if (value === 1 || value === 6 || value === 24 || value === 168) {
-    return value;
+  if (ALLOWED_HISTORY_WINDOWS.has(value)) {
+    return value as HistoryWindowHours;
   }
 
   throw new Error("INVALID_HISTORY_WINDOW");
@@ -244,7 +254,10 @@ export async function GET(request: NextRequest) {
 
     if (message === "INVALID_HISTORY_WINDOW") {
       return NextResponse.json(
-        { error: "Période d'historique invalide. Valeurs autorisées : 1, 6, 24 ou 168 heures." },
+        {
+          error:
+            "Période d'historique invalide. Valeurs autorisées : 1 h, 6 h, 24 h, 7 j, 30 j, 90 j, 180 j ou 1 an.",
+        },
         { status: 400 },
       );
     }
