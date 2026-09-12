@@ -18,26 +18,19 @@ type ChartRow = {
   color: string;
 };
 
-function getStatus(lastSeenAt: string | null, speed: number) {
-  if (!lastSeenAt) {
-    return "Hors ligne" as const;
-  }
+type FleetVehicle = {
+  id: string;
+  motionStatus: "En mouvement" | "À l'arrêt" | "Hors ligne";
+};
 
-  const ageMs = Date.now() - new Date(lastSeenAt).getTime();
-
-  if (ageMs > 120_000) {
-    return "Hors ligne" as const;
-  }
-
-  return speed > 2 ? ("En mouvement" as const) : ("À l'arrêt" as const);
-}
+const emptyData: ChartRow[] = [
+  { name: "En mouvement", value: 0, color: "#06b6d4" },
+  { name: "À l'arrêt", value: 0, color: "#f59e0b" },
+  { name: "Hors ligne", value: 0, color: "#ef4444" },
+];
 
 export default function VehicleStatusChart() {
-  const [data, setData] = useState<ChartRow[]>([
-    { name: "En mouvement", value: 0, color: "#06b6d4" },
-    { name: "À l'arrêt", value: 0, color: "#f59e0b" },
-    { name: "Hors ligne", value: 0, color: "#ef4444" },
-  ]);
+  const [data, setData] = useState<ChartRow[]>(emptyData);
 
   useEffect(() => {
     let cancelled = false;
@@ -45,52 +38,30 @@ export default function VehicleStatusChart() {
     const load = async () => {
       try {
         const {
-          data: devices,
-          error: devicesError,
-        } = await supabase
-          .from("devices")
-          .select("vehicle_id,last_seen_at")
-          .not("vehicle_id", "is", null);
+          data: { session },
+          error: sessionError,
+        } = await supabase.auth.getSession();
 
-        if (devicesError) {
-          throw devicesError;
+        if (sessionError || !session) {
+          throw new Error("Session expirée.");
         }
 
-        if (!devices || devices.length === 0) {
-          if (!cancelled) {
-            setData([
-              { name: "En mouvement", value: 0, color: "#06b6d4" },
-              { name: "À l'arrêt", value: 0, color: "#f59e0b" },
-              { name: "Hors ligne", value: 0, color: "#ef4444" },
-            ]);
-          }
-          return;
-        }
+        const response = await fetch("/api/dashboard/fleet", {
+          cache: "no-store",
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+          },
+        });
 
-        const vehicleIds = devices
-          .map((device) => device.vehicle_id)
-          .filter((id): id is string => Boolean(id));
+        const payload = (await response.json()) as {
+          vehicles?: FleetVehicle[];
+          error?: string;
+        };
 
-        const {
-          data: positionRows,
-          error: positionsError,
-        } = await supabase
-          .from("positions")
-          .select("vehicle_id,speed,recorded_at")
-          .in("vehicle_id", vehicleIds)
-          .order("recorded_at", { ascending: false })
-          .limit(500);
-
-        if (positionsError) {
-          throw positionsError;
-        }
-
-        const latestSpeed = new Map<string, number>();
-
-        for (const position of positionRows ?? []) {
-          if (!latestSpeed.has(position.vehicle_id)) {
-            latestSpeed.set(position.vehicle_id, position.speed ?? 0);
-          }
+        if (!response.ok) {
+          throw new Error(
+            payload.error ?? "Impossible de charger l'état de la flotte.",
+          );
         }
 
         const counts = {
@@ -99,17 +70,8 @@ export default function VehicleStatusChart() {
           "Hors ligne": 0,
         };
 
-        for (const device of devices) {
-          if (!device.vehicle_id) {
-            continue;
-          }
-
-          const status = getStatus(
-            device.last_seen_at,
-            latestSpeed.get(device.vehicle_id) ?? 0,
-          );
-
-          counts[status] += 1;
+        for (const vehicle of payload.vehicles ?? []) {
+          counts[vehicle.motionStatus] += 1;
         }
 
         if (!cancelled) {
@@ -133,6 +95,10 @@ export default function VehicleStatusChart() {
         }
       } catch (error) {
         console.error("[Dashboard fleet status]", error);
+
+        if (!cancelled) {
+          setData(emptyData);
+        }
       }
     };
 
