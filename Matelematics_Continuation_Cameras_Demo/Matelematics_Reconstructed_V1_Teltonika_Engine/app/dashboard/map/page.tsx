@@ -219,7 +219,7 @@ export default function MapPage() {
       };
     }
 
-    async function loadHistory() {
+    async function loadHistory(currentVehicleId: string) {
       try {
         setHistoryLoading(true);
 
@@ -233,7 +233,7 @@ export default function MapPage() {
         }
 
         const response = await fetch(
-          `/api/dashboard/vehicles/${encodeURIComponent(vehicleId)}/history`,
+          `/api/dashboard/vehicles/${encodeURIComponent(currentVehicleId)}/history`,
           {
             cache: "no-store",
             headers: {
@@ -276,8 +276,8 @@ export default function MapPage() {
       }
     }
 
-    void loadHistory();
-    const timer = window.setInterval(() => void loadHistory(), 10000);
+    void loadHistory(vehicleId);
+    const timer = window.setInterval(() => void loadHistory(vehicleId), 10000);
 
     return () => {
       cancelled = true;
