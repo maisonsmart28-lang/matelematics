@@ -50,6 +50,48 @@ expect("FMC125 CAN adapter speed", hasHardwareCapability(fmc125Camera, "can_spee
 expect("FMC125 camera", hasHardwareCapability(fmc125Camera, "camera"));
 expect("FMC125 video", hasHardwareCapability(fmc125Camera, "video"));
 
+const fmc125LightVehicleCan = resolveHardwareCapabilities({
+  manufacturer: "Teltonika",
+  model: "FMC125",
+  sourceProfile: "light_vehicle_can",
+});
+
+assert.equal(fmc125LightVehicleCan.family, "teltonika_fmc125");
+expect(
+  "FMC125 light vehicle CAN RPM",
+  hasHardwareCapability(fmc125LightVehicleCan, "can_rpm"),
+);
+expect(
+  "FMC125 light vehicle CAN speed",
+  hasHardwareCapability(fmc125LightVehicleCan, "can_speed"),
+);
+expect(
+  "FMC125 light vehicle CAN coolant",
+  hasHardwareCapability(fmc125LightVehicleCan, "can_coolant"),
+);
+expect(
+  "FMC125 light vehicle CAN throttle",
+  hasHardwareCapability(fmc125LightVehicleCan, "can_throttle"),
+);
+expect(
+  "FMC125 light vehicle CAN odometer",
+  hasHardwareCapability(fmc125LightVehicleCan, "can_odometer"),
+);
+expect(
+  "FMC125 light vehicle CAN fuel level",
+  hasHardwareCapability(fmc125LightVehicleCan, "fuel_level"),
+);
+expect(
+  "FMC125 light vehicle CAN fuel used",
+  hasHardwareCapability(fmc125LightVehicleCan, "fuel_used"),
+);
+expect(
+  "FMC125 light vehicle CAN AdBlue",
+  hasHardwareCapability(fmc125LightVehicleCan, "adblue"),
+);
+assert.equal(hasHardwareCapability(fmc125LightVehicleCan, "j1939_fms"), false);
+assert.equal(hasHardwareCapability(fmc125LightVehicleCan, "camera"), false);
+
 const fmc650 = resolveHardwareCapabilities({
   manufacturer: "Teltonika",
   model: "FMC650",
