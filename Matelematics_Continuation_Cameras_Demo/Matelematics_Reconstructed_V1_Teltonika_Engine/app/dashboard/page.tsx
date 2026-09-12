@@ -38,7 +38,19 @@ interface VehicleSummary {
   status: string;
 }
 
+interface AlertSummary {
+  id: string;
+  vehicleName: string;
+  registration: string;
+  label: string;
+  message: string | null;
+  severity: string;
+  lifecycle: string;
+  triggeredAt: string;
+}
+
 interface AlertsPayload {
+  alerts?: AlertSummary[];
   metrics?: {
     active?: number;
   };
@@ -52,12 +64,64 @@ interface KPI {
   iconClass: string;
 }
 
+function alertClasses(severity: string) {
+  if (severity === "critical") {
+    return {
+      card: "border-red-500/20 bg-red-500/5",
+      icon: "text-red-400",
+      title: "text-red-300",
+    };
+  }
+
+  if (severity === "warning" || severity === "high") {
+    return {
+      card: "border-amber-500/20 bg-amber-500/5",
+      icon: "text-amber-400",
+      title: "text-amber-300",
+    };
+  }
+
+  return {
+    card: "border-cyan-500/20 bg-cyan-500/5",
+    icon: "text-cyan-400",
+    title: "text-cyan-300",
+  };
+}
+
+function formatAlertTime(value: string) {
+  const timestamp = new Date(value).getTime();
+
+  if (!Number.isFinite(timestamp)) {
+    return "Date inconnue";
+  }
+
+  const diffMinutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60_000));
+
+  if (diffMinutes < 1) {
+    return "À l'instant";
+  }
+
+  if (diffMinutes < 60) {
+    return `Il y a ${diffMinutes} min`;
+  }
+
+  const hours = Math.floor(diffMinutes / 60);
+
+  if (hours < 24) {
+    return `Il y a ${hours} h`;
+  }
+
+  const days = Math.floor(hours / 24);
+  return `Il y a ${days} j`;
+}
+
 export default function DashboardPage() {
   const [stats, setStats] = useState<Stats>({
     online: 0,
     total: 0,
     alerts: 0,
   });
+  const [priorityAlerts, setPriorityAlerts] = useState<AlertSummary[]>([]);
   const [statsLoading, setStatsLoading] = useState(true);
   const [statsError, setStatsError] = useState<string | null>(null);
   const [lastSync, setLastSync] = useState(0);
@@ -109,12 +173,16 @@ export default function DashboardPage() {
     }
 
     const vehicles = vehiclesPayload.vehicles ?? [];
+    const activeAlerts = (alertsPayload.alerts ?? []).filter(
+      (alert) => alert.lifecycle === "active",
+    );
 
     setStats({
       total: vehicles.length,
       online: vehicles.filter((vehicle) => vehicle.status === "En ligne").length,
       alerts: alertsPayload.metrics?.active ?? 0,
     });
+    setPriorityAlerts(activeAlerts.slice(0, 3));
     setStatsError(null);
     setLastSync(0);
   };
@@ -444,43 +512,42 @@ export default function DashboardPage() {
           </div>
 
           <div className="space-y-3">
-            <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-3">
-              <div className="flex items-start gap-3">
-                <AlertTriangle className="mt-0.5 h-4 w-4 text-red-400" />
-                <div>
-                  <p className="text-sm font-medium text-red-300">Excès de vitesse</p>
-                  <p className="mt-1 text-xs text-zinc-500">
-                    Renault Express • Casablanca
-                  </p>
-                </div>
+            {statsLoading ? (
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-3 text-xs text-zinc-500">
+                Chargement des alertes réelles...
               </div>
-            </div>
+            ) : priorityAlerts.length === 0 ? (
+              <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3 text-xs text-emerald-300">
+                Aucune alerte active.
+              </div>
+            ) : (
+              priorityAlerts.map((alert) => {
+                const classes = alertClasses(alert.severity);
 
-            <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3">
-              <div className="flex items-start gap-3">
-                <Fuel className="mt-0.5 h-4 w-4 text-amber-400" />
-                <div>
-                  <p className="text-sm font-medium text-amber-300">
-                    Niveau de carburant faible
-                  </p>
-                  <p className="mt-1 text-xs text-zinc-500">
-                    Ford Transit • Rabat
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-3">
-              <div className="flex items-start gap-3">
-                <MapPin className="mt-0.5 h-4 w-4 text-cyan-400" />
-                <div>
-                  <p className="text-sm font-medium text-cyan-300">Entrée en géozone</p>
-                  <p className="mt-1 text-xs text-zinc-500">
-                    Dacia Dokker • Tanger
-                  </p>
-                </div>
-              </div>
-            </div>
+                return (
+                  <Link
+                    key={alert.id}
+                    href="/dashboard/alerts"
+                    className={`block rounded-xl border p-3 transition hover:border-zinc-600 ${classes.card}`}
+                  >
+                    <div className="flex items-start gap-3">
+                      <AlertTriangle className={`mt-0.5 h-4 w-4 shrink-0 ${classes.icon}`} />
+                      <div className="min-w-0">
+                        <p className={`text-sm font-medium ${classes.title}`}>
+                          {alert.label}
+                        </p>
+                        <p className="mt-1 text-xs text-zinc-400">
+                          {alert.vehicleName} • {alert.registration}
+                        </p>
+                        <p className="mt-1 text-[11px] text-zinc-600">
+                          {formatAlertTime(alert.triggeredAt)}
+                        </p>
+                      </div>
+                    </div>
+                  </Link>
+                );
+              })
+            )}
           </div>
         </div>
 
