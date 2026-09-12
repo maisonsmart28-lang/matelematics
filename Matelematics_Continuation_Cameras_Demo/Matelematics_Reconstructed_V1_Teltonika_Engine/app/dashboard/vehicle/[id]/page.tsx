@@ -530,7 +530,7 @@ export default function VehiclePage() {
           {trackerCards}
           <InfoCard
             icon={<Zap className="h-5 w-5 text-amber-400" />}
-            label="Codec Teltonika"
+            label="Codec / protocole tracker"
             value={telemetry?.codec ?? "—"}
           />
           <InfoCard
