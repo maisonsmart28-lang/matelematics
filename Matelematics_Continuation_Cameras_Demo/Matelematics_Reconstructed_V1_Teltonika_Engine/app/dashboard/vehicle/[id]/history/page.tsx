@@ -14,7 +14,7 @@ import {
   Route,
 } from "lucide-react";
 
-import { supabase } from "../../../components/supabase";
+import { supabase } from "../../../../components/supabase";
 
 type HistoryWindowHours = 1 | 6 | 24 | 168 | 720 | 2160 | 4320 | 8760;
 
