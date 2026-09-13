@@ -15,6 +15,7 @@ import {
 import { supabase } from "../../components/supabase";
 
 type HistoryWindowHours = 1 | 6 | 24 | 168 | 720 | 2160 | 4320 | 8760;
+type PeriodMode = HistoryWindowHours | "custom";
 
 type FleetVehicle = {
   id: string;
@@ -50,6 +51,13 @@ type TripSampling = {
   maxMapPoints: number;
 };
 
+type AppliedRange = {
+  from: string;
+  to: string;
+  startDate: string;
+  endDate: string;
+};
+
 const PERIODS: Array<{ value: HistoryWindowHours; label: string }> = [
   { value: 1, label: "1 h" },
   { value: 6, label: "6 h" },
@@ -72,6 +80,20 @@ const LeafletMap = dynamic(() => import("../LeafletMap"), {
   ),
 });
 
+function dateInputValue(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function getDateLimits() {
+  const now = new Date();
+  const earliest = new Date(now);
+  earliest.setUTCDate(earliest.getUTCDate() - 366);
+  return {
+    today: dateInputValue(now),
+    earliest: dateInputValue(earliest),
+  };
+}
+
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("fr-FR", {
     day: "2-digit",
@@ -80,6 +102,14 @@ function formatDate(value: string) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(value));
+}
+
+function formatDateOnly(value: string) {
+  return new Intl.DateTimeFormat("fr-FR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(new Date(`${value}T12:00:00Z`));
 }
 
 function formatDuration(seconds: number) {
@@ -94,10 +124,20 @@ function formatCoordinates(lat: number, lng: number) {
 }
 
 export default function HistoryPage() {
+  const limits = useMemo(() => getDateLimits(), []);
+  const defaultStart = useMemo(() => {
+    const date = new Date();
+    date.setUTCDate(date.getUTCDate() - 7);
+    return dateInputValue(date);
+  }, []);
+
   const [vehicles, setVehicles] = useState<FleetVehicle[]>([]);
   const [vehicleId, setVehicleId] = useState("");
   const [search, setSearch] = useState("");
-  const [period, setPeriod] = useState<HistoryWindowHours>(24);
+  const [periodMode, setPeriodMode] = useState<PeriodMode>(24);
+  const [customStart, setCustomStart] = useState(defaultStart);
+  const [customEnd, setCustomEnd] = useState(limits.today);
+  const [appliedRange, setAppliedRange] = useState<AppliedRange | null>(null);
   const [trips, setTrips] = useState<TripSummary[]>([]);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
@@ -110,6 +150,7 @@ export default function HistoryPage() {
   const [tripLoading, setTripLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tripError, setTripError] = useState<string | null>(null);
+  const [rangeError, setRangeError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -164,12 +205,12 @@ export default function HistoryPage() {
     setTripPoints([]);
     setSampling(null);
     setTripError(null);
-  }, [vehicleId, period]);
+  }, [vehicleId, periodMode, appliedRange?.from, appliedRange?.to]);
 
   useEffect(() => {
     let cancelled = false;
 
-    if (!vehicleId) {
+    if (!vehicleId || (periodMode === "custom" && !appliedRange)) {
       setTrips([]);
       setTotal(0);
       setTotalPages(0);
@@ -188,8 +229,20 @@ export default function HistoryPage() {
 
         if (sessionError || !session) throw new Error("Session expirée.");
 
+        const query = new URLSearchParams({
+          page: String(page),
+          pageSize: String(PAGE_SIZE),
+        });
+
+        if (periodMode === "custom" && appliedRange) {
+          query.set("from", appliedRange.from);
+          query.set("to", appliedRange.to);
+        } else {
+          query.set("hours", String(periodMode));
+        }
+
         const response = await fetch(
-          `/api/dashboard/vehicles/${encodeURIComponent(vehicleId)}/trips?hours=${period}&page=${page}&pageSize=${PAGE_SIZE}`,
+          `/api/dashboard/vehicles/${encodeURIComponent(vehicleId)}/trips?${query.toString()}`,
           {
             cache: "no-store",
             headers: { Authorization: `Bearer ${session.access_token}` },
@@ -225,7 +278,7 @@ export default function HistoryPage() {
     return () => {
       cancelled = true;
     };
-  }, [vehicleId, period, page]);
+  }, [vehicleId, periodMode, appliedRange, page]);
 
   const selectedTrip = useMemo(
     () => trips.find((trip) => trip.id === selectedTripId) ?? null,
@@ -307,9 +360,54 @@ export default function HistoryPage() {
     );
   }, [vehicles, search]);
 
+  function choosePreset(value: HistoryWindowHours) {
+    setRangeError(null);
+    setAppliedRange(null);
+    setPeriodMode(value);
+  }
+
+  function chooseCustom() {
+    setRangeError(null);
+    setAppliedRange(null);
+    setPeriodMode("custom");
+  }
+
+  function applyCustomRange() {
+    if (!customStart || !customEnd) {
+      setRangeError("Les dates de début et de fin sont obligatoires.");
+      return;
+    }
+    if (customStart > customEnd) {
+      setRangeError("La date de début doit être antérieure ou égale à la date de fin.");
+      return;
+    }
+    if (customStart < limits.earliest || customEnd > limits.today) {
+      setRangeError("La période personnalisée doit rester dans les 12 derniers mois et ne peut pas être future.");
+      return;
+    }
+
+    const now = new Date();
+    const from = new Date(`${customStart}T00:00:00.000Z`);
+    const endOfDay = new Date(`${customEnd}T23:59:59.999Z`);
+    const to = customEnd === limits.today ? now : endOfDay;
+
+    setRangeError(null);
+    setAppliedRange({
+      from: from.toISOString(),
+      to: to.toISOString(),
+      startDate: customStart,
+      endDate: customEnd,
+    });
+  }
+
   const selectedVehicle = vehicles.find((vehicle) => vehicle.id === vehicleId) ?? null;
   const route = tripPoints.map((point) => ({ lat: point.lat, lng: point.lng }));
-  const periodLabel = PERIODS.find((item) => item.value === period)?.label ?? `${period} h`;
+  const periodLabel =
+    periodMode === "custom"
+      ? appliedRange
+        ? `${formatDateOnly(appliedRange.startDate)} → ${formatDateOnly(appliedRange.endDate)}`
+        : "Période personnalisée à appliquer"
+      : PERIODS.find((item) => item.value === periodMode)?.label ?? `${periodMode} h`;
 
   return (
     <div className="space-y-6">
@@ -368,14 +466,14 @@ export default function HistoryPage() {
             )}
           </select>
 
-          <div className="grid grid-cols-4 gap-2 sm:grid-cols-8">
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 xl:grid-cols-9">
             {PERIODS.map((item) => (
               <button
                 key={item.value}
                 type="button"
-                onClick={() => setPeriod(item.value)}
+                onClick={() => choosePreset(item.value)}
                 className={`rounded-xl border px-2 py-3 text-sm font-medium transition ${
-                  period === item.value
+                  periodMode === item.value
                     ? "border-blue-500 bg-blue-500/10 text-blue-400"
                     : "border-slate-800 bg-slate-950 text-slate-300 hover:border-slate-700 hover:bg-slate-800"
                 }`}
@@ -383,8 +481,59 @@ export default function HistoryPage() {
                 {item.label}
               </button>
             ))}
+            <button
+              type="button"
+              onClick={chooseCustom}
+              className={`rounded-xl border px-2 py-3 text-sm font-medium transition ${
+                periodMode === "custom"
+                  ? "border-blue-500 bg-blue-500/10 text-blue-400"
+                  : "border-slate-800 bg-slate-950 text-slate-300 hover:border-slate-700 hover:bg-slate-800"
+              }`}
+            >
+              Personnalisée
+            </button>
           </div>
         </div>
+
+        {periodMode === "custom" && (
+          <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950 p-4">
+            <div className="grid gap-4 md:grid-cols-[1fr_1fr_auto] md:items-end">
+              <label className="space-y-2 text-xs text-slate-400">
+                <span>Date de début</span>
+                <input
+                  type="date"
+                  min={limits.earliest}
+                  max={limits.today}
+                  value={customStart}
+                  onChange={(event) => setCustomStart(event.target.value)}
+                  className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm text-white outline-none focus:border-blue-500"
+                />
+              </label>
+              <label className="space-y-2 text-xs text-slate-400">
+                <span>Date de fin</span>
+                <input
+                  type="date"
+                  min={limits.earliest}
+                  max={limits.today}
+                  value={customEnd}
+                  onChange={(event) => setCustomEnd(event.target.value)}
+                  className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm text-white outline-none focus:border-blue-500"
+                />
+              </label>
+              <button
+                type="button"
+                onClick={applyCustomRange}
+                className="rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-blue-700"
+              >
+                Appliquer
+              </button>
+            </div>
+            <p className="mt-3 text-xs text-slate-500">
+              Plage autorisée : du {formatDateOnly(limits.earliest)} au {formatDateOnly(limits.today)}.
+            </p>
+            {rangeError && <p className="mt-2 text-sm text-red-400">{rangeError}</p>}
+          </div>
+        )}
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -427,9 +576,7 @@ export default function HistoryPage() {
             <div className="flex items-center justify-between gap-4">
               <div>
                 <h2 className="text-lg font-semibold text-white">Trajets</h2>
-                <p className="mt-1 text-sm text-slate-400">
-                  Sélectionnez un trajet pour l&apos;afficher sur la carte.
-                </p>
+                <p className="mt-1 text-sm text-slate-400">Sélectionnez un trajet pour l&apos;afficher sur la carte.</p>
               </div>
               <span className="rounded-lg bg-slate-950 px-3 py-2 text-xs text-slate-400">
                 {total} trajet{total > 1 ? "s" : ""}
@@ -451,17 +598,11 @@ export default function HistoryPage() {
               </thead>
               <tbody className="divide-y divide-slate-800">
                 {tripsLoading ? (
-                  <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
-                      Chargement des trajets...
-                    </td>
-                  </tr>
+                  <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-500">Chargement des trajets...</td></tr>
+                ) : periodMode === "custom" && !appliedRange ? (
+                  <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-500">Choisissez puis appliquez une période personnalisée.</td></tr>
                 ) : trips.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
-                      Aucun trajet enregistré sur cette période.
-                    </td>
-                  </tr>
+                  <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-500">Aucun trajet enregistré sur cette période.</td></tr>
                 ) : (
                   trips.map((trip) => {
                     const active = trip.id === selectedTripId;
@@ -469,9 +610,7 @@ export default function HistoryPage() {
                       <tr
                         key={trip.id}
                         onClick={() => setSelectedTripId(trip.id)}
-                        className={`cursor-pointer transition ${
-                          active ? "bg-blue-500/10" : "hover:bg-slate-800/60"
-                        }`}
+                        className={`cursor-pointer transition ${active ? "bg-blue-500/10" : "hover:bg-slate-800/60"}`}
                       >
                         <td className="px-4 py-3 text-white">{formatDate(trip.startedAt)}</td>
                         <td className="px-4 py-3 text-slate-300">{formatDate(trip.endedAt)}</td>
@@ -488,9 +627,7 @@ export default function HistoryPage() {
           </div>
 
           <div className="flex flex-col gap-3 border-t border-slate-800 p-4 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-xs text-slate-500">
-              Page {totalPages === 0 ? 0 : page} sur {totalPages}
-            </p>
+            <p className="text-xs text-slate-500">Page {totalPages === 0 ? 0 : page} sur {totalPages}</p>
             <div className="flex gap-2">
               <button
                 type="button"
@@ -524,9 +661,7 @@ export default function HistoryPage() {
               <div>
                 <h2 className="text-lg font-semibold text-white">Détail cartographique</h2>
                 <p className="mt-1 text-sm text-slate-400">
-                  {selectedTrip
-                    ? `${formatDate(selectedTrip.startedAt)} → ${formatDate(selectedTrip.endedAt)}`
-                    : "Choisissez un trajet dans le tableau."}
+                  {selectedTrip ? `${formatDate(selectedTrip.startedAt)} → ${formatDate(selectedTrip.endedAt)}` : "Choisissez un trajet dans le tableau."}
                 </p>
               </div>
               <MapPin className="h-5 w-5 text-blue-400" />
@@ -536,24 +671,16 @@ export default function HistoryPage() {
           <div className="h-[460px] bg-slate-950">
             {selectedTrip ? (
               tripLoading ? (
-                <div className="flex h-full items-center justify-center text-sm text-slate-500">
-                  Chargement du tracé...
-                </div>
+                <div className="flex h-full items-center justify-center text-sm text-slate-500">Chargement du tracé...</div>
               ) : tripError ? (
-                <div className="flex h-full items-center justify-center p-6 text-center text-sm text-red-400">
-                  {tripError}
-                </div>
+                <div className="flex h-full items-center justify-center p-6 text-center text-sm text-red-400">{tripError}</div>
               ) : route.length > 1 ? (
                 <LeafletMap vehicles={[]} route={route} />
               ) : (
-                <div className="flex h-full items-center justify-center p-6 text-center text-sm text-slate-500">
-                  Aucun tracé GPS exploitable pour ce trajet.
-                </div>
+                <div className="flex h-full items-center justify-center p-6 text-center text-sm text-slate-500">Aucun tracé GPS exploitable pour ce trajet.</div>
               )
             ) : (
-              <div className="flex h-full items-center justify-center p-6 text-center text-sm text-slate-500">
-                La carte n&apos;affiche aucun historique tant qu&apos;un trajet n&apos;est pas sélectionné.
-              </div>
+              <div className="flex h-full items-center justify-center p-6 text-center text-sm text-slate-500">La carte n&apos;affiche aucun historique tant qu&apos;un trajet n&apos;est pas sélectionné.</div>
             )}
           </div>
 
@@ -564,14 +691,10 @@ export default function HistoryPage() {
                 <Info label="Arrivée GPS" value={formatCoordinates(selectedTrip.end.lat, selectedTrip.end.lng)} />
               </div>
               {sampling?.sampled && (
-                <p className="text-xs leading-5 text-amber-300">
-                  Tracé optimisé : {sampling.returnedPointCount} points affichés sur {sampling.rawPointCount} points GPS, répartis sur l&apos;ensemble du trajet.
-                </p>
+                <p className="text-xs leading-5 text-amber-300">Tracé optimisé : {sampling.returnedPointCount} points affichés sur {sampling.rawPointCount} points GPS, répartis sur l&apos;ensemble du trajet.</p>
               )}
               {!sampling?.sampled && sampling && (
-                <p className="text-xs text-slate-500">
-                  {sampling.returnedPointCount} points GPS affichés.
-                </p>
+                <p className="text-xs text-slate-500">{sampling.returnedPointCount} points GPS affichés.</p>
               )}
             </div>
           )}
