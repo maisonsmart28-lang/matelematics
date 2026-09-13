@@ -87,7 +87,7 @@ function dateInputValue(date: Date) {
 function getDateLimits() {
   const now = new Date();
   const earliest = new Date(now);
-  earliest.setUTCDate(earliest.getUTCDate() - 366);
+  earliest.setUTCFullYear(earliest.getUTCFullYear() - 1);
   return {
     today: dateInputValue(now),
     earliest: dateInputValue(earliest),
