@@ -466,7 +466,7 @@ export default function HistoryPage() {
             )}
           </select>
 
-          <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 xl:grid-cols-9">
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 xl:grid-cols-10">
             {PERIODS.map((item) => (
               <button
                 key={item.value}
@@ -484,7 +484,7 @@ export default function HistoryPage() {
             <button
               type="button"
               onClick={chooseCustom}
-              className={`rounded-xl border px-2 py-3 text-sm font-medium transition ${
+              className={`col-span-2 whitespace-nowrap rounded-xl border px-3 py-3 text-sm font-medium transition ${
                 periodMode === "custom"
                   ? "border-blue-500 bg-blue-500/10 text-blue-400"
                   : "border-slate-800 bg-slate-950 text-slate-300 hover:border-slate-700 hover:bg-slate-800"
