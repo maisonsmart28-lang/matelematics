@@ -190,8 +190,9 @@ export default function VehicleHistoryPage() {
 
   useEffect(() => {
     let cancelled = false;
+    const trip = selectedTrip;
 
-    if (!selectedTrip) {
+    if (!trip) {
       setTripPoints([]);
       setSampling(null);
       setTripError(null);
@@ -200,7 +201,7 @@ export default function VehicleHistoryPage() {
       };
     }
 
-    async function loadTrip() {
+    async function loadTrip(currentTrip: TripSummary) {
       try {
         setTripLoading(true);
         const {
@@ -211,8 +212,8 @@ export default function VehicleHistoryPage() {
         if (sessionError || !session) throw new Error("Session expirée.");
 
         const query = new URLSearchParams({
-          from: selectedTrip.startedAt,
-          to: selectedTrip.endedAt,
+          from: currentTrip.startedAt,
+          to: currentTrip.endedAt,
         });
 
         const response = await fetch(
@@ -249,7 +250,7 @@ export default function VehicleHistoryPage() {
       }
     }
 
-    void loadTrip();
+    void loadTrip(trip);
     return () => {
       cancelled = true;
     };
