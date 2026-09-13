@@ -35,6 +35,13 @@ type TripRow = {
   total_count: number;
 };
 
+type HistoryRange = {
+  mode: "preset" | "custom";
+  hours: HistoryWindowHours | null;
+  from: Date;
+  to: Date;
+};
+
 const DEFAULT_HISTORY_WINDOW_HOURS: HistoryWindowHours = 24;
 const DEFAULT_PAGE_SIZE = 25;
 const MAX_PAGE_SIZE = 100;
@@ -58,20 +65,70 @@ function isRole(value: unknown): value is Role {
   );
 }
 
-function parseWindow(request: NextRequest): HistoryWindowHours {
+function parsePresetWindow(request: NextRequest, now: Date): HistoryRange {
   const raw = request.nextUrl.searchParams.get("hours");
+  const value = raw ? Number(raw) : DEFAULT_HISTORY_WINDOW_HOURS;
 
-  if (!raw) {
-    return DEFAULT_HISTORY_WINDOW_HOURS;
+  if (!ALLOWED_HISTORY_WINDOWS.has(value)) {
+    throw new Error("INVALID_HISTORY_WINDOW");
   }
 
-  const value = Number(raw);
+  const hours = value as HistoryWindowHours;
+  const from = new Date(now.getTime() - hours * 60 * 60 * 1000);
 
-  if (ALLOWED_HISTORY_WINDOWS.has(value)) {
-    return value as HistoryWindowHours;
+  return {
+    mode: "preset",
+    hours,
+    from,
+    to: now,
+  };
+}
+
+function parseHistoryRange(request: NextRequest): HistoryRange {
+  const now = new Date();
+  const rawFrom = request.nextUrl.searchParams.get("from");
+  const rawTo = request.nextUrl.searchParams.get("to");
+
+  if (!rawFrom && !rawTo) {
+    return parsePresetWindow(request, now);
   }
 
-  throw new Error("INVALID_HISTORY_WINDOW");
+  if (!rawFrom || !rawTo) {
+    throw new Error("CUSTOM_RANGE_BOTH_REQUIRED");
+  }
+
+  if (request.nextUrl.searchParams.has("hours")) {
+    throw new Error("CUSTOM_RANGE_WITH_HOURS");
+  }
+
+  const from = new Date(rawFrom);
+  const to = new Date(rawTo);
+
+  if (!Number.isFinite(from.getTime()) || !Number.isFinite(to.getTime())) {
+    throw new Error("INVALID_CUSTOM_RANGE");
+  }
+
+  if (from.getTime() >= to.getTime()) {
+    throw new Error("INVALID_CUSTOM_RANGE_ORDER");
+  }
+
+  if (to.getTime() > now.getTime()) {
+    throw new Error("CUSTOM_RANGE_IN_FUTURE");
+  }
+
+  const earliestAllowed = new Date(now);
+  earliestAllowed.setFullYear(earliestAllowed.getFullYear() - 1);
+
+  if (from.getTime() < earliestAllowed.getTime()) {
+    throw new Error("CUSTOM_RANGE_TOO_OLD");
+  }
+
+  return {
+    mode: "custom",
+    hours: null,
+    from,
+    to,
+  };
 }
 
 function parsePositiveInteger(raw: string | null, fallback: number) {
@@ -155,7 +212,7 @@ export async function GET(request: NextRequest) {
   try {
     const { admin, profile } = await authenticate(request);
     const vehicleId = extractVehicleId(request);
-    const historyWindowHours = parseWindow(request);
+    const historyRange = parseHistoryRange(request);
     const page = parsePositiveInteger(request.nextUrl.searchParams.get("page"), 1);
     const requestedPageSize = parsePositiveInteger(
       request.nextUrl.searchParams.get("pageSize"),
@@ -217,17 +274,12 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const to = new Date();
-    const from = new Date(
-      to.getTime() - historyWindowHours * 60 * 60 * 1000,
-    );
-
     const { data, error: tripsError } = await admin.rpc(
       "matelematics_vehicle_trip_summaries",
       {
         p_vehicle_id: vehicleId,
-        p_from: from.toISOString(),
-        p_to: to.toISOString(),
+        p_from: historyRange.from.toISOString(),
+        p_to: historyRange.to.toISOString(),
         p_limit: pageSize,
         p_offset: offset,
       },
@@ -265,9 +317,10 @@ export async function GET(request: NextRequest) {
         registration: vehicle.registration,
       },
       window: {
-        hours: historyWindowHours,
-        from: from.toISOString(),
-        to: to.toISOString(),
+        mode: historyRange.mode,
+        hours: historyRange.hours,
+        from: historyRange.from.toISOString(),
+        to: historyRange.to.toISOString(),
       },
       trips,
       pagination: {
@@ -309,6 +362,48 @@ export async function GET(request: NextRequest) {
           error:
             "Période d'historique invalide. Valeurs autorisées : 1 h, 6 h, 24 h, 7 j, 30 j, 90 j, 180 j ou 1 an.",
         },
+        { status: 400 },
+      );
+    }
+
+    if (message === "CUSTOM_RANGE_BOTH_REQUIRED") {
+      return NextResponse.json(
+        { error: "Les dates de début et de fin sont toutes les deux requises." },
+        { status: 400 },
+      );
+    }
+
+    if (message === "CUSTOM_RANGE_WITH_HOURS") {
+      return NextResponse.json(
+        { error: "Utilisez soit une période prédéfinie, soit une période personnalisée." },
+        { status: 400 },
+      );
+    }
+
+    if (message === "INVALID_CUSTOM_RANGE") {
+      return NextResponse.json(
+        { error: "Période personnalisée invalide." },
+        { status: 400 },
+      );
+    }
+
+    if (message === "INVALID_CUSTOM_RANGE_ORDER") {
+      return NextResponse.json(
+        { error: "La date de début doit être antérieure à la date de fin." },
+        { status: 400 },
+      );
+    }
+
+    if (message === "CUSTOM_RANGE_IN_FUTURE") {
+      return NextResponse.json(
+        { error: "La période personnalisée ne peut pas se terminer dans le futur." },
+        { status: 400 },
+      );
+    }
+
+    if (message === "CUSTOM_RANGE_TOO_OLD") {
+      return NextResponse.json(
+        { error: "La période personnalisée doit rester dans les 12 derniers mois." },
         { status: 400 },
       );
     }
