@@ -17,6 +17,7 @@ import {
 import { supabase } from "../../../../components/supabase";
 
 type HistoryWindowHours = 1 | 6 | 24 | 168 | 720 | 2160 | 4320 | 8760;
+type PeriodMode = HistoryWindowHours | "custom";
 
 type TripSummary = {
   id: string;
@@ -52,6 +53,13 @@ type VehicleInfo = {
   registration: string;
 };
 
+type AppliedRange = {
+  from: string;
+  to: string;
+  startDate: string;
+  endDate: string;
+};
+
 const PERIODS: Array<{ value: HistoryWindowHours; label: string }> = [
   { value: 1, label: "1 h" },
   { value: 6, label: "6 h" },
@@ -74,6 +82,20 @@ const LeafletMap = dynamic(() => import("../../../LeafletMap"), {
   ),
 });
 
+function dateInputValue(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function getDateLimits() {
+  const now = new Date();
+  const earliest = new Date(now);
+  earliest.setUTCFullYear(earliest.getUTCFullYear() - 1);
+  return {
+    today: dateInputValue(now),
+    earliest: dateInputValue(earliest),
+  };
+}
+
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("fr-FR", {
     day: "2-digit",
@@ -82,6 +104,14 @@ function formatDate(value: string) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(value));
+}
+
+function formatDateOnly(value: string) {
+  return new Intl.DateTimeFormat("fr-FR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(new Date(`${value}T12:00:00Z`));
 }
 
 function formatDuration(seconds: number) {
@@ -98,8 +128,17 @@ function formatCoordinates(lat: number, lng: number) {
 export default function VehicleHistoryPage() {
   const params = useParams<{ id: string }>();
   const vehicleId = params.id;
+  const limits = useMemo(() => getDateLimits(), []);
+  const defaultStart = useMemo(() => {
+    const date = new Date();
+    date.setUTCDate(date.getUTCDate() - 7);
+    return dateInputValue(date);
+  }, []);
 
-  const [period, setPeriod] = useState<HistoryWindowHours>(24);
+  const [periodMode, setPeriodMode] = useState<PeriodMode>(24);
+  const [customStart, setCustomStart] = useState(defaultStart);
+  const [customEnd, setCustomEnd] = useState(limits.today);
+  const [appliedRange, setAppliedRange] = useState<AppliedRange | null>(null);
   const [vehicle, setVehicle] = useState<VehicleInfo | null>(null);
   const [trips, setTrips] = useState<TripSummary[]>([]);
   const [page, setPage] = useState(1);
@@ -112,6 +151,7 @@ export default function VehicleHistoryPage() {
   const [tripLoading, setTripLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tripError, setTripError] = useState<string | null>(null);
+  const [rangeError, setRangeError] = useState<string | null>(null);
 
   useEffect(() => {
     setPage(1);
@@ -119,10 +159,20 @@ export default function VehicleHistoryPage() {
     setTripPoints([]);
     setSampling(null);
     setTripError(null);
-  }, [period, vehicleId]);
+  }, [periodMode, appliedRange?.from, appliedRange?.to, vehicleId]);
 
   useEffect(() => {
     let cancelled = false;
+
+    if (periodMode === "custom" && !appliedRange) {
+      setTrips([]);
+      setTotal(0);
+      setTotalPages(0);
+      setLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
 
     async function loadTrips() {
       try {
@@ -134,8 +184,20 @@ export default function VehicleHistoryPage() {
 
         if (sessionError || !session) throw new Error("Session expirée.");
 
+        const query = new URLSearchParams({
+          page: String(page),
+          pageSize: String(PAGE_SIZE),
+        });
+
+        if (periodMode === "custom" && appliedRange) {
+          query.set("from", appliedRange.from);
+          query.set("to", appliedRange.to);
+        } else {
+          query.set("hours", String(periodMode));
+        }
+
         const response = await fetch(
-          `/api/dashboard/vehicles/${encodeURIComponent(vehicleId)}/trips?hours=${period}&page=${page}&pageSize=${PAGE_SIZE}`,
+          `/api/dashboard/vehicles/${encodeURIComponent(vehicleId)}/trips?${query.toString()}`,
           {
             cache: "no-store",
             headers: { Authorization: `Bearer ${session.access_token}` },
@@ -181,7 +243,7 @@ export default function VehicleHistoryPage() {
     return () => {
       cancelled = true;
     };
-  }, [vehicleId, period, page]);
+  }, [vehicleId, periodMode, appliedRange, page]);
 
   const selectedTrip = useMemo(
     () => trips.find((trip) => trip.id === selectedTripId) ?? null,
@@ -256,8 +318,55 @@ export default function VehicleHistoryPage() {
     };
   }, [vehicleId, selectedTrip]);
 
+  function choosePreset(value: HistoryWindowHours) {
+    setRangeError(null);
+    setAppliedRange(null);
+    setPeriodMode(value);
+  }
+
+  function chooseCustom() {
+    setRangeError(null);
+    setAppliedRange(null);
+    setPeriodMode("custom");
+  }
+
+  function applyCustomRange() {
+    if (!customStart || !customEnd) {
+      setRangeError("Les dates de début et de fin sont obligatoires.");
+      return;
+    }
+    if (customStart > customEnd) {
+      setRangeError("La date de début doit être antérieure ou égale à la date de fin.");
+      return;
+    }
+    if (customStart < limits.earliest || customEnd > limits.today) {
+      setRangeError(
+        "La période personnalisée doit rester dans les 12 derniers mois et ne peut pas être future.",
+      );
+      return;
+    }
+
+    const now = new Date();
+    const from = new Date(`${customStart}T00:00:00.000Z`);
+    const endOfDay = new Date(`${customEnd}T23:59:59.999Z`);
+    const to = customEnd === limits.today ? now : endOfDay;
+
+    setRangeError(null);
+    setAppliedRange({
+      from: from.toISOString(),
+      to: to.toISOString(),
+      startDate: customStart,
+      endDate: customEnd,
+    });
+  }
+
   const route = tripPoints.map((point) => ({ lat: point.lat, lng: point.lng }));
-  const periodLabel = PERIODS.find((item) => item.value === period)?.label ?? `${period} h`;
+  const periodLabel =
+    periodMode === "custom"
+      ? appliedRange
+        ? `${formatDateOnly(appliedRange.startDate)} → ${formatDateOnly(appliedRange.endDate)}`
+        : "Période personnalisée à appliquer"
+      : PERIODS.find((item) => item.value === periodMode)?.label ?? `${periodMode} h`;
 
   return (
     <div className="space-y-6">
@@ -294,17 +403,17 @@ export default function VehicleHistoryPage() {
           <div>
             <h2 className="text-lg font-semibold text-white">Choisir une période</h2>
             <p className="mt-1 text-sm text-slate-400">
-              La période filtre la liste. La carte reste vide tant qu'un trajet n'est pas choisi.
+              La période filtre la liste. La carte reste vide tant qu&apos;un trajet n&apos;est pas choisi.
             </p>
           </div>
-          <div className="grid grid-cols-4 gap-2 sm:grid-cols-8">
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 xl:grid-cols-10">
             {PERIODS.map((item) => (
               <button
                 key={item.value}
                 type="button"
-                onClick={() => setPeriod(item.value)}
+                onClick={() => choosePreset(item.value)}
                 className={`rounded-xl border px-3 py-2.5 text-sm font-medium transition ${
-                  period === item.value
+                  periodMode === item.value
                     ? "border-blue-500 bg-blue-500/10 text-blue-400"
                     : "border-slate-800 bg-slate-950 text-slate-300 hover:border-slate-700 hover:bg-slate-800"
                 }`}
@@ -312,8 +421,59 @@ export default function VehicleHistoryPage() {
                 {item.label}
               </button>
             ))}
+            <button
+              type="button"
+              onClick={chooseCustom}
+              className={`col-span-2 whitespace-nowrap rounded-xl border px-3 py-2.5 text-sm font-medium transition ${
+                periodMode === "custom"
+                  ? "border-blue-500 bg-blue-500/10 text-blue-400"
+                  : "border-slate-800 bg-slate-950 text-slate-300 hover:border-slate-700 hover:bg-slate-800"
+              }`}
+            >
+              Personnalisée
+            </button>
           </div>
         </div>
+
+        {periodMode === "custom" && (
+          <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950 p-4">
+            <div className="grid gap-4 md:grid-cols-[1fr_1fr_auto] md:items-end">
+              <label className="space-y-2 text-xs text-slate-400">
+                <span>Date de début</span>
+                <input
+                  type="date"
+                  min={limits.earliest}
+                  max={limits.today}
+                  value={customStart}
+                  onChange={(event) => setCustomStart(event.target.value)}
+                  className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm text-white outline-none focus:border-blue-500"
+                />
+              </label>
+              <label className="space-y-2 text-xs text-slate-400">
+                <span>Date de fin</span>
+                <input
+                  type="date"
+                  min={limits.earliest}
+                  max={limits.today}
+                  value={customEnd}
+                  onChange={(event) => setCustomEnd(event.target.value)}
+                  className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm text-white outline-none focus:border-blue-500"
+                />
+              </label>
+              <button
+                type="button"
+                onClick={applyCustomRange}
+                className="rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-blue-700"
+              >
+                Appliquer
+              </button>
+            </div>
+            <p className="mt-3 text-xs text-slate-500">
+              Plage autorisée : du {formatDateOnly(limits.earliest)} au {formatDateOnly(limits.today)}.
+            </p>
+            {rangeError && <p className="mt-2 text-sm text-red-400">{rangeError}</p>}
+          </div>
+        )}
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -378,6 +538,12 @@ export default function VehicleHistoryPage() {
                   <tr>
                     <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
                       Chargement des trajets...
+                    </td>
+                  </tr>
+                ) : periodMode === "custom" && !appliedRange ? (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
+                      Choisissez puis appliquez une période personnalisée.
                     </td>
                   </tr>
                 ) : trips.length === 0 ? (
@@ -476,7 +642,7 @@ export default function VehicleHistoryPage() {
               )
             ) : (
               <div className="flex h-full items-center justify-center p-6 text-center text-sm text-slate-500">
-                La carte n'affiche aucun historique tant qu'un trajet n'est pas sélectionné.
+                La carte n&apos;affiche aucun historique tant qu&apos;un trajet n&apos;est pas sélectionné.
               </div>
             )}
           </div>
@@ -489,7 +655,7 @@ export default function VehicleHistoryPage() {
               </div>
               {sampling?.sampled && (
                 <p className="text-xs leading-5 text-amber-300">
-                  Tracé optimisé : {sampling.returnedPointCount} points affichés sur {sampling.rawPointCount} points GPS, répartis sur l'ensemble du trajet.
+                  Tracé optimisé : {sampling.returnedPointCount} points affichés sur {sampling.rawPointCount} points GPS, répartis sur l&apos;ensemble du trajet.
                 </p>
               )}
               {!sampling?.sampled && sampling && (
