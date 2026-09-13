@@ -375,6 +375,13 @@ export default function MapPage() {
     setAppliedRange({ from: from.toISOString(), to: to.toISOString(), startDate: customStart, endDate: customEnd });
   }
 
+  function openDatePicker(input: HTMLInputElement) {
+    input.focus();
+    if (typeof input.showPicker === "function") {
+      input.showPicker();
+    }
+  }
+
   const selectedVehicle = useMemo(() => vehicles.find((vehicle) => vehicle.id === selectedVehicleId) ?? vehicles[0] ?? null, [vehicles, selectedVehicleId]);
   const liveVehicles = useMemo(() => vehicles.filter((vehicle) => vehicle.motionStatus !== "Hors ligne" && vehicle.position?.lat != null && vehicle.position?.lng != null), [vehicles]);
   const leafletVehicles: LeafletVehicle[] = liveVehicles.map((vehicle) => ({
@@ -432,7 +439,14 @@ export default function MapPage() {
         <div className="relative min-h-[600px] bg-slate-950">
           <LeafletMap vehicles={leafletVehicles} route={route} />
 
-          <div className="absolute right-5 top-5 z-[500] w-[min(92vw,390px)] rounded-xl border border-slate-700 bg-slate-900/95 p-3 shadow-xl backdrop-blur">
+          <div
+            className="absolute right-5 top-5 z-[1000] w-[min(92vw,390px)] rounded-xl border border-slate-700 bg-slate-900/95 p-3 shadow-xl backdrop-blur"
+            onPointerDown={(event) => event.stopPropagation()}
+            onPointerUp={(event) => event.stopPropagation()}
+            onClick={(event) => event.stopPropagation()}
+            onDoubleClick={(event) => event.stopPropagation()}
+            onWheel={(event) => event.stopPropagation()}
+          >
             <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-400">Période des trajets</p>
             <div className="grid grid-cols-3 gap-2">
               {HISTORY_WINDOWS.map((window) => (
@@ -443,10 +457,47 @@ export default function MapPage() {
             {periodMode === "custom" && (
               <div className="mt-3 space-y-2 border-t border-slate-800 pt-3">
                 <div className="grid grid-cols-2 gap-2">
-                  <label className="text-[11px] text-slate-400">Début<input type="date" min={limits.earliest} max={limits.today} value={customStart} onChange={(event) => setCustomStart(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-xs text-white outline-none focus:border-blue-500" /></label>
-                  <label className="text-[11px] text-slate-400">Fin<input type="date" min={limits.earliest} max={limits.today} value={customEnd} onChange={(event) => setCustomEnd(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-xs text-white outline-none focus:border-blue-500" /></label>
+                  <label className="text-[11px] text-slate-400">
+                    Début
+                    <input
+                      type="date"
+                      min={limits.earliest}
+                      max={limits.today}
+                      value={customStart}
+                      onChange={(event) => setCustomStart(event.target.value)}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        openDatePicker(event.currentTarget);
+                      }}
+                      className="mt-1 w-full cursor-pointer rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-xs text-white outline-none focus:border-blue-500"
+                    />
+                  </label>
+                  <label className="text-[11px] text-slate-400">
+                    Fin
+                    <input
+                      type="date"
+                      min={limits.earliest}
+                      max={limits.today}
+                      value={customEnd}
+                      onChange={(event) => setCustomEnd(event.target.value)}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        openDatePicker(event.currentTarget);
+                      }}
+                      className="mt-1 w-full cursor-pointer rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-xs text-white outline-none focus:border-blue-500"
+                    />
+                  </label>
                 </div>
-                <button type="button" onClick={applyCustomRange} className="w-full rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white transition hover:bg-blue-700">Appliquer</button>
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    applyCustomRange();
+                  }}
+                  className="w-full rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white transition hover:bg-blue-700"
+                >
+                  Appliquer
+                </button>
                 <p className="text-[10px] text-slate-500">Plage autorisée : du {formatDateOnly(limits.earliest)} au {formatDateOnly(limits.today)}.</p>
                 {rangeError && <p className="text-xs text-red-300">{rangeError}</p>}
               </div>
