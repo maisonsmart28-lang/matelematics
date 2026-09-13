@@ -1,722 +1,534 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import Link from "next/link";
+import { useParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
   CalendarDays,
   Clock3,
   Gauge,
   MapPin,
-  Route,
-  CircleAlert,
-  CircleStop,
-  Play,
-  Flag,
   Navigation,
-  Search,
+  Route,
 } from "lucide-react";
-import { useParams } from "next/navigation";
-import { useMemo, useState } from "react";
-import { buildVehicleTelemetryHistory } from "../../../../../lib/demo-fleet";
 
-type HistoryEvent = {
+import { supabase } from "../../../components/supabase";
+
+type HistoryWindowHours = 1 | 6 | 24 | 168 | 720 | 2160 | 4320 | 8760;
+
+type TripSummary = {
   id: string;
-  date: string;
-  time: string;
-  event: string;
-  location: string;
-  description: string;
-  detail: string;
-  type: "start" | "movement" | "stop" | "alert" | "end";
+  startedAt: string;
+  endedAt: string;
+  durationSeconds: number;
+  distanceKm: number;
+  start: { lat: number; lng: number };
+  end: { lat: number; lng: number };
+  pointCount: number;
+  avgSpeed: number;
+  maxSpeed: number;
 };
 
-type PeriodPreset =
-  | "today"
-  | "7days"
-  | "30days"
-  | "3months"
-  | "6months"
-  | "1year"
-  | "custom";
+type TripPoint = {
+  lat: number;
+  lng: number;
+  speed: number | null;
+  heading: number | null;
+  recordedAt: string;
+};
 
-function formatDate(date: Date) {
-  return date.toLocaleDateString("fr-FR", {
+type TripSampling = {
+  rawPointCount: number;
+  returnedPointCount: number;
+  sampled: boolean;
+  maxMapPoints: number;
+};
+
+type VehicleInfo = {
+  id: string;
+  name: string;
+  registration: string;
+};
+
+const PERIODS: Array<{ value: HistoryWindowHours; label: string }> = [
+  { value: 1, label: "1 h" },
+  { value: 6, label: "6 h" },
+  { value: 24, label: "24 h" },
+  { value: 168, label: "7 jours" },
+  { value: 720, label: "30 jours" },
+  { value: 2160, label: "3 mois" },
+  { value: 4320, label: "6 mois" },
+  { value: 8760, label: "1 an" },
+];
+
+const PAGE_SIZE = 25;
+
+const LeafletMap = dynamic(() => import("../../../LeafletMap"), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-full min-h-[420px] items-center justify-center bg-slate-950">
+      <p className="text-sm text-slate-400">Chargement de la carte...</p>
+    </div>
+  ),
+});
+
+function formatDate(value: string) {
+  return new Intl.DateTimeFormat("fr-FR", {
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
-  });
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
 }
 
-function formatDateLong(date: Date) {
-  return date.toLocaleDateString("fr-FR", {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  });
+function formatDuration(seconds: number) {
+  const totalMinutes = Math.max(0, Math.round(seconds / 60));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return hours > 0 ? `${hours} h ${minutes} min` : `${minutes} min`;
 }
 
-function toInputDate(date: Date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-
-  return `${year}-${month}-${day}`;
-}
-
-function getToday() {
-  const date = new Date();
-  date.setHours(0, 0, 0, 0);
-  return date;
-}
-
-function subtractDays(date: Date, days: number) {
-  const result = new Date(date);
-  result.setDate(result.getDate() - days);
-  return result;
-}
-
-function subtractMonths(date: Date, months: number) {
-  const result = new Date(date);
-  result.setMonth(result.getMonth() - months);
-  return result;
-}
-
-function getOneYearAgo(date: Date) {
-  return subtractMonths(date, 12);
+function formatCoordinates(lat: number, lng: number) {
+  return `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
 }
 
 export default function VehicleHistoryPage() {
   const params = useParams<{ id: string }>();
   const vehicleId = params.id;
 
-  const today = useMemo(() => getToday(), []);
+  const [period, setPeriod] = useState<HistoryWindowHours>(24);
+  const [vehicle, setVehicle] = useState<VehicleInfo | null>(null);
+  const [trips, setTrips] = useState<TripSummary[]>([]);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+  const [selectedTripId, setSelectedTripId] = useState<string | null>(null);
+  const [tripPoints, setTripPoints] = useState<TripPoint[]>([]);
+  const [sampling, setSampling] = useState<TripSampling | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [tripLoading, setTripLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [tripError, setTripError] = useState<string | null>(null);
 
-  const [period, setPeriod] = useState<PeriodPreset>("today");
+  useEffect(() => {
+    setPage(1);
+    setSelectedTripId(null);
+    setTripPoints([]);
+    setSampling(null);
+    setTripError(null);
+  }, [period, vehicleId]);
 
-  const [startDate, setStartDate] = useState(toInputDate(today));
-  const [endDate, setEndDate] = useState(toInputDate(today));
+  useEffect(() => {
+    let cancelled = false;
 
-  const [appliedStartDate, setAppliedStartDate] = useState(
-    toInputDate(today)
-  );
+    async function loadTrips() {
+      try {
+        setLoading(true);
+        const {
+          data: { session },
+          error: sessionError,
+        } = await supabase.auth.getSession();
 
-  const [appliedEndDate, setAppliedEndDate] = useState(
-    toInputDate(today)
-  );
+        if (sessionError || !session) throw new Error("Session expirée.");
 
-  const [error, setError] = useState("");
+        const response = await fetch(
+          `/api/dashboard/vehicles/${encodeURIComponent(vehicleId)}/trips?hours=${period}&page=${page}&pageSize=${PAGE_SIZE}`,
+          {
+            cache: "no-store",
+            headers: { Authorization: `Bearer ${session.access_token}` },
+          },
+        );
 
-  const history: HistoryEvent[] = useMemo(
-    () => buildVehicleTelemetryHistory(vehicleId) as HistoryEvent[],
-    [vehicleId]
-  );
+        const payload = (await response.json()) as {
+          vehicle?: VehicleInfo;
+          trips?: TripSummary[];
+          pagination?: {
+            page: number;
+            pageSize: number;
+            total: number;
+            totalPages: number;
+          };
+          error?: string;
+        };
 
-  const filteredHistory = useMemo(() => {
-    return history.filter((item) => {
-      return (
-        item.date >= appliedStartDate &&
-        item.date <= appliedEndDate
-      );
-    });
-  }, [history, appliedStartDate, appliedEndDate]);
+        if (!response.ok) {
+          throw new Error(payload.error ?? "Impossible de charger l'historique.");
+        }
 
-  const selectedStart = new Date(`${appliedStartDate}T00:00:00`);
-  const selectedEnd = new Date(`${appliedEndDate}T00:00:00`);
-
-  const periodLabel =
-    appliedStartDate === appliedEndDate
-      ? formatDateLong(selectedStart)
-      : `${formatDate(selectedStart)} → ${formatDate(selectedEnd)}`;
-
-  const getEventIcon = (type: HistoryEvent["type"]) => {
-    switch (type) {
-      case "start":
-        return <Play className="h-4 w-4" />;
-
-      case "movement":
-        return <Navigation className="h-4 w-4" />;
-
-      case "stop":
-        return <CircleStop className="h-4 w-4" />;
-
-      case "alert":
-        return <CircleAlert className="h-4 w-4" />;
-
-      case "end":
-        return <Flag className="h-4 w-4" />;
-    }
-  };
-
-  const getEventStyle = (type: HistoryEvent["type"]) => {
-    switch (type) {
-      case "start":
-        return "bg-emerald-500/10 text-emerald-400 border-emerald-500/20";
-
-      case "movement":
-        return "bg-cyan-500/10 text-cyan-400 border-cyan-500/20";
-
-      case "stop":
-        return "bg-slate-700/50 text-slate-300 border-slate-600";
-
-      case "alert":
-        return "bg-red-500/10 text-red-400 border-red-500/20";
-
-      case "end":
-        return "bg-blue-500/10 text-blue-400 border-blue-500/20";
-    }
-  };
-
-  const applyPreset = (preset: PeriodPreset) => {
-    setError("");
-    setPeriod(preset);
-
-    const end = new Date(today);
-    let start = new Date(today);
-
-    switch (preset) {
-      case "today":
-        start = new Date(today);
-        break;
-
-      case "7days":
-        start = subtractDays(today, 6);
-        break;
-
-      case "30days":
-        start = subtractDays(today, 29);
-        break;
-
-      case "3months":
-        start = subtractMonths(today, 3);
-        break;
-
-      case "6months":
-        start = subtractMonths(today, 6);
-        break;
-
-      case "1year":
-        start = getOneYearAgo(today);
-        break;
-
-      case "custom":
-        return;
+        if (cancelled) return;
+        setVehicle(payload.vehicle ?? null);
+        setTrips(payload.trips ?? []);
+        setTotal(payload.pagination?.total ?? 0);
+        setTotalPages(payload.pagination?.totalPages ?? 0);
+        setError(null);
+      } catch (cause) {
+        if (cancelled) return;
+        setTrips([]);
+        setTotal(0);
+        setTotalPages(0);
+        setError(
+          cause instanceof Error ? cause.message : "Impossible de charger l'historique.",
+        );
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     }
 
-    const startValue = toInputDate(start);
-    const endValue = toInputDate(end);
-
-    setStartDate(startValue);
-    setEndDate(endValue);
-
-    setAppliedStartDate(startValue);
-    setAppliedEndDate(endValue);
-  };
-
-  const applyCustomPeriod = () => {
-    setError("");
-
-    if (!startDate || !endDate) {
-      setError("Veuillez sélectionner une date de début et une date de fin.");
-      return;
-    }
-
-    const start = new Date(`${startDate}T00:00:00`);
-    const end = new Date(`${endDate}T00:00:00`);
-
-    if (start > end) {
-      setError(
-        "La date de début doit être antérieure ou égale à la date de fin."
-      );
-      return;
-    }
-
-    if (end > today) {
-      setError("La date de fin ne peut pas être dans le futur.");
-      return;
-    }
-
-    const minimumDate = getOneYearAgo(today);
-
-    if (start < minimumDate) {
-      setError(
-        "L&apos;historique disponible dans cette interface est limité à 1 an."
-      );
-      return;
-    }
-
-    setAppliedStartDate(startDate);
-    setAppliedEndDate(endDate);
-    setPeriod("custom");
-  };
-
-  const stats = useMemo(() => {
-    const alerts = filteredHistory.filter(
-      (item) => item.type === "alert"
-    ).length;
-
-    const stops = filteredHistory.filter(
-      (item) => item.type === "stop"
-    ).length;
-
-    const hasTrip = filteredHistory.length > 0;
-
-    return {
-      distance: hasTrip ? "86,4 km" : "0 km",
-      drivingTime: hasTrip ? "2 h 42" : "0 h",
-      maxSpeed: hasTrip ? "87 km/h" : "0 km/h",
-      alerts,
-      stops,
+    void loadTrips();
+    return () => {
+      cancelled = true;
     };
-  }, [filteredHistory]);
+  }, [vehicleId, period, page]);
+
+  const selectedTrip = useMemo(
+    () => trips.find((trip) => trip.id === selectedTripId) ?? null,
+    [trips, selectedTripId],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!selectedTrip) {
+      setTripPoints([]);
+      setSampling(null);
+      setTripError(null);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    async function loadTrip() {
+      try {
+        setTripLoading(true);
+        const {
+          data: { session },
+          error: sessionError,
+        } = await supabase.auth.getSession();
+
+        if (sessionError || !session) throw new Error("Session expirée.");
+
+        const query = new URLSearchParams({
+          from: selectedTrip.startedAt,
+          to: selectedTrip.endedAt,
+        });
+
+        const response = await fetch(
+          `/api/dashboard/vehicles/${encodeURIComponent(vehicleId)}/trips/points?${query.toString()}`,
+          {
+            cache: "no-store",
+            headers: { Authorization: `Bearer ${session.access_token}` },
+          },
+        );
+
+        const payload = (await response.json()) as {
+          points?: TripPoint[];
+          sampling?: TripSampling;
+          error?: string;
+        };
+
+        if (!response.ok) {
+          throw new Error(payload.error ?? "Impossible de charger le trajet.");
+        }
+
+        if (cancelled) return;
+        setTripPoints(payload.points ?? []);
+        setSampling(payload.sampling ?? null);
+        setTripError(null);
+      } catch (cause) {
+        if (cancelled) return;
+        setTripPoints([]);
+        setSampling(null);
+        setTripError(
+          cause instanceof Error ? cause.message : "Impossible de charger le trajet.",
+        );
+      } finally {
+        if (!cancelled) setTripLoading(false);
+      }
+    }
+
+    void loadTrip();
+    return () => {
+      cancelled = true;
+    };
+  }, [vehicleId, selectedTrip]);
+
+  const route = tripPoints.map((point) => ({ lat: point.lat, lng: point.lng }));
+  const periodLabel = PERIODS.find((item) => item.value === period)?.label ?? `${period} h`;
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex items-center gap-3">
           <Link
             href={`/dashboard/vehicle/${vehicleId}`}
-            className="flex h-10 w-10 items-center justify-center rounded-lg border border-slate-800 bg-slate-900 text-slate-300 transition hover:bg-slate-800 hover:text-white"
+            className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-800 bg-slate-900 text-slate-300 transition hover:bg-slate-800 hover:text-white"
             title="Retour au véhicule"
           >
             <ArrowLeft className="h-5 w-5" />
           </Link>
-
           <div>
-            <h1 className="text-3xl font-bold text-white">
-              Historique du véhicule
-            </h1>
-
+            <h1 className="text-2xl font-semibold text-white">Historique du véhicule</h1>
             <p className="mt-1 text-sm text-slate-400">
-              Consultez les déplacements et événements du véhicule.
+              {vehicle
+                ? `${vehicle.name} · ${vehicle.registration}`
+                : "Trajets enregistrés et détail cartographique."}
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-900 px-4 py-3">
-          <CalendarDays className="h-5 w-5 text-cyan-400" />
-
+          <CalendarDays className="h-5 w-5 text-blue-400" />
           <div>
-            <p className="text-xs text-slate-500">
-              Période sélectionnée
-            </p>
-
-            <p className="text-sm font-medium text-white">
-              {periodLabel}
-            </p>
+            <p className="text-xs text-slate-500">Période sélectionnée</p>
+            <p className="text-sm font-medium text-white">{periodLabel}</p>
           </div>
         </div>
       </div>
 
-      {/* Sélection de période */}
       <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
-        <div className="flex flex-col gap-5">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
           <div>
-            <h2 className="text-lg font-semibold text-white">
-              Période de l&apos;historique
-            </h2>
-
+            <h2 className="text-lg font-semibold text-white">Choisir une période</h2>
             <p className="mt-1 text-sm text-slate-400">
-              Sélectionnez la période à analyser, jusqu&apos;à 1 an d&apos;historique.
+              La période filtre la liste. La carte reste vide tant qu'un trajet n'est pas choisi.
             </p>
           </div>
-
-          {/* Presets */}
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-7">
-            {[
-              ["today", "Aujourd'hui"],
-              ["7days", "7 jours"],
-              ["30days", "30 jours"],
-              ["3months", "3 mois"],
-              ["6months", "6 mois"],
-              ["1year", "1 an"],
-              ["custom", "Personnalisée"],
-            ].map(([value, label]) => {
-              const active = period === value;
-
-              return (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() =>
-                    applyPreset(value as PeriodPreset)
-                  }
-                  className={`rounded-xl border px-3 py-3 text-sm font-medium transition ${
-                    active
-                      ? "border-blue-500 bg-blue-500/10 text-blue-400"
-                      : "border-slate-800 bg-slate-950 text-slate-300 hover:border-slate-700 hover:bg-slate-800"
-                  }`}
-                >
-                  {label}
-                </button>
-              );
-            })}
+          <div className="grid grid-cols-4 gap-2 sm:grid-cols-8">
+            {PERIODS.map((item) => (
+              <button
+                key={item.value}
+                type="button"
+                onClick={() => setPeriod(item.value)}
+                className={`rounded-xl border px-3 py-2.5 text-sm font-medium transition ${
+                  period === item.value
+                    ? "border-blue-500 bg-blue-500/10 text-blue-400"
+                    : "border-slate-800 bg-slate-950 text-slate-300 hover:border-slate-700 hover:bg-slate-800"
+                }`}
+              >
+                {item.label}
+              </button>
+            ))}
           </div>
-
-          {/* Custom dates */}
-          {period === "custom" && (
-            <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
-              <div className="grid gap-4 md:grid-cols-[1fr_1fr_auto] md:items-end">
-                <div>
-                  <label
-                    htmlFor="start-date"
-                    className="mb-2 block text-sm font-medium text-slate-300"
-                  >
-                    Date de début
-                  </label>
-
-                  <input
-                    id="start-date"
-                    type="date"
-                    value={startDate}
-                    min={toInputDate(getOneYearAgo(today))}
-                    max={toInputDate(today)}
-                    onChange={(event) => {
-                      setStartDate(event.target.value);
-                      setError("");
-                    }}
-                    className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm text-white outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <label
-                    htmlFor="end-date"
-                    className="mb-2 block text-sm font-medium text-slate-300"
-                  >
-                    Date de fin
-                  </label>
-
-                  <input
-                    id="end-date"
-                    type="date"
-                    value={endDate}
-                    min={toInputDate(getOneYearAgo(today))}
-                    max={toInputDate(today)}
-                    onChange={(event) => {
-                      setEndDate(event.target.value);
-                      setError("");
-                    }}
-                    className="w-full rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm text-white outline-none transition focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-
-                <button
-                  type="button"
-                  onClick={applyCustomPeriod}
-                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-medium text-white transition hover:bg-blue-700"
-                >
-                  <Search className="h-4 w-4" />
-                  Appliquer
-                </button>
-              </div>
-
-              {error && (
-                <div className="mt-4 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-400">
-                  {error}
-                </div>
-              )}
-
-              <p className="mt-3 text-xs text-slate-500">
-                La période personnalisée ne peut pas dépasser 1 an et ne peut
-                pas inclure de date future.
-              </p>
-            </div>
-          )}
         </div>
       </div>
 
-      {/* Résumé */}
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-        <Stat
-          label="Distance parcourue"
-          value={stats.distance}
-          icon={<Route className="h-5 w-5 text-cyan-400" />}
-          bg="bg-cyan-500/10"
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <SummaryCard
+          label="Trajets trouvés"
+          value={loading ? "…" : String(total)}
+          icon={<Navigation className="h-5 w-5 text-blue-400" />}
         />
-
-        <Stat
-          label="Temps de conduite"
-          value={stats.drivingTime}
-          icon={<Clock3 className="h-5 w-5 text-blue-400" />}
-          bg="bg-blue-500/10"
+        <SummaryCard
+          label="Distance du trajet sélectionné"
+          value={selectedTrip ? `${selectedTrip.distanceKm.toFixed(1)} km` : "—"}
+          icon={<Route className="h-5 w-5 text-emerald-400" />}
         />
-
-        <Stat
-          label="Vitesse maximale"
-          value={stats.maxSpeed}
-          icon={<Gauge className="h-5 w-5 text-yellow-400" />}
-          bg="bg-yellow-500/10"
+        <SummaryCard
+          label="Durée du trajet sélectionné"
+          value={selectedTrip ? formatDuration(selectedTrip.durationSeconds) : "—"}
+          icon={<Clock3 className="h-5 w-5 text-violet-400" />}
         />
-
-        <Stat
-          label="Alertes"
-          value={String(stats.alerts)}
-          valueClass="text-red-400"
-          icon={<CircleAlert className="h-5 w-5 text-red-400" />}
-          bg="bg-red-500/10"
-        />
-
-        <Stat
-          label="Arrêts"
-          value={String(stats.stops)}
-          icon={<CircleStop className="h-5 w-5 text-slate-300" />}
-          bg="bg-slate-700/50"
+        <SummaryCard
+          label="Vitesse max. sélectionnée"
+          value={selectedTrip ? `${Math.round(selectedTrip.maxSpeed)} km/h` : "—"}
+          icon={<Gauge className="h-5 w-5 text-amber-400" />}
         />
       </div>
 
-      {/* Timeline */}
-      <div className="rounded-2xl border border-slate-800 bg-slate-900">
-        <div className="border-b border-slate-800 p-5">
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-500/10">
-                <Navigation className="h-5 w-5 text-blue-400" />
-              </div>
+      {error && (
+        <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-400">
+          {error}
+        </div>
+      )}
 
+      <div className="grid gap-6 2xl:grid-cols-[minmax(0,1.15fr)_minmax(520px,0.85fr)]">
+        <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900">
+          <div className="border-b border-slate-800 p-5">
+            <div className="flex items-center justify-between gap-4">
               <div>
-                <h2 className="text-lg font-semibold text-white">
-                  Activité du véhicule
-                </h2>
-
-                <p className="text-sm text-slate-400">
-                  Chronologie des déplacements et événements
+                <h2 className="text-lg font-semibold text-white">Trajets</h2>
+                <p className="mt-1 text-sm text-slate-400">
+                  Sélectionnez une ligne pour afficher uniquement ce trajet sur la carte.
                 </p>
               </div>
+              <span className="rounded-lg bg-slate-950 px-3 py-2 text-xs text-slate-400">
+                {total} trajet{total > 1 ? "s" : ""}
+              </span>
             </div>
+          </div>
 
-            <div className="hidden rounded-lg bg-slate-950 px-3 py-2 text-xs text-slate-400 sm:block">
-              {filteredHistory.length} événement
-              {filteredHistory.length !== 1 ? "s" : ""}
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-slate-800 text-sm">
+              <thead className="bg-slate-950/70 text-left text-xs uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-4 py-3 font-medium">Départ</th>
+                  <th className="px-4 py-3 font-medium">Arrivée</th>
+                  <th className="px-4 py-3 font-medium">Durée</th>
+                  <th className="px-4 py-3 font-medium">Distance</th>
+                  <th className="px-4 py-3 font-medium">Vitesse moy.</th>
+                  <th className="px-4 py-3 font-medium">Vitesse max.</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800">
+                {loading ? (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
+                      Chargement des trajets...
+                    </td>
+                  </tr>
+                ) : trips.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
+                      Aucun trajet enregistré sur cette période.
+                    </td>
+                  </tr>
+                ) : (
+                  trips.map((trip) => {
+                    const active = trip.id === selectedTripId;
+                    return (
+                      <tr
+                        key={trip.id}
+                        onClick={() => setSelectedTripId(trip.id)}
+                        className={`cursor-pointer transition ${
+                          active ? "bg-blue-500/10" : "hover:bg-slate-800/60"
+                        }`}
+                      >
+                        <td className="px-4 py-3 text-white">{formatDate(trip.startedAt)}</td>
+                        <td className="px-4 py-3 text-slate-300">{formatDate(trip.endedAt)}</td>
+                        <td className="px-4 py-3 text-slate-300">{formatDuration(trip.durationSeconds)}</td>
+                        <td className="px-4 py-3 font-medium text-white">{trip.distanceKm.toFixed(1)} km</td>
+                        <td className="px-4 py-3 text-slate-300">{Math.round(trip.avgSpeed)} km/h</td>
+                        <td className="px-4 py-3 text-slate-300">{Math.round(trip.maxSpeed)} km/h</td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="flex flex-col gap-3 border-t border-slate-800 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-xs text-slate-500">
+              Page {totalPages === 0 ? 0 : page} sur {totalPages}
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                disabled={page <= 1 || loading}
+                onClick={() => {
+                  setSelectedTripId(null);
+                  setPage((current) => Math.max(1, current - 1));
+                }}
+                className="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300 transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Précédent
+              </button>
+              <button
+                type="button"
+                disabled={page >= totalPages || totalPages === 0 || loading}
+                onClick={() => {
+                  setSelectedTripId(null);
+                  setPage((current) => current + 1);
+                }}
+                className="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300 transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Suivant
+              </button>
             </div>
           </div>
         </div>
 
-        <div className="p-6">
-          {filteredHistory.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-14 text-center">
-              <div className="flex h-14 w-14 items-center justify-center rounded-full bg-slate-800">
-                <CalendarDays className="h-6 w-6 text-slate-500" />
+        <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900">
+          <div className="border-b border-slate-800 p-5">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-semibold text-white">Détail cartographique</h2>
+                <p className="mt-1 text-sm text-slate-400">
+                  {selectedTrip
+                    ? `${formatDate(selectedTrip.startedAt)} → ${formatDate(selectedTrip.endedAt)}`
+                    : "Choisissez un trajet dans le tableau."}
+                </p>
               </div>
-
-              <h3 className="mt-4 text-lg font-semibold text-white">
-                Aucun événement
-              </h3>
-
-              <p className="mt-2 max-w-md text-sm text-slate-400">
-                Aucun déplacement ou événement n&apos;est disponible pour la
-                période sélectionnée.
-              </p>
+              <MapPin className="h-5 w-5 text-blue-400" />
             </div>
-          ) : (
-            <div className="relative">
-              <div className="absolute bottom-5 left-[19px] top-5 w-px bg-slate-800" />
+          </div>
 
-              <div className="space-y-8">
-                {filteredHistory.map((item) => (
-                  <div
-                    key={item.id}
-                    className="relative flex gap-5"
-                  >
-                    {/* Icône */}
-                    <div
-                      className={`relative z-10 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border ${getEventStyle(
-                        item.type
-                      )}`}
-                    >
-                      {getEventIcon(item.type)}
-                    </div>
-
-                    {/* Contenu */}
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                        <div>
-                          <div className="flex flex-wrap items-center gap-3">
-                            <h3 className="font-semibold text-white">
-                              {item.event}
-                            </h3>
-
-                            <span className="rounded-md bg-slate-800 px-2 py-1 text-xs font-medium text-slate-300">
-                              {item.time}
-                            </span>
-
-                            <span className="rounded-md bg-slate-950 px-2 py-1 text-xs text-slate-500">
-                              {formatDate(
-                                new Date(
-                                  `${item.date}T00:00:00`
-                                )
-                              )}
-                            </span>
-                          </div>
-
-                          <div className="mt-2 flex items-start gap-2 text-sm text-slate-400">
-                            <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-slate-500" />
-
-                            <span>{item.location}</span>
-                          </div>
-
-                          <p className="mt-2 text-sm text-slate-400">
-                            {item.description}
-                          </p>
-                        </div>
-
-                        <div className="w-fit rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-300">
-                          {item.detail}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+          <div className="h-[460px] bg-slate-950">
+            {selectedTrip ? (
+              tripLoading ? (
+                <div className="flex h-full items-center justify-center text-sm text-slate-500">
+                  Chargement du tracé...
+                </div>
+              ) : tripError ? (
+                <div className="flex h-full items-center justify-center p-6 text-center text-sm text-red-400">
+                  {tripError}
+                </div>
+              ) : route.length > 1 ? (
+                <LeafletMap vehicles={[]} route={route} />
+              ) : (
+                <div className="flex h-full items-center justify-center p-6 text-center text-sm text-slate-500">
+                  Aucun tracé GPS exploitable pour ce trajet.
+                </div>
+              )
+            ) : (
+              <div className="flex h-full items-center justify-center p-6 text-center text-sm text-slate-500">
+                La carte n'affiche aucun historique tant qu'un trajet n'est pas sélectionné.
               </div>
+            )}
+          </div>
+
+          {selectedTrip && (
+            <div className="space-y-3 border-t border-slate-800 p-5">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Info label="Départ GPS" value={formatCoordinates(selectedTrip.start.lat, selectedTrip.start.lng)} />
+                <Info label="Arrivée GPS" value={formatCoordinates(selectedTrip.end.lat, selectedTrip.end.lng)} />
+              </div>
+              {sampling?.sampled && (
+                <p className="text-xs leading-5 text-amber-300">
+                  Tracé optimisé : {sampling.returnedPointCount} points affichés sur {sampling.rawPointCount} points GPS, répartis sur l'ensemble du trajet.
+                </p>
+              )}
+              {!sampling?.sampled && sampling && (
+                <p className="text-xs text-slate-500">
+                  {sampling.returnedPointCount} points GPS affichés.
+                </p>
+              )}
             </div>
           )}
         </div>
-      </div>
-
-      {/* Informations supplémentaires */}
-      <div className="grid gap-6 lg:grid-cols-2">
-        <InfoPanel title="Informations du trajet">
-          <InfoRow
-            label="Point de départ"
-            value={filteredHistory.length > 0 ? "Casablanca" : "—"}
-          />
-
-          <InfoRow
-            label="Destination"
-            value={filteredHistory.length > 0 ? "Rabat" : "—"}
-          />
-
-          <InfoRow
-            label="Distance"
-            value={stats.distance}
-          />
-
-          <InfoRow
-            label="Durée totale"
-            value={stats.drivingTime}
-          />
-        </InfoPanel>
-
-        <InfoPanel title="Résumé de conduite">
-          <InfoRow
-            label="Vitesse moyenne"
-            value={filteredHistory.length > 0 ? "51 km/h" : "—"}
-          />
-
-          <InfoRow
-            label="Vitesse maximale"
-            value={stats.maxSpeed}
-          />
-
-          <InfoRow
-            label="Arrêts"
-            value={String(stats.stops)}
-          />
-
-          <InfoRow
-            label="Alertes détectées"
-            value={String(stats.alerts)}
-            valueClass="text-red-400"
-          />
-        </InfoPanel>
-      </div>
-
-      {/* Retour */}
-      <div className="pt-2">
-        <Link
-          href={`/dashboard/vehicle/${vehicleId}`}
-          className="inline-flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900 px-4 py-2.5 text-sm font-medium text-slate-300 transition hover:bg-slate-800 hover:text-white"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Retour au véhicule
-        </Link>
       </div>
     </div>
   );
 }
 
-/* -------------------------------------------------------------------------- */
-/* Composants                                                                  */
-/* -------------------------------------------------------------------------- */
-
-function Stat({
+function SummaryCard({
   label,
   value,
   icon,
-  bg,
-  valueClass = "text-white",
 }: {
   label: string;
   value: string;
   icon: React.ReactNode;
-  bg: string;
-  valueClass?: string;
 }) {
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
       <div className="flex items-center justify-between gap-3">
-        <div>
-          <p className="text-sm text-slate-400">
-            {label}
-          </p>
-
-          <p
-            className={`mt-2 text-2xl font-bold ${valueClass}`}
-          >
-            {value}
-          </p>
-        </div>
-
-        <div
-          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${bg}`}
-        >
-          {icon}
-        </div>
+        <p className="text-sm text-slate-400">{label}</p>
+        {icon}
       </div>
+      <p className="mt-3 text-2xl font-semibold text-white">{value}</p>
     </div>
   );
 }
 
-function InfoPanel({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
+function Info({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
-      <h2 className="text-lg font-semibold text-white">
-        {title}
-      </h2>
-
-      <div className="mt-5 space-y-4">
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function InfoRow({
-  label,
-  value,
-  valueClass = "text-white",
-}: {
-  label: string;
-  value: string;
-  valueClass?: string;
-}) {
-  return (
-    <div className="flex items-center justify-between border-b border-slate-800 pb-3 last:border-0">
-      <span className="text-sm text-slate-400">
-        {label}
-      </span>
-
-      <span
-        className={`text-sm font-medium ${valueClass}`}
-      >
-        {value}
-      </span>
+    <div className="rounded-xl border border-slate-800 bg-slate-950 px-4 py-3">
+      <p className="text-xs text-slate-500">{label}</p>
+      <p className="mt-1 text-sm font-medium text-slate-200">{value}</p>
     </div>
   );
 }
