@@ -38,7 +38,20 @@ type FleetVehicle = {
   } | null;
 };
 
-type HistoryPoint = {
+type TripSummary = {
+  id: string;
+  startedAt: string;
+  endedAt: string;
+  durationSeconds: number;
+  distanceKm: number;
+  start: { lat: number; lng: number };
+  end: { lat: number; lng: number };
+  pointCount: number;
+  avgSpeed: number;
+  maxSpeed: number;
+};
+
+type TripPoint = {
   lat: number;
   lng: number;
   speed: number | null;
@@ -46,12 +59,11 @@ type HistoryPoint = {
   recordedAt: string;
 };
 
-type HistoryMeta = {
-  hours: HistoryWindowHours;
-  from: string;
-  to: string;
-  truncated: boolean;
-  maxPoints: number;
+type TripSampling = {
+  rawPointCount: number;
+  returnedPointCount: number;
+  sampled: boolean;
+  maxMapPoints: number;
 };
 
 type RoutePoint = {
@@ -77,6 +89,8 @@ const HISTORY_WINDOWS: Array<{ value: HistoryWindowHours; label: string }> = [
   { value: 8760, label: "1 an" },
 ];
 
+const TRIPS_PAGE_SIZE = 25;
+
 const LeafletMap = dynamic(() => import("../LeafletMap"), {
   ssr: false,
   loading: () => (
@@ -90,36 +104,44 @@ const LeafletMap = dynamic(() => import("../LeafletMap"), {
 });
 
 function formatLastSeen(value: string | null) {
-  if (!value) {
-    return "Jamais";
-  }
+  if (!value) return "Jamais";
 
   const timestamp = new Date(value).getTime();
-
-  if (!Number.isFinite(timestamp)) {
-    return "Date inconnue";
-  }
+  if (!Number.isFinite(timestamp)) return "Date inconnue";
 
   const diffSeconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
-
-  if (diffSeconds < 60) {
-    return `Il y a ${diffSeconds} s`;
-  }
+  if (diffSeconds < 60) return `Il y a ${diffSeconds} s`;
 
   const diffMinutes = Math.round(diffSeconds / 60);
-
-  if (diffMinutes < 60) {
-    return `Il y a ${diffMinutes} min`;
-  }
+  if (diffMinutes < 60) return `Il y a ${diffMinutes} min`;
 
   const diffHours = Math.round(diffMinutes / 60);
+  if (diffHours < 24) return `Il y a ${diffHours} h`;
 
-  if (diffHours < 24) {
-    return `Il y a ${diffHours} h`;
-  }
+  return `Il y a ${Math.round(diffHours / 24)} j`;
+}
 
-  const diffDays = Math.round(diffHours / 24);
-  return `Il y a ${diffDays} j`;
+function formatTripDate(value: string) {
+  return new Intl.DateTimeFormat("fr-FR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
+
+function formatDuration(seconds: number) {
+  const safeSeconds = Math.max(0, Math.round(seconds));
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+
+  if (hours > 0) return `${hours} h ${minutes} min`;
+  return `${minutes} min`;
+}
+
+function formatCoordinates(lat: number, lng: number) {
+  return `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
 }
 
 function StatusBadge({ status }: { status: VehicleStatus }) {
@@ -149,14 +171,21 @@ function StatusBadge({ status }: { status: VehicleStatus }) {
 export default function MapPage() {
   const [vehicles, setVehicles] = useState<FleetVehicle[]>([]);
   const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(null);
-  const [historyPoints, setHistoryPoints] = useState<HistoryPoint[]>([]);
   const [historyWindowHours, setHistoryWindowHours] =
     useState<HistoryWindowHours>(24);
-  const [historyMeta, setHistoryMeta] = useState<HistoryMeta | null>(null);
+  const [trips, setTrips] = useState<TripSummary[]>([]);
+  const [tripsPage, setTripsPage] = useState(1);
+  const [tripsTotal, setTripsTotal] = useState(0);
+  const [tripsTotalPages, setTripsTotalPages] = useState(0);
+  const [selectedTripId, setSelectedTripId] = useState<string | null>(null);
+  const [tripPoints, setTripPoints] = useState<TripPoint[]>([]);
+  const [tripSampling, setTripSampling] = useState<TripSampling | null>(null);
   const [loading, setLoading] = useState(true);
-  const [historyLoading, setHistoryLoading] = useState(false);
+  const [tripsLoading, setTripsLoading] = useState(false);
+  const [tripLoading, setTripLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [tripsError, setTripsError] = useState<string | null>(null);
+  const [tripError, setTripError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -168,15 +197,11 @@ export default function MapPage() {
           error: sessionError,
         } = await supabase.auth.getSession();
 
-        if (sessionError || !session) {
-          throw new Error("Session expirée.");
-        }
+        if (sessionError || !session) throw new Error("Session expirée.");
 
         const response = await fetch("/api/dashboard/fleet", {
           cache: "no-store",
-          headers: {
-            Authorization: `Bearer ${session.access_token}`,
-          },
+          headers: { Authorization: `Bearer ${session.access_token}` },
         });
 
         const payload = (await response.json()) as {
@@ -188,26 +213,19 @@ export default function MapPage() {
           throw new Error(payload.error ?? "Impossible de charger la flotte.");
         }
 
-        if (cancelled) {
-          return;
-        }
+        if (cancelled) return;
 
         const nextVehicles = payload.vehicles ?? [];
         setVehicles(nextVehicles);
         setError(null);
-
         setSelectedVehicleId((current) => {
           if (current && nextVehicles.some((vehicle) => vehicle.id === current)) {
             return current;
           }
-
           return nextVehicles[0]?.id ?? null;
         });
       } catch (cause) {
-        if (cancelled) {
-          return;
-        }
-
+        if (cancelled) return;
         console.error("[Dashboard map]", cause);
         setError(
           cause instanceof Error
@@ -215,9 +233,7 @@ export default function MapPage() {
             : "Impossible de charger les positions.",
         );
       } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
+        if (!cancelled) setLoading(false);
       }
     }
 
@@ -231,98 +247,166 @@ export default function MapPage() {
   }, []);
 
   useEffect(() => {
+    setTripsPage(1);
+    setSelectedTripId(null);
+    setTripPoints([]);
+    setTripSampling(null);
+    setTripError(null);
+  }, [selectedVehicleId, historyWindowHours]);
+
+  useEffect(() => {
     let cancelled = false;
     const vehicleId = selectedVehicleId;
 
     if (!vehicleId) {
-      setHistoryPoints([]);
-      setHistoryMeta(null);
-      setHistoryError(null);
+      setTrips([]);
+      setTripsTotal(0);
+      setTripsTotalPages(0);
+      setTripsError(null);
       return () => {
         cancelled = true;
       };
     }
 
-    async function loadHistory(currentVehicleId: string) {
+    async function loadTrips(currentVehicleId: string) {
       try {
-        setHistoryLoading(true);
+        setTripsLoading(true);
 
         const {
           data: { session },
           error: sessionError,
         } = await supabase.auth.getSession();
 
-        if (sessionError || !session) {
-          throw new Error("Session expirée.");
-        }
+        if (sessionError || !session) throw new Error("Session expirée.");
 
         const response = await fetch(
-          `/api/dashboard/vehicles/${encodeURIComponent(currentVehicleId)}/history?hours=${historyWindowHours}`,
+          `/api/dashboard/vehicles/${encodeURIComponent(currentVehicleId)}/trips?hours=${historyWindowHours}&page=${tripsPage}&pageSize=${TRIPS_PAGE_SIZE}`,
           {
             cache: "no-store",
-            headers: {
-              Authorization: `Bearer ${session.access_token}`,
-            },
+            headers: { Authorization: `Bearer ${session.access_token}` },
           },
         );
 
         const payload = (await response.json()) as {
-          window?: {
-            hours?: HistoryWindowHours;
-            from?: string;
-            to?: string;
+          trips?: TripSummary[];
+          pagination?: {
+            page: number;
+            pageSize: number;
+            total: number;
+            totalPages: number;
           };
-          points?: HistoryPoint[];
-          truncated?: boolean;
-          maxPoints?: number;
           error?: string;
         };
 
         if (!response.ok) {
-          throw new Error(payload.error ?? "Impossible de charger l'historique GPS.");
+          throw new Error(payload.error ?? "Impossible de charger les trajets.");
         }
 
-        if (cancelled) {
-          return;
-        }
+        if (cancelled) return;
 
-        setHistoryPoints(payload.points ?? []);
-        setHistoryMeta({
-          hours: payload.window?.hours ?? historyWindowHours,
-          from: payload.window?.from ?? "",
-          to: payload.window?.to ?? "",
-          truncated: payload.truncated ?? false,
-          maxPoints: payload.maxPoints ?? 500,
-        });
-        setHistoryError(null);
+        setTrips(payload.trips ?? []);
+        setTripsTotal(payload.pagination?.total ?? 0);
+        setTripsTotalPages(payload.pagination?.totalPages ?? 0);
+        setTripsError(null);
       } catch (cause) {
-        if (cancelled) {
-          return;
-        }
-
-        console.error("[Dashboard map history]", cause);
-        setHistoryPoints([]);
-        setHistoryMeta(null);
-        setHistoryError(
-          cause instanceof Error
-            ? cause.message
-            : "Impossible de charger l'historique GPS.",
+        if (cancelled) return;
+        console.error("[Dashboard map trips]", cause);
+        setTrips([]);
+        setTripsTotal(0);
+        setTripsTotalPages(0);
+        setTripsError(
+          cause instanceof Error ? cause.message : "Impossible de charger les trajets.",
         );
       } finally {
-        if (!cancelled) {
-          setHistoryLoading(false);
-        }
+        if (!cancelled) setTripsLoading(false);
       }
     }
 
-    void loadHistory(vehicleId);
-    const timer = window.setInterval(() => void loadHistory(vehicleId), 10000);
+    void loadTrips(vehicleId);
 
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
     };
-  }, [selectedVehicleId, historyWindowHours]);
+  }, [selectedVehicleId, historyWindowHours, tripsPage]);
+
+  const selectedTrip = useMemo(
+    () => trips.find((trip) => trip.id === selectedTripId) ?? null,
+    [trips, selectedTripId],
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    const vehicleId = selectedVehicleId;
+    const trip = selectedTrip;
+
+    if (!vehicleId || !trip) {
+      setTripPoints([]);
+      setTripSampling(null);
+      setTripError(null);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    async function loadSelectedTrip(currentVehicleId: string, currentTrip: TripSummary) {
+      try {
+        setTripLoading(true);
+
+        const {
+          data: { session },
+          error: sessionError,
+        } = await supabase.auth.getSession();
+
+        if (sessionError || !session) throw new Error("Session expirée.");
+
+        const params = new URLSearchParams({
+          from: currentTrip.startedAt,
+          to: currentTrip.endedAt,
+        });
+        const response = await fetch(
+          `/api/dashboard/vehicles/${encodeURIComponent(currentVehicleId)}/trips/points?${params.toString()}`,
+          {
+            cache: "no-store",
+            headers: { Authorization: `Bearer ${session.access_token}` },
+          },
+        );
+
+        const payload = (await response.json()) as {
+          points?: TripPoint[];
+          sampling?: TripSampling;
+          error?: string;
+        };
+
+        if (!response.ok) {
+          throw new Error(payload.error ?? "Impossible de charger le tracé du trajet.");
+        }
+
+        if (cancelled) return;
+
+        setTripPoints(payload.points ?? []);
+        setTripSampling(payload.sampling ?? null);
+        setTripError(null);
+      } catch (cause) {
+        if (cancelled) return;
+        console.error("[Dashboard selected trip]", cause);
+        setTripPoints([]);
+        setTripSampling(null);
+        setTripError(
+          cause instanceof Error
+            ? cause.message
+            : "Impossible de charger le tracé du trajet.",
+        );
+      } finally {
+        if (!cancelled) setTripLoading(false);
+      }
+    }
+
+    void loadSelectedTrip(vehicleId, trip);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedVehicleId, selectedTrip]);
 
   const selectedVehicle = useMemo(
     () =>
@@ -357,7 +441,7 @@ export default function MapPage() {
           : "offline",
   }));
 
-  const route: RoutePoint[] = historyPoints.map((point) => ({
+  const route: RoutePoint[] = tripPoints.map((point) => ({
     lat: point.lat,
     lng: point.lng,
   }));
@@ -381,18 +465,15 @@ export default function MapPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-500/10">
-            <MapPin className="h-5 w-5 text-blue-400" />
-          </div>
-
-          <div>
-            <h1 className="text-2xl font-semibold text-white">Carte en direct</h1>
-            <p className="mt-1 text-sm text-slate-400">
-              Flotte visible selon votre périmètre Matelematics.
-            </p>
-          </div>
+      <div className="flex items-center gap-3">
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-500/10">
+          <MapPin className="h-5 w-5 text-blue-400" />
+        </div>
+        <div>
+          <h1 className="text-2xl font-semibold text-white">Carte en direct</h1>
+          <p className="mt-1 text-sm text-slate-400">
+            Flotte visible selon votre périmètre Matelematics.
+          </p>
         </div>
       </div>
 
@@ -401,17 +482,14 @@ export default function MapPage() {
           <p className="text-sm text-slate-400">Véhicules suivis</p>
           <p className="mt-2 text-2xl font-bold text-white">{vehicles.length}</p>
         </div>
-
         <div className="rounded-xl border border-slate-800 bg-slate-900 p-4">
           <p className="text-sm text-slate-400">En mouvement</p>
           <p className="mt-2 text-2xl font-bold text-emerald-400">{moving}</p>
         </div>
-
         <div className="rounded-xl border border-slate-800 bg-slate-900 p-4">
           <p className="text-sm text-slate-400">À l'arrêt</p>
           <p className="mt-2 text-2xl font-bold text-amber-400">{stopped}</p>
         </div>
-
         <div className="rounded-xl border border-slate-800 bg-slate-900 p-4">
           <p className="text-sm text-slate-400">Hors ligne</p>
           <p className="mt-2 text-2xl font-bold text-slate-300">{offline}</p>
@@ -419,20 +497,8 @@ export default function MapPage() {
       </div>
 
       {error && (
-        <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4">
-          <p className="text-sm font-medium text-red-300">
-            Impossible de charger les données de flotte
-          </p>
-          <p className="mt-1 text-xs text-red-200/70">{error}</p>
-        </div>
-      )}
-
-      {historyError && (
-        <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
-          <p className="text-sm font-medium text-amber-300">
-            Historique GPS indisponible
-          </p>
-          <p className="mt-1 text-xs text-amber-200/70">{historyError}</p>
+        <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4 text-sm text-red-300">
+          {error}
         </div>
       )}
 
@@ -445,7 +511,6 @@ export default function MapPage() {
                 {vehicles.length}
               </span>
             </div>
-
             <div className="mt-3 flex items-center gap-2 text-xs text-slate-500">
               <Radio className="h-3.5 w-3.5 text-emerald-400" />
               API flotte Matelematics · données réelles
@@ -454,17 +519,13 @@ export default function MapPage() {
 
           <div className="max-h-[590px] overflow-y-auto">
             {loading && (
-              <div className="p-5 text-sm text-slate-400">
-                Chargement des véhicules...
-              </div>
+              <div className="p-5 text-sm text-slate-400">Chargement des véhicules...</div>
             )}
-
             {!loading && vehicles.length === 0 && (
               <div className="p-5 text-sm text-slate-400">
                 Aucun véhicule accessible dans votre périmètre.
               </div>
             )}
-
             {vehicles.map((vehicle) => (
               <button
                 key={vehicle.id}
@@ -480,14 +541,9 @@ export default function MapPage() {
                   <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-500/10">
                     <Truck className="h-4 w-4 text-blue-400" />
                   </div>
-
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-white">
-                      {vehicle.name}
-                    </p>
-                    <p className="mt-0.5 text-xs text-slate-500">
-                      {vehicle.registration}
-                    </p>
+                    <p className="truncate text-sm font-medium text-white">{vehicle.name}</p>
+                    <p className="mt-0.5 text-xs text-slate-500">{vehicle.registration}</p>
                     <div className="mt-2">
                       <StatusBadge status={vehicle.motionStatus} />
                     </div>
@@ -509,7 +565,7 @@ export default function MapPage() {
               htmlFor="map-history-window"
               className="mb-2 block text-[11px] font-medium uppercase tracking-wide text-slate-400"
             >
-              Historique GPS
+              Période des trajets
             </label>
             <select
               id="map-history-window"
@@ -543,78 +599,175 @@ export default function MapPage() {
 
                   <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
                     <StatusBadge status={selectedVehicle.motionStatus} />
-
                     <div className="flex items-center gap-2 text-sm text-slate-300">
                       <Gauge className="h-4 w-4 text-blue-400" />
                       {selectedSpeed === null || selectedSpeed === undefined
                         ? "—"
                         : `${selectedSpeed} km/h`}
                     </div>
-
                     <div className="flex items-center gap-2 text-sm text-slate-300">
                       <Navigation className="h-4 w-4 text-blue-400" />
                       {selectedHeading === null || selectedHeading === undefined
                         ? "—"
                         : `${selectedHeading}°`}
                     </div>
-
                     <div className="flex items-center gap-2 text-sm text-slate-300">
                       <Clock3 className="h-4 w-4 text-slate-400" />
                       {formatLastSeen(selectedVehicle.lastSeenAt)}
                     </div>
-
                     <div className="flex items-center gap-2 text-sm text-slate-300">
                       <Route className="h-4 w-4 text-cyan-400" />
-                      {historyLoading
-                        ? `Historique ${selectedHistoryLabel}...`
-                        : `${historyPoints.length} points GPS · ${selectedHistoryLabel}`}
+                      {tripLoading
+                        ? "Chargement du trajet..."
+                        : selectedTrip
+                          ? `${tripPoints.length} points affichés`
+                          : "Choisissez un trajet dans le tableau"}
                     </div>
                   </div>
                 </div>
 
-                {selectedVehicle.motionStatus === "Hors ligne" &&
-                  selectedVehicle.position && (
-                    <p className="mt-3 text-xs text-slate-500">
-                      Une dernière position enregistrée existe, mais elle n'est pas affichée
-                      comme position en direct tant que le tracker reste hors ligne.
-                    </p>
-                  )}
-
-                {historyMeta?.truncated && (
-                  <p className="mt-3 text-xs text-amber-300/90">
-                    La période demandée contient plus de {historyMeta.maxPoints} points GPS.
-                    Le tracé affiche actuellement les {historyMeta.maxPoints} points les plus
-                    récents de cette période ; la période sélectionnée reste bien limitée à
-                    {` ${selectedHistoryLabel}`}.
-                  </p>
-                )}
-
-                {historyPoints.length > 1 && (
+                {selectedTrip && (
                   <p className="mt-3 text-xs text-cyan-300/80">
-                    Le tracé affiché correspond aux points GPS réellement enregistrés pour ce
-                    véhicule sur la période sélectionnée ; il s'agit d'un historique, pas d'une
-                    position live.
+                    Trajet sélectionné : {formatTripDate(selectedTrip.startedAt)} → {formatTripDate(selectedTrip.endedAt)} · {selectedTrip.distanceKm.toFixed(1)} km · {formatDuration(selectedTrip.durationSeconds)}.
                   </p>
                 )}
+                {tripSampling?.sampled && (
+                  <p className="mt-2 text-xs text-amber-300/90">
+                    Ce trajet contient {tripSampling.rawPointCount} points GPS. La carte utilise un échantillonnage réparti sur tout le trajet ({tripSampling.returnedPointCount} points) pour rester lisible et rapide.
+                  </p>
+                )}
+                {tripError && <p className="mt-2 text-xs text-red-300">{tripError}</p>}
               </div>
             </div>
           )}
         </div>
       </div>
 
+      <section className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900">
+        <div className="flex flex-col gap-3 border-b border-slate-800 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="font-semibold text-white">Trajets du véhicule</h2>
+            <p className="mt-1 text-xs text-slate-400">
+              {selectedVehicle
+                ? `${selectedVehicle.name} · ${selectedHistoryLabel} · ${tripsTotal} trajet${tripsTotal > 1 ? "s" : ""}`
+                : "Sélectionnez un véhicule."}
+            </p>
+          </div>
+          <p className="text-xs text-slate-500">
+            Cliquez sur un trajet pour afficher uniquement son tracé sur la carte.
+          </p>
+        </div>
+
+        {tripsError && (
+          <div className="border-b border-red-500/20 bg-red-500/5 p-4 text-sm text-red-300">
+            {tripsError}
+          </div>
+        )}
+
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-left text-sm">
+            <thead className="bg-slate-950/60 text-xs uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="px-4 py-3">Départ</th>
+                <th className="px-4 py-3">Arrivée</th>
+                <th className="px-4 py-3">Durée</th>
+                <th className="px-4 py-3">Distance</th>
+                <th className="px-4 py-3">Départ GPS</th>
+                <th className="px-4 py-3">Arrivée GPS</th>
+                <th className="px-4 py-3">Vitesse moy.</th>
+                <th className="px-4 py-3">Vitesse max.</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800">
+              {tripsLoading && (
+                <tr>
+                  <td colSpan={8} className="px-4 py-8 text-center text-slate-400">
+                    Chargement des trajets...
+                  </td>
+                </tr>
+              )}
+              {!tripsLoading && trips.length === 0 && (
+                <tr>
+                  <td colSpan={8} className="px-4 py-8 text-center text-slate-400">
+                    Aucun trajet détecté sur cette période.
+                  </td>
+                </tr>
+              )}
+              {!tripsLoading &&
+                trips.map((trip) => (
+                  <tr
+                    key={trip.id}
+                    onClick={() => setSelectedTripId(trip.id)}
+                    className={`cursor-pointer transition ${
+                      selectedTripId === trip.id
+                        ? "bg-blue-500/10"
+                        : "hover:bg-slate-800/50"
+                    }`}
+                  >
+                    <td className="whitespace-nowrap px-4 py-3 text-white">
+                      {formatTripDate(trip.startedAt)}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-slate-300">
+                      {formatTripDate(trip.endedAt)}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-slate-300">
+                      {formatDuration(trip.durationSeconds)}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 font-medium text-cyan-300">
+                      {trip.distanceKm.toFixed(1)} km
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-slate-400">
+                      {formatCoordinates(trip.start.lat, trip.start.lng)}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-slate-400">
+                      {formatCoordinates(trip.end.lat, trip.end.lng)}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-slate-300">
+                      {trip.avgSpeed.toFixed(1)} km/h
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-slate-300">
+                      {trip.maxSpeed.toFixed(1)} km/h
+                    </td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="flex items-center justify-between border-t border-slate-800 px-4 py-3">
+          <p className="text-xs text-slate-500">
+            Page {tripsTotalPages === 0 ? 0 : tripsPage} sur {tripsTotalPages}
+          </p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={tripsPage <= 1 || tripsLoading}
+              onClick={() => setTripsPage((page) => Math.max(1, page - 1))}
+              className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-300 transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Précédent
+            </button>
+            <button
+              type="button"
+              disabled={tripsPage >= tripsTotalPages || tripsTotalPages === 0 || tripsLoading}
+              onClick={() => setTripsPage((page) => page + 1)}
+              className="rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-300 transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Suivant
+            </button>
+          </div>
+        </div>
+      </section>
+
       <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-4">
         <div className="flex gap-3">
           <Wifi className="mt-0.5 h-5 w-5 shrink-0 text-emerald-400" />
-
           <div>
             <p className="text-sm font-medium text-white">
-              Carte et historique connectés aux données réelles
+              Historique organisé par trajets réels
             </p>
             <p className="mt-1 text-xs leading-5 text-slate-400">
-              Les positions en direct utilisent l'API flotte Matelematics. Le trajet du véhicule
-              sélectionné provient d'une API serveur sécurisée qui vérifie votre périmètre avant
-              de lire les points GPS de la période choisie, jusqu'à 1 an. Aucun trajet de
-              démonstration n'est utilisé sur cette page.
+              La période choisie, jusqu'à 1 an, sert à lister les trajets du véhicule. La carte ne charge ensuite que le trajet sélectionné. Les longs trajets sont échantillonnés sur toute leur durée afin d'éviter de charger des milliers de points GPS en même temps.
             </p>
           </div>
         </div>
