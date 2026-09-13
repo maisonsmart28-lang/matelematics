@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   CalendarDays,
   Clock3,
@@ -10,10 +10,9 @@ import {
   Navigation,
   Route,
   Search,
-  Truck,
 } from "lucide-react";
 
-import { supabase } from "../components/supabase";
+import { supabase } from "../../components/supabase";
 
 type HistoryWindowHours = 1 | 6 | 24 | 168 | 720 | 2160 | 4320 | 8760;
 
@@ -130,11 +129,7 @@ export default function HistoryPage() {
           headers: { Authorization: `Bearer ${session.access_token}` },
         });
         const payload = (await response.json()) as {
-          vehicles?: Array<{
-            id: string;
-            name: string;
-            registration: string;
-          }>;
+          vehicles?: FleetVehicle[];
           error?: string;
         };
 
@@ -200,15 +195,9 @@ export default function HistoryPage() {
             headers: { Authorization: `Bearer ${session.access_token}` },
           },
         );
-
         const payload = (await response.json()) as {
           trips?: TripSummary[];
-          pagination?: {
-            page: number;
-            pageSize: number;
-            total: number;
-            totalPages: number;
-          };
+          pagination?: { page: number; pageSize: number; total: number; totalPages: number };
           error?: string;
         };
 
@@ -271,7 +260,6 @@ export default function HistoryPage() {
           from: currentTrip.startedAt,
           to: currentTrip.endedAt,
         });
-
         const response = await fetch(
           `/api/dashboard/vehicles/${encodeURIComponent(vehicleId)}/trips/points?${query.toString()}`,
           {
@@ -279,7 +267,6 @@ export default function HistoryPage() {
             headers: { Authorization: `Bearer ${session.access_token}` },
           },
         );
-
         const payload = (await response.json()) as {
           points?: TripPoint[];
           sampling?: TripSampling;
@@ -327,17 +314,15 @@ export default function HistoryPage() {
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-500/10">
-              <Clock3 className="h-5 w-5 text-blue-400" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-semibold text-white">Historique</h1>
-              <p className="mt-1 text-sm text-slate-400">
-                Consultez les trajets réels de la flotte accessible à votre compte.
-              </p>
-            </div>
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-500/10">
+            <Clock3 className="h-5 w-5 text-blue-400" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-semibold text-white">Historique</h1>
+            <p className="mt-1 text-sm text-slate-400">
+              Consultez les trajets réels de la flotte accessible à votre compte.
+            </p>
           </div>
         </div>
 
@@ -433,7 +418,7 @@ export default function HistoryPage() {
 
       <div className="rounded-xl border border-slate-800 bg-slate-900 px-4 py-3 text-sm text-slate-400">
         <CalendarDays className="mr-2 inline h-4 w-4 text-blue-400" />
-        Période : <span className="font-medium text-slate-200">{periodLabel}</span>. La liste affiche les trajets du véhicule choisi ; la carte reste vide jusqu'à la sélection d'un trajet.
+        Période : <span className="font-medium text-slate-200">{periodLabel}</span>. La liste affiche les trajets du véhicule choisi ; la carte reste vide jusqu&apos;à la sélection d&apos;un trajet.
       </div>
 
       <div className="grid gap-6 2xl:grid-cols-[minmax(0,1.15fr)_minmax(520px,0.85fr)]">
@@ -443,13 +428,12 @@ export default function HistoryPage() {
               <div>
                 <h2 className="text-lg font-semibold text-white">Trajets</h2>
                 <p className="mt-1 text-sm text-slate-400">
-                  Cliquez sur un trajet pour afficher uniquement son tracé.
+                  Sélectionnez un trajet pour l&apos;afficher sur la carte.
                 </p>
               </div>
-              <div className="flex items-center gap-2 rounded-lg bg-slate-950 px-3 py-2 text-xs text-slate-400">
-                <Truck className="h-4 w-4" />
+              <span className="rounded-lg bg-slate-950 px-3 py-2 text-xs text-slate-400">
                 {total} trajet{total > 1 ? "s" : ""}
-              </div>
+              </span>
             </div>
           </div>
 
@@ -475,7 +459,7 @@ export default function HistoryPage() {
                 ) : trips.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
-                      Aucun trajet enregistré pour ce véhicule sur cette période.
+                      Aucun trajet enregistré sur cette période.
                     </td>
                   </tr>
                 ) : (
@@ -568,7 +552,7 @@ export default function HistoryPage() {
               )
             ) : (
               <div className="flex h-full items-center justify-center p-6 text-center text-sm text-slate-500">
-                La carte n'affiche aucun historique tant qu'un trajet n'est pas sélectionné.
+                La carte n&apos;affiche aucun historique tant qu&apos;un trajet n&apos;est pas sélectionné.
               </div>
             )}
           </div>
@@ -581,7 +565,7 @@ export default function HistoryPage() {
               </div>
               {sampling?.sampled && (
                 <p className="text-xs leading-5 text-amber-300">
-                  Tracé optimisé : {sampling.returnedPointCount} points affichés sur {sampling.rawPointCount} points GPS, répartis sur l'ensemble du trajet.
+                  Tracé optimisé : {sampling.returnedPointCount} points affichés sur {sampling.rawPointCount} points GPS, répartis sur l&apos;ensemble du trajet.
                 </p>
               )}
               {!sampling?.sampled && sampling && (
@@ -597,15 +581,7 @@ export default function HistoryPage() {
   );
 }
 
-function SummaryCard({
-  label,
-  value,
-  icon,
-}: {
-  label: string;
-  value: string;
-  icon: React.ReactNode;
-}) {
+function SummaryCard({ label, value, icon }: { label: string; value: string; icon: ReactNode }) {
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
       <div className="flex items-center justify-between gap-3">
