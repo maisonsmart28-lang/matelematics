@@ -1,4 +1,6 @@
-create or replace function public.matelematics_vehicle_fuel_history(
+drop function if exists public.matelematics_vehicle_fuel_history(uuid, timestamptz, timestamptz, integer);
+
+create function public.matelematics_vehicle_fuel_history(
   p_vehicle_id uuid,
   p_from timestamptz,
   p_to timestamptz,
