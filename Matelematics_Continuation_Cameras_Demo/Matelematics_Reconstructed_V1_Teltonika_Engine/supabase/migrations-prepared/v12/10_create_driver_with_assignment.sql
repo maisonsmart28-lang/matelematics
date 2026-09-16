@@ -62,3 +62,8 @@ $$;
 
 revoke all on function public.create_driver_with_assignment(uuid,uuid,text,text,text) from public;
 grant execute on function public.create_driver_with_assignment(uuid,uuid,text,text,text) to authenticated;
+
+-- The function is SECURITY INVOKER: authenticated users still need table-level
+-- INSERT privileges, while the existing RLS manage policies enforce role/company scope.
+grant insert on table public.drivers to authenticated;
+grant insert on table public.vehicle_driver_assignments to authenticated;
