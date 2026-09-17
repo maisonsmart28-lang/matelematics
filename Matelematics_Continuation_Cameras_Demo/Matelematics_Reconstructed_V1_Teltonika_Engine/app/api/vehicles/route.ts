@@ -365,6 +365,12 @@ export async function GET(
             "Hors ligne";
 
           if (
+            vehicle.status ===
+            "maintenance"
+          ) {
+            displayStatus =
+              "En maintenance";
+          } else if (
             device &&
             trackerFresh
           ) {
