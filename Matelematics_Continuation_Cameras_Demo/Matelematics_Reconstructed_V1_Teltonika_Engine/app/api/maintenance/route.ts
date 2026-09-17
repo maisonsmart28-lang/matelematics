@@ -1,70 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
-
-type Role = "matelematics_admin" | "partner_admin" | "client_admin" | "user";
-type Profile = { id: string; role: Role; company_id: string | null; partner_id: string | null };
-
-const supabaseUrl = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
-const secretKey = process.env.SUPABASE_SECRET_KEY;
-
-function getAdmin() {
-  if (!supabaseUrl || !secretKey) throw new Error("Configuration Supabase serveur absente.");
-  return createClient(supabaseUrl, secretKey, { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } });
-}
-function isRole(v: unknown): v is Role { return v === "matelematics_admin" || v === "partner_admin" || v === "client_admin" || v === "user"; }
-function canManage(p: Profile) { return p.role === "matelematics_admin" || p.role === "partner_admin" || p.role === "client_admin"; }
-async function authenticate(request: NextRequest) {
-  const h = request.headers.get("authorization"), token = h?.startsWith("Bearer ") ? h.slice(7) : null;
-  if (!token) throw new Error("AUTH_REQUIRED");
-  const admin = getAdmin();
-  const { data: u, error: ue } = await admin.auth.getUser(token);
-  if (ue || !u.user) throw new Error("AUTH_REQUIRED");
-  const { data: p, error: pe } = await admin.from("profiles").select("id,role,company_id,partner_id").eq("id", u.user.id).single();
-  if (pe || !p) throw new Error("PROFILE_REQUIRED");
-  if (!isRole(p.role)) throw new Error("FORBIDDEN");
-  return { admin, profile: p as Profile };
-}
-async function allowedCompanyIds(admin: ReturnType<typeof getAdmin>, p: Profile): Promise<string[] | null> {
-  if (p.role === "matelematics_admin") return null;
-  if (p.role === "client_admin" || p.role === "user") return p.company_id ? [p.company_id] : [];
-  if (!p.partner_id) return [];
-  const { data, error } = await admin.from("companies").select("id").eq("partner_id", p.partner_id);
-  if (error) throw error;
-  return (data ?? []).map((c) => c.id);
-}
-function caught(error: unknown) {
-  console.error("[Maintenance API GET]", error);
-  const m = error instanceof Error ? error.message : "Erreur serveur.";
-  if (m === "AUTH_REQUIRED") return NextResponse.json({ error: "Authentification requise." }, { status: 401 });
-  if (m === "PROFILE_REQUIRED" || m === "FORBIDDEN") return NextResponse.json({ error: "Accès refusé." }, { status: 403 });
-  return NextResponse.json({ error: m }, { status: 500 });
-}
-
-export async function GET(request: NextRequest) {
-  try {
-    const { admin, profile } = await authenticate(request);
-    const ids = await allowedCompanyIds(admin, profile);
-    const manageable = canManage(profile);
-    if (ids !== null && ids.length === 0) return NextResponse.json({ maintenance: [], documents: [], vehicles: [], canCreate: manageable, canUpdate: manageable, canDelete: manageable });
-
-    let vq = admin.from("vehicles").select("id,company_id,name,registration,status").order("name");
-    let mq = admin.from("vehicle_maintenance_records").select("*").order("created_at", { ascending: false });
-    let dq = admin.from("vehicle_compliance_documents").select("*").order("expires_on", { ascending: true });
-    if (ids !== null) { vq = vq.in("company_id", ids); mq = mq.in("company_id", ids); dq = dq.in("company_id", ids); }
-    const [{ data: vehicles, error: ve }, { data: maintenance, error: me }, { data: documents, error: de }] = await Promise.all([vq, mq, dq]);
-    if (ve) throw ve; if (me) throw me; if (de) throw de;
-    const vehicleMap = new Map((vehicles ?? []).map((v) => [v.id, v]));
-    const attachVehicle = <T extends { vehicle_id: string }>(row: T) => ({ ...row, vehicle: vehicleMap.get(row.vehicle_id) ?? null });
-    return NextResponse.json({
-      maintenance: (maintenance ?? []).map(attachVehicle),
-      documents: (documents ?? []).map(attachVehicle),
-      vehicles: vehicles ?? [],
-      canCreate: manageable,
-      canUpdate: manageable,
-      canDelete: manageable,
-    });
-  } catch (e) { return caught(e); }
-}
+export const runtime="nodejs";export const dynamic="force-dynamic";
+type Role="matelematics_admin"|"partner_admin"|"client_admin"|"user";type Profile={id:string;role:Role;company_id:string|null;partner_id:string|null};
+const supabaseUrl=process.env.SUPABASE_URL??process.env.NEXT_PUBLIC_SUPABASE_URL,secretKey=process.env.SUPABASE_SECRET_KEY,publishableKey=process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+function getAdmin(){if(!supabaseUrl||!secretKey)throw new Error("Configuration Supabase serveur absente.");return createClient(supabaseUrl,secretKey,{auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false}})}
+function scopedClient(token:string){if(!supabaseUrl||!publishableKey)throw new Error("Configuration Supabase publique absente.");return createClient(supabaseUrl,publishableKey,{global:{headers:{Authorization:`Bearer ${token}`}},auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false}})}
+function isRole(v:unknown):v is Role{return v==="matelematics_admin"||v==="partner_admin"||v==="client_admin"||v==="user"}function canManage(p:Profile){return p.role!=="user"}
+async function authenticate(request:NextRequest){const h=request.headers.get("authorization"),token=h?.startsWith("Bearer ")?h.slice(7):null;if(!token)throw new Error("AUTH_REQUIRED");const admin=getAdmin();const{data:u,error:ue}=await admin.auth.getUser(token);if(ue||!u.user)throw new Error("AUTH_REQUIRED");const{data:p,error:pe}=await admin.from("profiles").select("id,role,company_id,partner_id").eq("id",u.user.id).single();if(pe||!p)throw new Error("PROFILE_REQUIRED");if(!isRole(p.role))throw new Error("FORBIDDEN");return{admin,profile:p as Profile,token}}
+async function allowedCompanyIds(admin:ReturnType<typeof getAdmin>,p:Profile):Promise<string[]|null>{if(p.role==="matelematics_admin")return null;if(p.role==="client_admin"||p.role==="user")return p.company_id?[p.company_id]:[];if(!p.partner_id)return[];const{data,error}=await admin.from("companies").select("id").eq("partner_id",p.partner_id);if(error)throw error;return(data??[]).map(c=>c.id)}
+function caught(error:unknown,label="[Maintenance API]"){console.error(label,error);const m=error instanceof Error?error.message:"Erreur serveur.";if(m==="AUTH_REQUIRED")return NextResponse.json({error:"Authentification requise."},{status:401});if(m==="PROFILE_REQUIRED"||m==="FORBIDDEN")return NextResponse.json({error:"Accès refusé."},{status:403});return NextResponse.json({error:m},{status:500})}
+function rpcError(detail:string){if(detail.includes("VEHICLE_NOT_ACCESSIBLE")||detail.includes("FORBIDDEN"))return NextResponse.json({error:"Véhicule inaccessible dans votre périmètre."},{status:403});if(detail.includes("TITLE_REQUIRED"))return NextResponse.json({error:"Le titre est obligatoire."},{status:400});return null}
+export async function GET(request:NextRequest){try{const{admin,profile}=await authenticate(request),ids=await allowedCompanyIds(admin,profile),manageable=canManage(profile);if(ids!==null&&!ids.length)return NextResponse.json({maintenance:[],documents:[],vehicles:[],canCreate:manageable,canUpdate:manageable,canDelete:manageable});let vq=admin.from("vehicles").select("id,company_id,name,registration,status").order("name"),mq=admin.from("vehicle_maintenance_records").select("*").order("created_at",{ascending:false}),dq=admin.from("vehicle_compliance_documents").select("*").order("expires_on",{ascending:true});if(ids!==null){vq=vq.in("company_id",ids);mq=mq.in("company_id",ids);dq=dq.in("company_id",ids)}const[{data:vehicles,error:ve},{data:maintenance,error:me},{data:documents,error:de}]=await Promise.all([vq,mq,dq]);if(ve)throw ve;if(me)throw me;if(de)throw de;const vm=new Map((vehicles??[]).map(v=>[v.id,v])),attach=<T extends{vehicle_id:string}>(r:T)=>({...r,vehicle:vm.get(r.vehicle_id)??null});return NextResponse.json({maintenance:(maintenance??[]).map(attach),documents:(documents??[]).map(attach),vehicles:vehicles??[],canCreate:manageable,canUpdate:manageable,canDelete:manageable})}catch(e){return caught(e,"[Maintenance API GET]")}}
+export async function POST(request:NextRequest){try{const{profile,token}=await authenticate(request);if(!canManage(profile))return NextResponse.json({error:"Création interdite pour ce rôle."},{status:403});const b=await request.json() as Record<string,unknown>,kind=b.kind,vehicleId=typeof b.vehicleId==="string"?b.vehicleId:"",title=typeof b.title==="string"?b.title.trim():"";if(!vehicleId)return NextResponse.json({error:"Le véhicule est obligatoire."},{status:400});if(!title)return NextResponse.json({error:"Le titre est obligatoire."},{status:400});const sc=scopedClient(token);if(kind==="maintenance"){const category=typeof b.category==="string"?b.category:"maintenance",priority=typeof b.priority==="string"?b.priority:"medium",dueDate=typeof b.dueDate==="string"&&b.dueDate?b.dueDate:null,dueKm=typeof b.dueOdometerKm==="number"?b.dueOdometerKm:null,dueHours=typeof b.dueEngineHours==="number"?b.dueEngineHours:null;if(!dueDate&&dueKm===null&&dueHours===null)return NextResponse.json({error:"Une échéance date, kilométrage ou heures moteur est obligatoire."},{status:400});const{data,error}=await sc.rpc("create_vehicle_maintenance_record",{p_vehicle_id:vehicleId,p_category:category,p_title:title,p_description:typeof b.description==="string"?b.description:null,p_priority:priority,p_due_date:dueDate,p_due_odometer_km:dueKm,p_due_engine_hours:dueHours,p_cost_amount:typeof b.costAmount==="number"?b.costAmount:null,p_provider_name:typeof b.providerName==="string"?b.providerName:null,p_invoice_reference:typeof b.invoiceReference==="string"?b.invoiceReference:null,p_notes:typeof b.notes==="string"?b.notes:null});if(error){const mapped=rpcError(`${error.message} ${error.details??""}`);if(mapped)return mapped;throw error}return NextResponse.json({id:data,kind},{status:201})}if(kind==="document"){const expiresOn=typeof b.expiresOn==="string"?b.expiresOn:"";if(!expiresOn)return NextResponse.json({error:"La date d’expiration est obligatoire."},{status:400});const{data,error}=await sc.rpc("create_vehicle_compliance_document",{p_vehicle_id:vehicleId,p_document_type:typeof b.documentType==="string"?b.documentType:"other",p_title:title,p_expires_on:expiresOn,p_document_number:typeof b.documentNumber==="string"?b.documentNumber:null,p_issuer:typeof b.issuer==="string"?b.issuer:null,p_valid_from:typeof b.validFrom==="string"&&b.validFrom?b.validFrom:null,p_amount:typeof b.amount==="number"?b.amount:null,p_notes:typeof b.notes==="string"?b.notes:null});if(error){const mapped=rpcError(`${error.message} ${error.details??""}`);if(mapped)return mapped;throw error}return NextResponse.json({id:data,kind},{status:201})}return NextResponse.json({error:"Type de création invalide."},{status:400})}catch(e){return caught(e,"[Maintenance API POST]")}}
