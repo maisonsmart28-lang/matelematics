@@ -113,7 +113,7 @@ export async function DELETE(request:NextRequest){
     if(doc.status!=="active")return NextResponse.json({error:"La pièce jointe d’un document historique est conservée."},{status:409});
     if(!doc.storage_path)return NextResponse.json({ok:true});
     const oldPath=doc.storage_path;
-    const{error:rpcError}=await sc.rpc("set_vehicle_compliance_document_storage_path",{p_document_id:id,p_storage_path:null});
+    const{error:rpcError}=await sc.rpc("set_vehicle_compliance_document_storage_path",{p_document_id:id,p_storage_path:""});
     if(rpcError)throw rpcError;
     const{error:removeError}=await sc.storage.from(BUCKET).remove([oldPath]);
     if(removeError){
