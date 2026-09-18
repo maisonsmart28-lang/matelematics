@@ -112,10 +112,15 @@ export async function DELETE(request:NextRequest){
     if(!doc)return NextResponse.json({error:"Ressource inaccessible dans votre périmètre."},{status:403});
     if(doc.status!=="active")return NextResponse.json({error:"La pièce jointe d’un document historique est conservée."},{status:409});
     if(!doc.storage_path)return NextResponse.json({ok:true});
-    const{error:removeError}=await sc.storage.from(BUCKET).remove([doc.storage_path]);
-    if(removeError)throw removeError;
+    const oldPath=doc.storage_path;
     const{error:rpcError}=await sc.rpc("set_vehicle_compliance_document_storage_path",{p_document_id:id,p_storage_path:null});
     if(rpcError)throw rpcError;
+    const{error:removeError}=await sc.storage.from(BUCKET).remove([oldPath]);
+    if(removeError){
+      const{error:restoreError}=await sc.rpc("set_vehicle_compliance_document_storage_path",{p_document_id:id,p_storage_path:oldPath});
+      if(restoreError)console.error("[Compliance attachment API] restauration storage_path impossible",restoreError);
+      throw removeError;
+    }
     return NextResponse.json({ok:true});
   }catch(e){return responseError(e)}
 }
