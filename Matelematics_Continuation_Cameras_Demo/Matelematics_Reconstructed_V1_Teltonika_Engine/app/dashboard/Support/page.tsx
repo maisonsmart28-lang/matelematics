@@ -113,7 +113,7 @@ export default function SupportPage() {
             </h1>
 
             <p className="mt-1 text-sm text-slate-400">
-              Besoin d'aide ? Consultez vos demandes ou contactez notre équipe.
+              Besoin d&apos;aide ? Consultez vos demandes ou contactez notre équipe.
             </p>
           </div>
 
@@ -168,7 +168,7 @@ export default function SupportPage() {
 
           <div>
             <h2 className="font-semibold text-white">
-              Centre d'aide
+              Centre d&apos;aide
             </h2>
 
             <p className="mt-1 text-sm text-slate-400">
@@ -200,7 +200,7 @@ export default function SupportPage() {
             </h2>
 
             <p className="mt-1 text-sm text-slate-400">
-              Suivez l'état de vos demandes d'assistance.
+              Suivez l&apos;état de vos demandes d&apos;assistance.
             </p>
           </div>
 
@@ -526,7 +526,7 @@ function HelpItem({ title }: { title: string }) {
       type="button"
       onClick={() =>
         window.alert(
-          title + "\n\nContenu d'aide en cours d'integration."
+          title + "\n\nContenu d&apos;aide en cours d'integration."
         )
       }
       className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950 p-4 text-left transition hover:border-slate-700 hover:bg-slate-900"
