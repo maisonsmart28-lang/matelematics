@@ -164,7 +164,7 @@ function formatCoordinates(lat: number, lng: number) {
 function StatusBadge({ status }: { status: VehicleStatus }) {
   const styles = {
     "En mouvement": "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
-    "À l&apos;arrêt": "bg-amber-500/10 text-amber-400 border-amber-500/20",
+    "À l'arrêt": "bg-amber-500/10 text-amber-400 border-amber-500/20",
     "Hors ligne": "bg-slate-800 text-slate-400 border-slate-700",
   };
   const dots = {
