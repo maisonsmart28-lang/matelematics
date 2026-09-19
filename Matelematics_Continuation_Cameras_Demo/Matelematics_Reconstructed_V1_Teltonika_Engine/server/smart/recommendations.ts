@@ -52,6 +52,7 @@ const RULES: Record<string, RecommendationRule> = {
 };
 
 function urgencyFor(reason: SmartHealthReason): SmartRecommendationUrgency {
+  if (reason.resolvedAt) return "monitor";
   if (reason.severity === "critical") return "immediate";
   if (reason.severity === "high") return "soon";
   if (reason.severity === "warning") return "plan";
@@ -68,8 +69,12 @@ export function buildSmartRecommendations(
     return [{
       key: reason.key,
       title: rule.title,
-      explanation: rule.explanation,
-      action: rule.action,
+      explanation: reason.resolvedAt
+        ? `Incident récemment résolu. ${rule.explanation}`
+        : rule.explanation,
+      action: reason.resolvedAt
+        ? `Surveiller une éventuelle réapparition. ${rule.action}`
+        : rule.action,
       urgency: urgencyFor(reason),
       sourceId: reason.sourceId,
       observedAt: reason.observedAt,
