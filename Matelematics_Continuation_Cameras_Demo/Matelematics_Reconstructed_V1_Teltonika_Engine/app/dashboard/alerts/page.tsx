@@ -606,7 +606,7 @@ export default function AlertsPage() {
 
   useEffect(
     () => {
-      void load();
+      queueMicrotask(() => void load());
     },
     [
       load,
