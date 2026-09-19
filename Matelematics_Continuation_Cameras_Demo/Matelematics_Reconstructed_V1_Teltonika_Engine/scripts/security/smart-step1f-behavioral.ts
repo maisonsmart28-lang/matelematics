@@ -89,6 +89,16 @@ async function main() {
   console.log("SMART-1F behavioral tenant isolation test");
   console.log(`Target: ${BASE_URL}`);
   await verifyAnonymousDenied();
+
+  const selectedEnv = process.env.SMART_TEST_TOKEN_ENV;
+  if (selectedEnv) {
+    const scope = scopes.find((item) => item.tokenEnv === selectedEnv);
+    if (!scope) throw new Error(`Unknown SMART_TEST_TOKEN_ENV: ${selectedEnv}`);
+    await verifyScope(scope);
+    console.log(`PASS: SMART-1F behavioral scope -> ${scope.label}`);
+    return;
+  }
+
   for (const scope of scopes) await verifyScope(scope);
   console.log("PASS: SMART-1F behavioral tenant isolation");
 }
