@@ -90,7 +90,7 @@ export default function DemoHistoryPage() {
           </h1>
 
           <p className="mt-2 text-sm text-slate-400">
-            Consultez l'historique des trajets et déplacements de la flotte.
+            Consultez l&apos;historique des trajets et déplacements de la flotte.
           </p>
         </div>
 
@@ -98,7 +98,7 @@ export default function DemoHistoryPage() {
           href="/demo"
           className="rounded-lg border border-slate-700 bg-slate-900 px-4 py-2 text-sm text-slate-300 transition hover:bg-slate-800 hover:text-white"
         >
-          ← Vue d'ensemble
+          ← Vue d&apos;ensemble
         </Link>
       </div>
 
@@ -385,7 +385,7 @@ export default function DemoHistoryPage() {
 
             <p className="mt-1 text-xs leading-5 text-slate-400">
               Les trajets présentés sont fictifs et servent uniquement à
-              illustrer les fonctionnalités de suivi et d'analyse de
+              illustrer les fonctionnalités de suivi et d&apos;analyse de
               Matelematics.
             </p>
           </div>
