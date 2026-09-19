@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import {
@@ -146,10 +147,11 @@ export default function Industries() {
                 {/* IMAGE */}
                 <div className="relative h-52 overflow-hidden bg-gray-100">
 
-                  <img
+                  <Image
                     src={sector.image}
                     alt={sector.title}
-                    loading="lazy"
+                    fill
+                    sizes="(max-width: 768px) 100vw, 33vw"
                     referrerPolicy="no-referrer"
                     onError={(event) => {
                       const fallback = sector.fallbackImage;
