@@ -600,7 +600,7 @@ export default function DiagnosticsPage() {
 
   useEffect(
     () => {
-      void load();
+      queueMicrotask(() => void load());
     },
     [
       load,
