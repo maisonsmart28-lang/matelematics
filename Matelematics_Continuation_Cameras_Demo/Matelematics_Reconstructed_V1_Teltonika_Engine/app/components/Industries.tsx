@@ -111,16 +111,16 @@ export default function Industries() {
           className="mx-auto mb-12 max-w-3xl text-center"
         >
           <span className="mb-3 inline-block text-sm font-semibold uppercase tracking-wider text-blue-600">
-            Secteurs d'activité
+            Secteurs d&apos;activité
           </span>
 
           <h2 className="text-4xl font-bold tracking-tight text-gray-900 md:text-5xl">
-            Nos solutions s'adaptent à votre secteur
+            Nos solutions s&apos;adaptent à votre secteur
           </h2>
 
           <p className="mt-4 text-base leading-7 text-gray-600 md:text-lg">
             Matelematics accompagne les professionnels dans la gestion,
-            la sécurité et l'optimisation de leurs véhicules et de leurs
+            la sécurité et l&apos;optimisation de leurs véhicules et de leurs
             activités.
           </p>
         </motion.div>
