@@ -620,7 +620,7 @@ export default function AlertSettingsPanel() {
               </h2>
 
               <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-400">
-                Activez ou désactivez les règles et définissez les seuils globaux de l'entreprise.
+                Activez ou désactivez les règles et définissez les seuils globaux de l&apos;entreprise.
               </p>
 
             </div>
@@ -694,7 +694,7 @@ export default function AlertSettingsPanel() {
       {loading ? (
 
         <div className="p-8 text-sm text-slate-400">
-          Chargement des règles d'alerte...
+          Chargement des règles d&apos;alerte...
         </div>
 
       ) : !payload ||
@@ -702,7 +702,7 @@ export default function AlertSettingsPanel() {
           0 ? (
 
         <div className="p-8 text-sm text-slate-400">
-          Aucune configuration d'alerte disponible.
+          Aucune configuration d&apos;alerte disponible.
         </div>
 
       ) : (
