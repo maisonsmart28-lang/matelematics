@@ -33,6 +33,35 @@ interface Stats {
   alerts: number;
 }
 
+type SmartUrgency = "monitor" | "plan" | "soon" | "immediate";
+
+interface SmartAttentionItem {
+  vehicleId: string;
+  name: string;
+  registration?: string | null;
+  score: number;
+  confidence: "limited" | "medium" | "high";
+  urgency: SmartUrgency;
+  recommendationCount: number;
+  primaryReason: string;
+}
+
+interface SmartInsightsPayload {
+  insights?: {
+    totalVehicles: number;
+    vehiclesNeedingAttention: number;
+    immediate: number;
+    soon: number;
+    plan: number;
+    monitor: number;
+    summary: string;
+    attention: SmartAttentionItem[];
+    evaluatedAt: string;
+    version: string;
+  };
+  error?: string;
+}
+
 interface VehicleSummary {
   id: string;
   status: string;
@@ -122,6 +151,7 @@ export default function DashboardPage() {
     alerts: 0,
   });
   const [priorityAlerts, setPriorityAlerts] = useState<AlertSummary[]>([]);
+  const [smartInsights, setSmartInsights] = useState<SmartInsightsPayload["insights"] | null>(null);
   const [recentAlerts, setRecentAlerts] = useState<AlertSummary[]>([]);
   const [statsLoading, setStatsLoading] = useState(true);
   const [statsError, setStatsError] = useState<string | null>(null);
@@ -142,12 +172,16 @@ export default function DashboardPage() {
       Authorization: `Bearer ${session.access_token}`,
     };
 
-    const [vehiclesResponse, alertsResponse] = await Promise.all([
+    const [vehiclesResponse, alertsResponse, smartResponse] = await Promise.all([
       fetch("/api/vehicles", {
         cache: "no-store",
         headers,
       }),
       fetch("/api/alerts", {
+        cache: "no-store",
+        headers,
+      }),
+      fetch("/api/dashboard/smart-insights", {
         cache: "no-store",
         headers,
       }),
@@ -160,6 +194,7 @@ export default function DashboardPage() {
     const alertsPayload = (await alertsResponse.json()) as AlertsPayload & {
       error?: string;
     };
+    const smartPayload = (await smartResponse.json()) as SmartInsightsPayload;
 
     if (!vehiclesResponse.ok) {
       throw new Error(
@@ -170,6 +205,12 @@ export default function DashboardPage() {
     if (!alertsResponse.ok) {
       throw new Error(
         alertsPayload.error ?? "Impossible de charger les alertes.",
+      );
+    }
+
+    if (!smartResponse.ok) {
+      throw new Error(
+        smartPayload.error ?? "Impossible de charger Matelematics Smart.",
       );
     }
 
@@ -186,6 +227,7 @@ export default function DashboardPage() {
     });
     setPriorityAlerts(activeAlerts.slice(0, 3));
     setRecentAlerts(alerts.slice(0, 3));
+    setSmartInsights(smartPayload.insights ?? null);
     setStatsError(null);
     setLastSync(0);
   };
@@ -375,6 +417,67 @@ export default function DashboardPage() {
             </div>
           </div>
         </div>
+      </section>
+
+      <section className="rounded-2xl border border-cyan-500/20 bg-gradient-to-br from-cyan-500/10 via-zinc-950 to-zinc-950 p-5 shadow-lg">
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+          <div className="max-w-2xl">
+            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-cyan-300">
+              <Activity className="h-4 w-4" />
+              Matelematics Smart
+            </div>
+            <h2 className="mt-2 text-xl font-semibold text-white">
+              {statsLoading
+                ? "Analyse intelligente de la flotte..."
+                : smartInsights?.summary ?? "Aucune synthèse Smart disponible."}
+            </h2>
+            <p className="mt-2 text-sm text-zinc-400">
+              Synthèse technique explicable basée sur les alertes réelles et les capacités matérielles réellement supportées.
+            </p>
+          </div>
+
+          <div className="grid min-w-full grid-cols-2 gap-2 sm:min-w-[340px] sm:grid-cols-4">
+            {[
+              ["Immédiat", smartInsights?.immediate ?? 0, "text-red-300"],
+              ["Bientôt", smartInsights?.soon ?? 0, "text-amber-300"],
+              ["Planifier", smartInsights?.plan ?? 0, "text-blue-300"],
+              ["Surveiller", smartInsights?.monitor ?? 0, "text-zinc-300"],
+            ].map(([label, value, textClass]) => (
+              <div key={String(label)} className="rounded-xl border border-zinc-800 bg-zinc-950/80 p-3 text-center">
+                <p className={`text-xl font-bold ${textClass}`}>{statsLoading ? "—" : value}</p>
+                <p className="mt-1 text-[11px] text-zinc-500">{label}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {!statsLoading && smartInsights && smartInsights.attention.length > 0 && (
+          <div className="mt-5 grid gap-3 lg:grid-cols-3">
+            {smartInsights.attention.slice(0, 3).map((item) => (
+              <Link
+                key={item.vehicleId}
+                href={`/dashboard/vehicle/${item.vehicleId}`}
+                className="rounded-xl border border-zinc-800 bg-zinc-950/80 p-4 transition hover:border-cyan-500/30 hover:bg-zinc-900"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-medium text-white">{item.name}</p>
+                    <p className="mt-0.5 text-xs text-zinc-500">{item.registration ?? "Sans immatriculation"}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-lg font-bold text-white">{item.score}/100</p>
+                    <p className="text-[10px] uppercase tracking-wide text-zinc-500">Health</p>
+                  </div>
+                </div>
+                <p className="mt-3 text-sm text-zinc-300">{item.primaryReason}</p>
+                <div className="mt-3 flex items-center justify-between text-[11px] text-zinc-500">
+                  <span>Confiance {item.confidence}</span>
+                  <span>{item.recommendationCount} recommandation{item.recommendationCount > 1 ? "s" : ""}</span>
+                </div>
+              </Link>
+            ))}
+          </div>
+        )}
       </section>
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
