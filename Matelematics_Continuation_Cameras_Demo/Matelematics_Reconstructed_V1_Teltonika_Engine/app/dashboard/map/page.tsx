@@ -240,21 +240,25 @@ export default function MapPage() {
   }, []);
 
   useEffect(() => {
-    setTripsPage(1);
-    setSelectedTripId(null);
-    setTripPoints([]);
-    setTripSampling(null);
-    setTripError(null);
+    queueMicrotask(() => {
+      setTripsPage(1);
+      setSelectedTripId(null);
+      setTripPoints([]);
+      setTripSampling(null);
+      setTripError(null);
+      });
   }, [selectedVehicleId, periodMode, appliedRange?.from, appliedRange?.to]);
 
   useEffect(() => {
     let cancelled = false;
     const vehicleId = selectedVehicleId;
     if (!vehicleId || (periodMode === "custom" && !appliedRange)) {
-      setTrips([]);
-      setTripsTotal(0);
-      setTripsTotalPages(0);
-      setTripsError(null);
+      queueMicrotask(() => {
+        setTrips([]);
+        setTripsTotal(0);
+        setTripsTotalPages(0);
+        setTripsError(null);
+        });
       return () => { cancelled = true; };
     }
 
@@ -307,9 +311,11 @@ export default function MapPage() {
     const vehicleId = selectedVehicleId;
     const trip = selectedTrip;
     if (!vehicleId || !trip) {
-      setTripPoints([]);
-      setTripSampling(null);
-      setTripError(null);
+      queueMicrotask(() => {
+        setTripPoints([]);
+        setTripSampling(null);
+        setTripError(null);
+        });
       return () => { cancelled = true; };
     }
     async function loadSelectedTrip(currentVehicleId: string, currentTrip: TripSummary) {
