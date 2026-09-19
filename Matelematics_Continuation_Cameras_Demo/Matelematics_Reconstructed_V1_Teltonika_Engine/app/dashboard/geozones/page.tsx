@@ -614,7 +614,7 @@ export default function GeozonesPage() {
             </h2>
 
             <p className="mt-1 text-xs text-slate-500">
-              Vue d'ensemble de vos zones de surveillance
+              Vue d&apos;ensemble de vos zones de surveillance
             </p>
           </div>
 
@@ -897,7 +897,7 @@ export default function GeozonesPage() {
 
             <p className="mt-1 text-xs leading-5 text-slate-400">
               Les géozones permettent de déclencher automatiquement
-              des événements lorsqu'un véhicule entre ou sort d'une
+              des événements lorsqu&apos;un véhicule entre ou sort d&apos;une
               zone définie. Les actions de création, modification,
               suppression et activation sont maintenant disponibles
               dans cette interface.
