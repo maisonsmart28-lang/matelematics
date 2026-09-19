@@ -22,7 +22,7 @@ const schema = z.object({
         message: "Nombre de véhicules requis",
       }
     ),
-  sector: z.string().min(1, "Secteur d'activité requis"),
+  sector: z.string().min(1, "Secteur d&apos;activité requis"),
   message: z.string().optional(),
   website: z.string().max(200).optional(),
 });
@@ -276,7 +276,7 @@ export default function DemoModal() {
           {/* SECTEUR */}
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-200">
-              Secteur d'activité
+              Secteur d&apos;activité
             </label>
 
             <input
