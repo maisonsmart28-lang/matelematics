@@ -424,7 +424,7 @@ export default function VehicleAlertSettingsPanel({
 
   useEffect(
     () => {
-      void load();
+      queueMicrotask(() => void load());
     },
     [
       load,
