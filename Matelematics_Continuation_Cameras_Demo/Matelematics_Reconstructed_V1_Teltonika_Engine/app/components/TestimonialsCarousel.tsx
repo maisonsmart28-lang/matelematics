@@ -97,7 +97,7 @@ export default function TestimonialsCarousel() {
 
           <p className="mx-auto mt-5 max-w-2xl text-base leading-8 text-slate-400 md:text-lg">
             Une plateforme conçue pour apporter davantage de visibilité,
-            de contrôle et d'efficacité dans la gestion quotidienne des
+            de contrôle et d&apos;efficacité dans la gestion quotidienne des
             véhicules.
           </p>
         </motion.div>
