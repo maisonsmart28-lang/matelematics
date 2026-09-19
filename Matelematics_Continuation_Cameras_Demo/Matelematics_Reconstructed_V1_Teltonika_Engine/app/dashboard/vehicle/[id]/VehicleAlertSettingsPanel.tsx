@@ -576,7 +576,7 @@ export default function VehicleAlertSettingsPanel({
       }
 
       setMessage(
-        "Configuration d'alertes du véhicule enregistrée.",
+        "Configuration d&apos;alertes du véhicule enregistrée.",
       );
 
       await load();
@@ -606,7 +606,7 @@ export default function VehicleAlertSettingsPanel({
         <div>
 
           <h2 className="text-lg font-semibold text-white">
-            Paramètres d'alertes du véhicule
+            Paramètres d&apos;alertes du véhicule
           </h2>
 
           <p className="mt-1 text-sm text-slate-400">
@@ -635,7 +635,7 @@ export default function VehicleAlertSettingsPanel({
       {loading ? (
 
         <p className="py-6 text-sm text-slate-400">
-          Chargement des paramètres d'alertes...
+          Chargement des paramètres d&apos;alertes...
         </p>
 
       ) : !payload ? (
@@ -1082,7 +1082,7 @@ export default function VehicleAlertSettingsPanel({
           <div className="mt-5 flex flex-col gap-3 border-t border-slate-800 pt-4 sm:flex-row sm:items-center sm:justify-between">
 
             <p className="text-xs text-slate-500">
-              Une configuration spécifique véhicule remplace l'état et le seuil hérités.
+              Une configuration spécifique véhicule remplace l&apos;état et le seuil hérités.
             </p>
 
 
