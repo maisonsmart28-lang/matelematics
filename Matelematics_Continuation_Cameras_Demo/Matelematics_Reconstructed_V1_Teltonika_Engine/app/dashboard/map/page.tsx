@@ -419,7 +419,7 @@ export default function MapPage() {
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <div className="rounded-xl border border-slate-800 bg-slate-900 p-4"><p className="text-sm text-slate-400">Véhicules suivis</p><p className="mt-2 text-2xl font-bold text-white">{vehicles.length}</p></div>
         <div className="rounded-xl border border-slate-800 bg-slate-900 p-4"><p className="text-sm text-slate-400">En mouvement</p><p className="mt-2 text-2xl font-bold text-emerald-400">{moving}</p></div>
-        <div className="rounded-xl border border-slate-800 bg-slate-900 p-4"><p className="text-sm text-slate-400">À l'arrêt</p><p className="mt-2 text-2xl font-bold text-amber-400">{stopped}</p></div>
+        <div className="rounded-xl border border-slate-800 bg-slate-900 p-4"><p className="text-sm text-slate-400">À l&apos;arrêt</p><p className="mt-2 text-2xl font-bold text-amber-400">{stopped}</p></div>
         <div className="rounded-xl border border-slate-800 bg-slate-900 p-4"><p className="text-sm text-slate-400">Hors ligne</p><p className="mt-2 text-2xl font-bold text-slate-300">{offline}</p></div>
       </div>
 
