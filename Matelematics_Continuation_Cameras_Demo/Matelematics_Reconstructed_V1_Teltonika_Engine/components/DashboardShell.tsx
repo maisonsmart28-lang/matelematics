@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { supabase } from "@/app/components/supabase";
 import {
   Menu,
   LogOut,
@@ -23,8 +24,6 @@ import {
   Bell,
   Maximize,
   X,
-  CheckCircle2,
-  MapPin,
   ShieldCheck,
   Video,
 } from "lucide-react";
@@ -101,40 +100,85 @@ export default function DashboardShell({
       (item) => item.href !== buildHref(basePath, "/admin"),
     );
   }, [allMenuItems, basePath, userRole]);
-const notifications = [
-    {
-      id: 1,
-      type: "danger",
-      title: "Excès de vitesse",
-      message: "Renault Express • Casablanca",
-      time: "Il y a 5 min",
-      icon: AlertTriangle,
-    },
-    {
-      id: 2,
-      type: "warning",
-      title: "Batterie faible",
-      message: "Ford Transit • Rabat",
-      time: "Il y a 12 min",
-      icon: AlertTriangle,
-    },
-    {
-      id: 3,
-      type: "info",
-      title: "Entrée en géozone",
-      message: "Dacia Dokker • Tanger",
-      time: "Il y a 18 min",
-      icon: MapPin,
-    },
-    {
-      id: 4,
-      type: "success",
-      title: "Trajet terminé",
-      message: "Ford Transit • Casablanca",
-      time: "Il y a 26 min",
-      icon: CheckCircle2,
-    },
-  ];
+type InAppNotification = {
+    id: string;
+    severity: "info" | "warning" | "critical";
+    title: string;
+    message: string;
+    status: "unread" | "read" | "acknowledged" | "resolved";
+    created_at: string;
+  };
+
+  const [notifications, setNotifications] = useState<InAppNotification[]>([]);
+  const [notificationsLoading, setNotificationsLoading] = useState(true);
+
+  const loadNotifications = useCallback(async () => {
+    setNotificationsLoading(true);
+
+    const { data, error } = await supabase
+      .from("notifications")
+      .select("id,severity,title,message,status,created_at")
+      .in("status", ["unread", "read"])
+      .order("created_at", { ascending: false })
+      .limit(20);
+
+    if (error) {
+      console.error("[Dashboard notifications]", error);
+      setNotifications([]);
+    } else {
+      setNotifications((data ?? []) as InAppNotification[]);
+    }
+
+    setNotificationsLoading(false);
+  }, []);
+
+  useEffect(() => {
+    void loadNotifications();
+  }, [loadNotifications]);
+
+  const unreadNotificationCount = notifications.filter(
+    (notification) => notification.status === "unread",
+  ).length;
+
+  async function markNotificationRead(notification: InAppNotification) {
+    if (notification.status !== "unread") {
+      return;
+    }
+
+    const { error } = await supabase.rpc("mark_notification_read", {
+      p_notification_id: notification.id,
+    });
+
+    if (error) {
+      console.error("[Dashboard notification read]", error);
+      return;
+    }
+
+    setNotifications((current) =>
+      current.map((item) =>
+        item.id === notification.id
+          ? { ...item, status: "read" }
+          : item,
+      ),
+    );
+  }
+
+  function notificationTime(createdAt: string) {
+    const created = new Date(createdAt).getTime();
+    const elapsedMinutes = Math.max(
+      0,
+      Math.floor((Date.now() - created) / 60000),
+    );
+
+    if (elapsedMinutes < 1) return "À l’instant";
+    if (elapsedMinutes < 60) return `Il y a ${elapsedMinutes} min`;
+
+    const hours = Math.floor(elapsedMinutes / 60);
+    if (hours < 24) return `Il y a ${hours} h`;
+
+    const days = Math.floor(hours / 24);
+    return `Il y a ${days} j`;
+  }
 
   return (
     <div className="min-h-screen bg-slate-950 text-white flex overflow-x-hidden">
@@ -310,9 +354,9 @@ const notifications = [
               >
                 <Bell className="h-5 w-5" />
 
-                {notifications.length > 0 && (
+                {unreadNotificationCount > 0 && (
                   <span className="absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-bold text-white ring-2 ring-slate-900">
-                    {notifications.length}
+                    {unreadNotificationCount > 99 ? "99+" : unreadNotificationCount}
                   </span>
                 )}
               </button>
@@ -323,7 +367,7 @@ const notifications = [
                     <div>
                       <h3 className="font-semibold text-white">Notifications</h3>
                       <p className="mt-0.5 text-xs text-slate-400">
-                        {notifications.length} notifications récentes
+                        {unreadNotificationCount} non lue{unreadNotificationCount > 1 ? "s" : ""}
                       </p>
                     </div>
                     <button
@@ -337,57 +381,70 @@ const notifications = [
                   </div>
 
                   <div className="max-h-[390px] overflow-y-auto">
-                    {notifications.map((notification) => {
-                      const Icon = notification.icon;
+                    {notificationsLoading ? (
+                      <div className="px-4 py-8 text-center text-sm text-slate-400">
+                        Chargement des notifications...
+                      </div>
+                    ) : notifications.length === 0 ? (
+                      <div className="px-4 py-8 text-center text-sm text-slate-400">
+                        Aucune notification.
+                      </div>
+                    ) : (
+                      notifications.map((notification) => {
+                        const iconStyle =
+                          notification.severity === "critical"
+                            ? "bg-red-500/10 text-red-400"
+                            : notification.severity === "warning"
+                            ? "bg-amber-500/10 text-amber-400"
+                            : "bg-blue-500/10 text-blue-400";
 
-                      const iconStyle =
-                        notification.type === "danger"
-                          ? "bg-red-500/10 text-red-400"
-                          : notification.type === "warning"
-                          ? "bg-amber-500/10 text-amber-400"
-                          : notification.type === "success"
-                          ? "bg-emerald-500/10 text-emerald-400"
-                          : "bg-blue-500/10 text-blue-400";
-
-                      return (
-                        <div
-                          key={notification.id}
-                          className="group border-b border-slate-800 px-4 py-4 transition hover:bg-slate-800/60"
-                        >
-                          <div className="flex gap-3">
-                            <div
-                              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${iconStyle}`}
-                            >
-                              <Icon className="h-4 w-4" />
-                            </div>
-
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-start justify-between gap-2">
-                                <p className="text-sm font-medium text-white">
-                                  {notification.title}
-                                </p>
-                                <span className="shrink-0 text-[10px] text-slate-500">
-                                  {notification.time}
-                                </span>
+                        return (
+                          <button
+                            type="button"
+                            key={notification.id}
+                            onClick={() => void markNotificationRead(notification)}
+                            className={`group block w-full border-b border-slate-800 px-4 py-4 text-left transition hover:bg-slate-800/60 ${
+                              notification.status === "unread" ? "bg-slate-800/30" : ""
+                            }`}
+                          >
+                            <div className="flex gap-3">
+                              <div
+                                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${iconStyle}`}
+                              >
+                                <Bell className="h-4 w-4" />
                               </div>
 
-                              <p className="mt-1 text-xs text-slate-400">
-                                {notification.message}
-                              </p>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-start justify-between gap-2">
+                                  <p className={`text-sm ${
+                                    notification.status === "unread"
+                                      ? "font-semibold text-white"
+                                      : "font-medium text-slate-300"
+                                  }`}>
+                                    {notification.title}
+                                  </p>
+                                  <span className="shrink-0 text-[10px] text-slate-500">
+                                    {notificationTime(notification.created_at)}
+                                  </span>
+                                </div>
+
+                                <p className="mt-1 text-xs text-slate-400">
+                                  {notification.message}
+                                </p>
+                              </div>
                             </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+                          </button>
+                        );
+                      })
+                    )}                  </div>
 
                   <div className="border-t border-slate-800 bg-slate-950/50 p-3">
                     <Link
-                      href={`${basePath}/alerts`}
+                      href={`${basePath}/maintenance`}
                       onClick={() => setNotificationsOpen(false)}
                       className="flex w-full items-center justify-center rounded-lg bg-slate-800 px-4 py-2.5 text-sm font-medium text-slate-200 transition hover:bg-slate-700 hover:text-white"
                     >
-                      Voir toutes les alertes
+                      Voir la maintenance
                     </Link>
                   </div>
                 </div>
