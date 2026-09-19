@@ -82,6 +82,7 @@ const LIGHT_VEHICLE_CAN: readonly HardwareCapability[] = [
   "fuel_level",
   "fuel_used",
   "adblue",
+  "dtc",
 ];
 
 const J1939_FMS: readonly HardwareCapability[] = [
@@ -92,6 +93,7 @@ const J1939_FMS: readonly HardwareCapability[] = [
   "can_odometer",
   "fuel_level",
   "fuel_used",
+  "dtc",
 ];
 
 function canonical(value: string | null | undefined) {
