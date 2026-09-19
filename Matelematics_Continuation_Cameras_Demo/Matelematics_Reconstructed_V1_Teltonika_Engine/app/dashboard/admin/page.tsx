@@ -253,7 +253,7 @@ export default function AdminPage() {
     );
 
   useEffect(() => {
-    void load();
+    queueMicrotask(() => void load());
   }, [load]);
 
   const companyName =
