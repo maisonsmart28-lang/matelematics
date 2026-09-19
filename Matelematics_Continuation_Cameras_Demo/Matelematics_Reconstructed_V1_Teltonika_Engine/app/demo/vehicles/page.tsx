@@ -85,7 +85,7 @@ export default function DemoVehiclesPage() {
           </h1>
 
           <p className="mt-2 text-sm text-slate-400">
-            Visualisez l'état et les informations de votre flotte.
+            Visualisez l&apos;état et les informations de votre flotte.
           </p>
         </div>
 
@@ -93,7 +93,7 @@ export default function DemoVehiclesPage() {
           href="/demo"
           className="rounded-lg border border-slate-700 bg-slate-900 px-4 py-2 text-sm text-slate-300 transition hover:bg-slate-800 hover:text-white"
         >
-          ← Vue d'ensemble
+          ← Vue d&apos;ensemble
         </Link>
       </div>
 
