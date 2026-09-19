@@ -266,7 +266,7 @@ export default function DemoDashboardPage() {
             </h1>
 
             <p className="mt-2 text-sm text-zinc-400">
-              Découvrez un aperçu de l'intelligence de gestion de flotte Matelematics.
+              Découvrez un aperçu de l&apos;intelligence de gestion de flotte Matelematics.
             </p>
 
           </div>
@@ -466,7 +466,7 @@ export default function DemoDashboardPage() {
                 </h2>
 
                 <p className="text-xs text-zinc-500">
-                  Exemple d'activité
+                  Exemple d&apos;activité
                 </p>
 
               </div>
@@ -1138,7 +1138,7 @@ export default function DemoDashboardPage() {
               </h3>
 
               <p className="text-xs text-zinc-500">
-                Exemples d'opérations
+                Exemples d&apos;opérations
               </p>
 
             </div>
