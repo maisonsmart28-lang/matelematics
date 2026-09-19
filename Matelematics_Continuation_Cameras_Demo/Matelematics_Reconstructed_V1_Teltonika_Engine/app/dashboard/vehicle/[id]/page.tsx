@@ -188,8 +188,8 @@ export default function VehiclePage() {
   );
 
   useEffect(() => {
-    void load();
-    const timer = window.setInterval(() => void load(), 5000);
+    queueMicrotask(() => void load());
+    const timer = window.setInterval(() => queueMicrotask(() => void load()), 5000);
     return () => window.clearInterval(timer);
   }, [load]);
 
