@@ -170,7 +170,19 @@ export async function GET(request: NextRequest) {
       };
     });
 
-    return NextResponse.json({ insights: buildSmartFleetInsights(smartVehicles) });
+    const insights = buildSmartFleetInsights(smartVehicles);
+    const response = NextResponse.json({ insights });
+
+    if (process.env.NODE_ENV !== "production") {
+      response.headers.set("X-Matelematics-Smart-Role", profile.role);
+      response.headers.set(
+        "X-Matelematics-Smart-Company-Scope",
+        allowedCompanyIds === null ? "all" : String(allowedCompanyIds.length),
+      );
+      response.headers.set("X-Matelematics-Smart-Vehicle-Scope", String(vehicles.length));
+    }
+
+    return response;
   } catch (error) {
     const message = error instanceof Error ? error.message : "SERVER_ERROR";
     if (message === "AUTH_REQUIRED") {
