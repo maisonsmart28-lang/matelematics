@@ -610,7 +610,7 @@ export default function DemoMaintenancePage() {
 
                 <div>
                   <label className="mb-2 block text-xs font-medium text-zinc-400">
-                    Type d'intervention
+                    Type d&apos;intervention
                   </label>
 
                   <select
