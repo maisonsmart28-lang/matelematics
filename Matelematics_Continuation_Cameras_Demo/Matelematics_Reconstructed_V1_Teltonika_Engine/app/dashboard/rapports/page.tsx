@@ -39,7 +39,7 @@ const reports: Report[] = [
     type: "Trajets",
     vehicle: "Toute la flotte",
     period: "24 août 2026",
-    generated: "Aujourd'hui, 10:45",
+    generated: "Aujourd&apos;hui, 10:45",
   },
   {
     id: "2",
@@ -48,7 +48,7 @@ const reports: Report[] = [
     type: "Carburant",
     vehicle: "Toute la flotte",
     period: "01 - 24 août 2026",
-    generated: "Aujourd'hui, 09:30",
+    generated: "Aujourd&apos;hui, 09:30",
   },
   {
     id: "3",
@@ -254,7 +254,7 @@ export default function ReportsPage() {
             </h1>
 
             <p className="mt-1 text-sm text-slate-400">
-              Analysez les performances et l'activité de votre flotte.
+              Analysez les performances et l&apos;activité de votre flotte.
             </p>
           </div>
 
@@ -409,7 +409,7 @@ export default function ReportsPage() {
             className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-slate-300 outline-none focus:border-blue-500"
           >
             <option>Cette période</option>
-            <option>Aujourd'hui</option>
+            <option>Aujourd&apos;hui</option>
             <option>Hier</option>
             <option>7 derniers jours</option>
             <option>30 derniers jours</option>
@@ -467,8 +467,8 @@ export default function ReportsPage() {
             </div>
 
             <p className="mt-3 text-xs text-slate-500">
-              Vous pouvez sélectionner une période allant jusqu'à
-              1 an d'historique.
+              Vous pouvez sélectionner une période allant jusqu&apos;à
+              1 an d&apos;historique.
             </p>
 
           </div>
