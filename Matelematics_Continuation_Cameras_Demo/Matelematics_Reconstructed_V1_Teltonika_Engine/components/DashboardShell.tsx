@@ -135,7 +135,7 @@ type InAppNotification = {
   }, []);
 
   useEffect(() => {
-    void loadNotifications();
+    queueMicrotask(() => void loadNotifications());
   }, [loadNotifications]);
 
   const unreadNotificationCount = notifications.filter(
@@ -175,7 +175,7 @@ type InAppNotification = {
     const created = new Date(createdAt).getTime();
     const elapsedMinutes = Math.max(
       0,
-      Math.floor((Date.now() - created) / 60000),
+      Math.floor((new Date().getTime() - created) / 60000),
     );
 
     if (elapsedMinutes < 1) return "À l’instant";
