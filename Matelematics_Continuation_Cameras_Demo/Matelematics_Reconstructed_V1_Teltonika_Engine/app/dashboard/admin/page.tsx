@@ -90,7 +90,6 @@ export default function AdminPage() {
     identity,
     isMatelematicsAdmin,
     isPartnerAdmin,
-    isClientAdmin,
   } =
     useDashboardAccess();
 
