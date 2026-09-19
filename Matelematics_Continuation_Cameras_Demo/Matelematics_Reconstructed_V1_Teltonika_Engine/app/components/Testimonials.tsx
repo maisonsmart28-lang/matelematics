@@ -69,7 +69,7 @@ export default function Testimonials() {
 
           <p className="mx-auto mt-5 max-w-2xl text-base leading-8 text-slate-600 md:text-lg">
             Découvrez comment une meilleure visibilité sur les véhicules
-            peut simplifier la gestion quotidienne d'une flotte.
+            peut simplifier la gestion quotidienne d&apos;une flotte.
           </p>
         </motion.div>
 
