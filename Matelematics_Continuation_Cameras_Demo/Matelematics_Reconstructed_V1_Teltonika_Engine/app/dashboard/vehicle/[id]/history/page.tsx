@@ -154,21 +154,25 @@ export default function VehicleHistoryPage() {
   const [rangeError, setRangeError] = useState<string | null>(null);
 
   useEffect(() => {
-    setPage(1);
-    setSelectedTripId(null);
-    setTripPoints([]);
-    setSampling(null);
-    setTripError(null);
+    queueMicrotask(() => {
+      setPage(1);
+      setSelectedTripId(null);
+      setTripPoints([]);
+      setSampling(null);
+      setTripError(null);
+      });
   }, [periodMode, appliedRange?.from, appliedRange?.to, vehicleId]);
 
   useEffect(() => {
     let cancelled = false;
 
     if (periodMode === "custom" && !appliedRange) {
-      setTrips([]);
-      setTotal(0);
-      setTotalPages(0);
-      setLoading(false);
+      queueMicrotask(() => {
+        setTrips([]);
+        setTotal(0);
+        setTotalPages(0);
+        setLoading(false);
+        });
       return () => {
         cancelled = true;
       };
@@ -255,9 +259,11 @@ export default function VehicleHistoryPage() {
     const trip = selectedTrip;
 
     if (!trip) {
-      setTripPoints([]);
-      setSampling(null);
-      setTripError(null);
+      queueMicrotask(() => {
+        setTripPoints([]);
+        setSampling(null);
+        setTripError(null);
+        });
       return () => {
         cancelled = true;
       };
