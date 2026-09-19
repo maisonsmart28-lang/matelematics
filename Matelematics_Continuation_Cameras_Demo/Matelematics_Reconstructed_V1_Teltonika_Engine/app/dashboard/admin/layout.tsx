@@ -24,7 +24,7 @@ export default function AdminLayout({
           </p>
 
           <p className="mt-2 text-sm text-red-200/70">
-            Votre rôle ne permet pas d'accéder à l'administration.
+            Votre rôle ne permet pas d&apos;accéder à l&apos;administration.
           </p>
         </div>
       </div>
