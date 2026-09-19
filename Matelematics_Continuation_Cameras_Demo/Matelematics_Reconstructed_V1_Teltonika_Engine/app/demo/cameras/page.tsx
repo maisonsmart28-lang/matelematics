@@ -518,7 +518,7 @@ export default function DemoCameraPage() {
                   </p>
 
                   <p className="mt-2 max-w-md text-xs leading-5 text-slate-500">
-                    Le lecteur n'arrive pas à accéder au fichier vidéo
+                    Le lecteur n&apos;arrive pas à accéder au fichier vidéo
                     de démonstration.
                   </p>
 
@@ -618,7 +618,7 @@ export default function DemoCameraPage() {
                   </h2>
 
                   <p className="mt-1 text-xs text-slate-500">
-                    Consultez les données jusqu'à un an dans le passé.
+                    Consultez les données jusqu&apos;à un an dans le passé.
                   </p>
 
                 </div>
@@ -693,7 +693,7 @@ export default function DemoCameraPage() {
                   disabled={selectedDate === today}
                   className="h-10 rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-4 text-xs font-semibold text-cyan-400 transition hover:bg-cyan-500/10 disabled:cursor-not-allowed disabled:opacity-30"
                 >
-                  Aujourd'hui
+                  Aujourd&apos;hui
                 </button>
 
               </div>
@@ -908,8 +908,8 @@ export default function DemoCameraPage() {
                 </p>
 
                 <p className="mt-1 text-xs leading-5 text-slate-500">
-                  Vous pouvez sélectionner n'importe quelle date
-                  comprise entre aujourd'hui et les douze derniers
+                  Vous pouvez sélectionner n&apos;importe quelle date
+                  comprise entre aujourd&apos;hui et les douze derniers
                   mois. Cette navigation concerne uniquement les
                   enregistrements et les alertes vidéo.
                 </p>
