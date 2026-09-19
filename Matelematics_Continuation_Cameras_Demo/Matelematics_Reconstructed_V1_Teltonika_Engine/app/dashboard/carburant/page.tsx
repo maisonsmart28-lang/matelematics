@@ -284,14 +284,15 @@ export default function CarburantPage() {
   );
 
   useEffect(() => {
-    if (measurableRows.length === 0) {
-      setSelectedVehicleId("");
-      return;
-    }
-
-    if (!measurableRows.some((row) => row.id === selectedVehicleId)) {
-      setSelectedVehicleId(measurableRows[0].id);
-    }
+    queueMicrotask(() => {
+      if (measurableRows.length === 0) {
+        setSelectedVehicleId("");
+        return;
+      }
+      if (!measurableRows.some((row) => row.id === selectedVehicleId)) {
+        setSelectedVehicleId(measurableRows[0].id);
+      }
+    });
   }, [measurableRows, selectedVehicleId]);
 
   const loadHistory = useCallback(async () => {
