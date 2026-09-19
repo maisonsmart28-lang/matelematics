@@ -34,7 +34,9 @@
     "teltonika:step6c:final": "npm run teltonika:step6c:diagnostics && npm run teltonika:step6b:final",
     "teltonika:step6d:tenant": "npm run security:p1-step6d",
     "teltonika:step6d:final": "npm run teltonika:step6d:tenant && npm run teltonika:step6c:final",
-    "smart:step1b:health": "tsx server/smart/fleet-health.selftest.ts"
+    "smart:step1b:health": "tsx server/smart/fleet-health.selftest.ts",
+    "smart:step1c:recommendations": "tsx server/smart/recommendations.selftest.ts",
+    "smart:step1:core": "npm run smart:step1b:health && npm run smart:step1c:recommendations"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",
