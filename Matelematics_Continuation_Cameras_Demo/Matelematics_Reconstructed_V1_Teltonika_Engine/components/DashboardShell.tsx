@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "../app/components/supabase";
@@ -56,6 +57,7 @@ export default function DashboardShell({
   userRole,
   userRoleLabel = "Utilisateur",
 }: DashboardShellProps) {
+  const router = useRouter();
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -161,6 +163,12 @@ type InAppNotification = {
           : item,
       ),
     );
+  }
+
+  async function openNotification(notification: InAppNotification) {
+    await markNotificationRead(notification);
+    setNotificationsOpen(false);
+    router.push(`${basePath}/maintenance`);
   }
 
   function notificationTime(createdAt: string) {
@@ -402,7 +410,7 @@ type InAppNotification = {
                           <button
                             type="button"
                             key={notification.id}
-                            onClick={() => void markNotificationRead(notification)}
+                            onClick={() => void openNotification(notification)}
                             className={`group block w-full border-b border-slate-800 px-4 py-4 text-left transition hover:bg-slate-800/60 ${
                               notification.status === "unread" ? "bg-slate-800/30" : ""
                             }`}
