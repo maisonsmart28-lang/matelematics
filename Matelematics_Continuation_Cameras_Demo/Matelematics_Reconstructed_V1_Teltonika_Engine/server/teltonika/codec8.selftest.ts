@@ -18,12 +18,6 @@ function u16(value: number) {
   return buffer;
 }
 
-function u32(value: number) {
-  const buffer = Buffer.alloc(4);
-  buffer.writeUInt32BE(value, 0);
-  return buffer;
-}
-
 function i16(value: number) {
   const buffer = Buffer.alloc(2);
   buffer.writeInt16BE(value, 0);
