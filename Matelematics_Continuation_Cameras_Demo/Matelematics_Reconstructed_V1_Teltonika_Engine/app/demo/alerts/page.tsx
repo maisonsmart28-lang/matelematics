@@ -360,7 +360,7 @@ export default function DemoAlertsPage() {
 
             <p className="mt-2 text-sm text-zinc-400">
               Surveillez les événements importants de votre flotte
-              et consultez l'historique des alertes.
+              et consultez l&apos;historique des alertes.
             </p>
 
           </div>
@@ -506,7 +506,7 @@ export default function DemoAlertsPage() {
 
           <p className="mt-1 text-xs text-zinc-500">
             Consultez les alertes sur une période pouvant aller
-            jusqu'à un an.
+            jusqu&apos;à un an.
           </p>
 
         </div>
@@ -535,7 +535,7 @@ export default function DemoAlertsPage() {
               >
 
                 <option value="today">
-                  Aujourd'hui
+                  Aujourd&apos;hui
                 </option>
 
                 <option value="7days">
@@ -853,7 +853,7 @@ export default function DemoAlertsPage() {
               <div>
 
                 <p className="text-xs uppercase tracking-wider text-cyan-400">
-                  Détails de l'alerte
+                  Détails de l&apos;alerte
                 </p>
 
                 <h2 className="mt-2 text-xl font-bold text-white">
@@ -967,7 +967,7 @@ export default function DemoAlertsPage() {
             <div>
 
               <p className="text-sm font-medium text-white">
-                Besoin d'une vue complète de votre flotte ?
+                Besoin d&apos;une vue complète de votre flotte ?
               </p>
 
               <p className="mt-1 text-xs text-zinc-500">
