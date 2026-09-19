@@ -15,7 +15,7 @@ import {
 
 import { supabase } from "../../components/supabase";
 
-type VehicleStatus = "En mouvement" | "À l'arrêt" | "Hors ligne";
+type VehicleStatus = "En mouvement" | "À l&apos;arrêt" | "Hors ligne";
 type HistoryWindowHours = 1 | 6 | 24 | 168 | 720 | 2160 | 4320 | 8760;
 type PeriodMode = HistoryWindowHours | "custom";
 
@@ -563,7 +563,7 @@ export default function MapPage() {
       </section>
 
       <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-4">
-        <div className="flex gap-3"><Wifi className="mt-0.5 h-5 w-5 shrink-0 text-emerald-400" /><div><p className="text-sm font-medium text-white">Historique organisé par trajets réels</p><p className="mt-1 text-xs leading-5 text-slate-400">La période choisie, prédéfinie ou personnalisée dans les 12 derniers mois, sert à lister les trajets du véhicule. La carte ne charge ensuite que le trajet sélectionné. Les longs trajets sont échantillonnés sur toute leur durée afin d'éviter de charger des milliers de points GPS en même temps.</p></div></div>
+        <div className="flex gap-3"><Wifi className="mt-0.5 h-5 w-5 shrink-0 text-emerald-400" /><div><p className="text-sm font-medium text-white">Historique organisé par trajets réels</p><p className="mt-1 text-xs leading-5 text-slate-400">La période choisie, prédéfinie ou personnalisée dans les 12 derniers mois, sert à lister les trajets du véhicule. La carte ne charge ensuite que le trajet sélectionné. Les longs trajets sont échantillonnés sur toute leur durée afin d&apos;éviter de charger des milliers de points GPS en même temps.</p></div></div>
       </div>
     </div>
   );
