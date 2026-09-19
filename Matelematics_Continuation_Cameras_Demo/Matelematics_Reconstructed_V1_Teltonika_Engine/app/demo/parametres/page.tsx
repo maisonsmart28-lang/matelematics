@@ -117,7 +117,7 @@ export default function DemoParametresPage() {
             <div>
 
               <label className="mb-2 block text-sm font-medium text-zinc-300">
-                Nom de l'entreprise
+                Nom de l&apos;entreprise
               </label>
 
               <input
