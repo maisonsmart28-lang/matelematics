@@ -246,7 +246,7 @@ export default function DemoDriversPage() {
             </h1>
 
             <p className="mt-2 text-sm text-zinc-400">
-              Suivez l'activité et les performances de vos conducteurs.
+              Suivez l&apos;activité et les performances de vos conducteurs.
             </p>
 
           </div>
@@ -577,7 +577,7 @@ export default function DemoDriversPage() {
             <div>
 
               <p className="text-sm text-zinc-400">
-                Trajets aujourd'hui
+                Trajets aujourd&apos;hui
               </p>
 
               <p className="mt-2 text-3xl font-bold text-white">
