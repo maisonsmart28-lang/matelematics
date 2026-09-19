@@ -98,7 +98,7 @@ export default function FAQAccordion() {
             <HelpCircle className="h-4 w-4 text-blue-400" />
 
             <span className="text-xs font-bold uppercase tracking-[0.18em] text-blue-300">
-              Centre d'aide
+              Centre d&apos;aide
             </span>
           </div>
 
