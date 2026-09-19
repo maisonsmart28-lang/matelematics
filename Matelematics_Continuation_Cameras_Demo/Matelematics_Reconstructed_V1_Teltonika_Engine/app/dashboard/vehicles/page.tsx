@@ -450,7 +450,7 @@ export default function VehiclesPage() {
             </h2>
 
             <p className="mt-1 text-xs text-slate-500">
-              Véhicules visibles selon votre périmètre d'accès.
+              Véhicules visibles selon votre périmètre d&apos;accès.
             </p>
           </div>
 
@@ -840,7 +840,7 @@ export default function VehiclesPage() {
                 </p>
 
                 <p className="mt-1 text-xs leading-5 text-slate-400">
-                  Cette modal ajoute actuellement le véhicule à l'interface.
+                  Cette modal ajoute actuellement le véhicule à l&apos;interface.
                   La prochaine étape sera de connecter cette création à
                   Supabase pour enregistrer réellement le véhicule dans la base.
                 </p>
