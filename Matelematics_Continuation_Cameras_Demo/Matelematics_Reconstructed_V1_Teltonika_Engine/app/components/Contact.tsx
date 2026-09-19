@@ -36,7 +36,7 @@ export default function Contact() {
           </h2>
 
           <p className="text-gray-600 mt-4">
-            Besoin d'informations sur nos solutions GPS,
+            Besoin d&apos;informations sur nos solutions GPS,
             télématique, IoT ou gestion de flotte ?
           </p>
         </div>
