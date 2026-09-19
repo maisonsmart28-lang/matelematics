@@ -273,7 +273,7 @@ export default function CarburantPage() {
   }, []);
 
   useEffect(() => {
-    void load();
+    queueMicrotask(() => void load());
     const timer = window.setInterval(() => void load(), 15000);
     return () => window.clearInterval(timer);
   }, [load]);
@@ -344,7 +344,7 @@ export default function CarburantPage() {
   }, [appliedCustom, historyMode, selectedVehicleId]);
 
   useEffect(() => {
-    void loadHistory();
+    queueMicrotask(() => void loadHistory());
   }, [loadHistory]);
 
   const filteredRows = useMemo(() => {
