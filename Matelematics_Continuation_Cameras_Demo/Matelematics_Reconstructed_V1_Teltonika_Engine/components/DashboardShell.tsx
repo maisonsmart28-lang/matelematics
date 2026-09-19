@@ -3,7 +3,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { supabase } from "@/app/components/supabase";
+import { supabase } from "../app/components/supabase";
 import {
   Menu,
   LogOut,
