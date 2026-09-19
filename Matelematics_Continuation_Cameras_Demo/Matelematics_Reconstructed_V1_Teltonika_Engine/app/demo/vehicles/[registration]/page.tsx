@@ -128,7 +128,7 @@ export default function DemoVehicleDetailsPage({
           </h1>
 
           <p className="mt-2 text-sm text-slate-400">
-            Ce véhicule n'existe pas dans les données de démonstration.
+            Ce véhicule n&apos;existe pas dans les données de démonstration.
           </p>
 
           <Link
