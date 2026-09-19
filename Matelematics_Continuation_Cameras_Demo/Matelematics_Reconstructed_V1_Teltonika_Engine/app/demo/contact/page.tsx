@@ -296,7 +296,7 @@ export default function DemoContactPage() {
                   className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-3 text-sm text-white outline-none focus:border-cyan-500"
                 >
                   <option value="information">
-                    Demande d'information
+                    Demande d&apos;information
                   </option>
 
                   <option value="demo">
@@ -388,7 +388,7 @@ export default function DemoContactPage() {
             </h3>
 
             <p className="mt-1 text-sm text-zinc-400">
-              Le formulaire présenté ici est interactif mais n'envoie
+              Le formulaire présenté ici est interactif mais n&apos;envoie
               aucun message réel. Dans la version connectée, les demandes
               seront traitées par le système Matelematics.
             </p>
