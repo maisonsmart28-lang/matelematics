@@ -20,6 +20,7 @@ export type SmartHealthReason = {
   impact: number;
   sourceId: string;
   observedAt: string;
+  resolvedAt?: string | null;
 };
 
 export type SmartHealthResult = {
@@ -99,6 +100,7 @@ export function calculateFleetHealth(input: {
       impact: deduction,
       sourceId: evidence.sourceId,
       observedAt: evidence.observedAt,
+      resolvedAt: evidence.resolvedAt ?? null,
     });
   }
 
