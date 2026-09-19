@@ -385,7 +385,7 @@ function capabilityMessage(
     reason ===
     "J1939_REAL_HARD_LOCK_V1"
   ) {
-    return "Architecture J1939 r\u00e9elle pr\u00eate, mais toute \u00e9mission CAN d'effacement reste verrouill\u00e9e par HARD LOCK V1.";
+    return "Architecture J1939 r\u00e9elle pr\u00eate, mais toute \u00e9mission CAN d&apos;effacement reste verrouill\u00e9e par HARD LOCK V1.";
   }
 
   if (
@@ -406,7 +406,7 @@ function capabilityMessage(
     reason ===
     "TRACKER_CLEAR_NOT_SUPPORTED"
   ) {
-    return "Ce mod\u00e8le de tracker n'est pas encore compatible avec l'effacement distant.";
+    return "Ce mod\u00e8le de tracker n&apos;est pas encore compatible avec l'effacement distant.";
   }
 
   return "";
@@ -1062,7 +1062,7 @@ export default function DiagnosticsPage() {
         setError(
           cause instanceof Error
             ? cause.message
-            : "Erreur d'effacement.",
+            : "Erreur d&apos;effacement.",
         );
       } finally {
         setClearing(
@@ -1546,7 +1546,7 @@ export default function DiagnosticsPage() {
                   </p>
 
                   <p className="mt-1 text-xs text-slate-400">
-                    Architecture Safe V1 - aucune trame d'effacement CAN ne peut \u00eatre envoy\u00e9e.
+                    Architecture Safe V1 - aucune trame d&apos;effacement CAN ne peut \u00eatre envoy\u00e9e.
                   </p>
                 </div>
 
@@ -2156,7 +2156,7 @@ function DiagnosticCard({
 
       {!diagnostic.known && (
         <div className="mt-4 rounded-xl border border-blue-500/20 bg-blue-500/5 p-3 text-xs text-blue-300">
-          Signification specifique non validee dans la base Matelematics. Aucune interpretation constructeur n'est inventee.
+          Signification specifique non validee dans la base Matelematics. Aucune interpretation constructeur n&apos;est inventee.
         </div>
       )}
 
