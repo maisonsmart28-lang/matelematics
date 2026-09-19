@@ -659,7 +659,7 @@ export default function ExportReportPage() {
       <section className="rounded-2xl border border-slate-800 bg-slate-900 p-6">
 
         <h2 className="mb-5 font-semibold text-white">
-          Résumé de l'export
+          Résumé de l&apos;export
         </h2>
 
         <div className="grid gap-4 md:grid-cols-4">
