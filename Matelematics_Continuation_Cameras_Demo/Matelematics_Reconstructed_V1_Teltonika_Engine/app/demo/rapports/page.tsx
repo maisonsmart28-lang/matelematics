@@ -76,7 +76,7 @@ const recentReports = [
 ];
 
 type PeriodPreset =
-  | "Aujourd'hui"
+  | "Aujourd&apos;hui"
   | "Cette semaine"
   | "Ce mois"
   | "Les 30 derniers jours"
@@ -86,7 +86,7 @@ type PeriodPreset =
   | "Personnalisée";
 
 export default function DemoReportsPage() {
-  const [period, setPeriod] = useState<PeriodPreset>("Aujourd'hui");
+  const [period, setPeriod] = useState<PeriodPreset>("Aujourd&apos;hui");
   const [selectedType, setSelectedType] = useState("Tous");
 
   const [customStartDate, setCustomStartDate] = useState("");
@@ -399,7 +399,7 @@ export default function DemoReportsPage() {
               >
 
                 <option>
-                  Aujourd'hui
+                  Aujourd&apos;hui
                 </option>
 
                 <option>
@@ -473,8 +473,8 @@ export default function DemoReportsPage() {
               </p>
 
               <p className="mt-1 text-xs text-zinc-500">
-                Vous pouvez consulter une période allant jusqu'à
-                12 mois dans l'historique de démonstration.
+                Vous pouvez consulter une période allant jusqu&apos;à
+                12 mois dans l&apos;historique de démonstration.
               </p>
 
             </div>
