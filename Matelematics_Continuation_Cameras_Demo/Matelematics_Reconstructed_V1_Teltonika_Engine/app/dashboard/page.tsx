@@ -117,6 +117,12 @@ function alertClasses(severity: string) {
   };
 }
 
+function confidenceLabel(value: SmartAttentionItem["confidence"]) {
+  if (value === "high") return "élevée";
+  if (value === "medium") return "moyenne";
+  return "limitée";
+}
+
 function formatAlertTime(value: string) {
   const timestamp = new Date(value).getTime();
 
@@ -466,12 +472,12 @@ export default function DashboardPage() {
                   </div>
                   <div className="text-right">
                     <p className="text-lg font-bold text-white">{item.score}/100</p>
-                    <p className="text-[10px] uppercase tracking-wide text-zinc-500">Health</p>
+                    <p className="text-[10px] uppercase tracking-wide text-zinc-500">Santé</p>
                   </div>
                 </div>
                 <p className="mt-3 text-sm text-zinc-300">{item.primaryReason}</p>
                 <div className="mt-3 flex items-center justify-between text-[11px] text-zinc-500">
-                  <span>Confiance {item.confidence}</span>
+                  <span>Confiance {confidenceLabel(item.confidence)}</span>
                   <span>{item.recommendationCount} recommandation{item.recommendationCount > 1 ? "s" : ""}</span>
                 </div>
               </Link>
