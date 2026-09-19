@@ -69,7 +69,7 @@ export default function DemoSupportPage() {
           <p className="mt-4 max-w-2xl text-sm leading-6 text-slate-400 sm:text-base">
             Retrouvez les informations essentielles pour utiliser
             Matelematics et contactez notre équipe si vous avez besoin
-            d'assistance.
+            d&apos;assistance.
           </p>
 
           <div className="mt-6 flex items-center gap-2 text-sm text-emerald-400">
@@ -97,7 +97,7 @@ export default function DemoSupportPage() {
           </h2>
 
           <p className="mt-2 max-w-2xl text-sm text-slate-500">
-            Plusieurs moyens sont disponibles pour obtenir de l'aide.
+            Plusieurs moyens sont disponibles pour obtenir de l&apos;aide.
           </p>
 
         </div>
@@ -368,7 +368,7 @@ export default function DemoSupportPage() {
             href="/demo/contact"
             className="mt-5 inline-flex items-center gap-2 text-sm font-medium text-red-400 hover:text-red-300"
           >
-            Contacter l'équipe
+            Contacter l&apos;équipe
             <ArrowRight className="h-4 w-4" />
           </Link>
 
@@ -392,12 +392,12 @@ export default function DemoSupportPage() {
             <div>
 
               <h2 className="text-xl font-bold text-white sm:text-2xl">
-                Besoin d'une assistance personnalisée ?
+                Besoin d&apos;une assistance personnalisée ?
               </h2>
 
               <p className="mt-2 text-sm text-slate-400">
                 Notre équipe est là pour vous accompagner dans la découverte
-                et l'utilisation de Matelematics.
+                et l&apos;utilisation de Matelematics.
               </p>
 
             </div>
