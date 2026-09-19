@@ -272,7 +272,7 @@ export default function ParametresPage() {
 
               <div className="border-b border-slate-800 p-6">
                 <h2 className="text-lg font-semibold text-white">
-                  Informations de l'entreprise
+                  Informations de l&apos;entreprise
                 </h2>
 
                 <p className="mt-1 text-sm text-slate-400">
@@ -303,7 +303,7 @@ export default function ParametresPage() {
 
                 <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
 
-                  <Input label="Nom de l'entreprise" value="Matelematics" />
+                  <Input label="Nom de l&apos;entreprise" value="Matelematics" />
 
                   <Input label="Secteur d'activité" value="Télématique & gestion de flotte" />
 
@@ -487,7 +487,7 @@ export default function ParametresPage() {
                 </h2>
 
                 <p className="mt-1 text-sm text-slate-400">
-                  Personnalisez l'expérience Matelematics.
+                  Personnalisez l&apos;expérience Matelematics.
                 </p>
               </div>
 
@@ -531,7 +531,7 @@ export default function ParametresPage() {
                       </p>
 
                       <p className="mt-1 text-xs text-slate-500">
-                        L'interface Matelematics utilise actuellement le mode sombre.
+                        L&apos;interface Matelematics utilise actuellement le mode sombre.
                       </p>
                     </div>
 
