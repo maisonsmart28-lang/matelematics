@@ -1623,7 +1623,7 @@ export default function AlertsPage() {
             </p>
 
             <p className="mt-1 text-sm leading-6 text-slate-400">
-              Cette page utilise maintenant les alertes Matelematics stockees en base. L'acquittement confirme la prise en charge sans forcer la resolution du defaut.
+              Cette page utilise maintenant les alertes Matelematics stockees en base. L&apos;acquittement confirme la prise en charge sans forcer la resolution du defaut.
             </p>
 
           </div>
