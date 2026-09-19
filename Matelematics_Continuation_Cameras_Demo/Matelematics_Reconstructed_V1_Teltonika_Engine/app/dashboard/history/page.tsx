@@ -200,20 +200,24 @@ export default function HistoryPage() {
   }, []);
 
   useEffect(() => {
-    setPage(1);
-    setSelectedTripId(null);
-    setTripPoints([]);
-    setSampling(null);
-    setTripError(null);
+    queueMicrotask(() => {
+      setPage(1);
+      setSelectedTripId(null);
+      setTripPoints([]);
+      setSampling(null);
+      setTripError(null);
+      });
   }, [vehicleId, periodMode, appliedRange?.from, appliedRange?.to]);
 
   useEffect(() => {
     let cancelled = false;
 
     if (!vehicleId || (periodMode === "custom" && !appliedRange)) {
-      setTrips([]);
-      setTotal(0);
-      setTotalPages(0);
+      queueMicrotask(() => {
+        setTrips([]);
+        setTotal(0);
+        setTotalPages(0);
+        });
       return () => {
         cancelled = true;
       };
@@ -289,9 +293,11 @@ export default function HistoryPage() {
     let cancelled = false;
 
     if (!selectedTrip || !vehicleId) {
-      setTripPoints([]);
-      setSampling(null);
-      setTripError(null);
+      queueMicrotask(() => {
+        setTripPoints([]);
+        setSampling(null);
+        setTripError(null);
+        });
       return () => {
         cancelled = true;
       };
