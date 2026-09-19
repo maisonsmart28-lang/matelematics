@@ -89,6 +89,10 @@ expect(
   "FMC125 light vehicle CAN AdBlue",
   hasHardwareCapability(fmc125LightVehicleCan, "adblue"),
 );
+expect(
+  "FMC125 light vehicle CAN DTC",
+  hasHardwareCapability(fmc125LightVehicleCan, "dtc"),
+);
 assert.equal(hasHardwareCapability(fmc125LightVehicleCan, "j1939_fms"), false);
 assert.equal(hasHardwareCapability(fmc125LightVehicleCan, "camera"), false);
 
@@ -101,6 +105,7 @@ const fmc650 = resolveHardwareCapabilities({
 
 assert.equal(fmc650.family, "teltonika_fmc650");
 expect("FMC650 J1939/FMS", hasHardwareCapability(fmc650, "j1939_fms"));
+expect("FMC650 J1939/FMS DTC", hasHardwareCapability(fmc650, "dtc"));
 expect("FMC650 CAN RPM", hasHardwareCapability(fmc650, "can_rpm"));
 expect("FMC650 fuel level", hasHardwareCapability(fmc650, "fuel_level"));
 expect("FMC650 camera", hasHardwareCapability(fmc650, "camera"));
