@@ -15,7 +15,7 @@ import {
 
 import { supabase } from "../../components/supabase";
 
-type VehicleStatus = "En mouvement" | "À l&apos;arrêt" | "Hors ligne";
+type VehicleStatus = "En mouvement" | "À l'arrêt" | "Hors ligne";
 type HistoryWindowHours = 1 | 6 | 24 | 168 | 720 | 2160 | 4320 | 8760;
 type PeriodMode = HistoryWindowHours | "custom";
 
