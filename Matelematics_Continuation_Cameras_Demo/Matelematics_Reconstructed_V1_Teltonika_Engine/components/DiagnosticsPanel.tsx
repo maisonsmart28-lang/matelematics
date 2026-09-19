@@ -1,12 +1,11 @@
-﻿import { useState } from "react";
-import { Activity, Package, Zap, TrendingUp } from "lucide-react";
+﻿import { Activity, Package, Zap, TrendingUp } from "lucide-react";
 
 export default function DiagnosticsPanel() {
-  const [diagnostics, setDiagnostics] = useState([
+  const diagnostics = [
     { id: 1, code: "P0300", description: "Ratés d'allumage", severity: "high" },
     { id: 2, code: "P0171", description: "Mélange pauvre", severity: "medium" },
     { id: 3, code: "P0420", description: "Catalyseur inférieur au seuil", severity: "low" },
-  ]);
+  ];
 
   return (
     <div className="space-y-4">
