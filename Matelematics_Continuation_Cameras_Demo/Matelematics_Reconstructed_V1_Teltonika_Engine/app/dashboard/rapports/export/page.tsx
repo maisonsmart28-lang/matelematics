@@ -52,12 +52,11 @@ function dateValue(
 
 
 export default function ExportReportPage() {
-  const today =
-    new Date();
+  const [today] = useState(() => new Date());
 
-  const monthAgo =
+  const [monthAgo] = useState(() =>
     new Date(
-      Date.now() -
+      today.getTime() -
       30 *
       24 *
       60 *
