@@ -55,7 +55,7 @@ const sectors = [
 
 type CardProps = { title: string; description: string; photo: string };
 
-const Card = ({ title, description, photo }: CardProps) => (
+const Card = ({ title, description }: CardProps) => (
   <motion.div
     className="bg-white rounded-2xl shadow-md p-6 hover:shadow-xl transition-all duration-300"
     initial={{ opacity: 0, y: 20 }}
