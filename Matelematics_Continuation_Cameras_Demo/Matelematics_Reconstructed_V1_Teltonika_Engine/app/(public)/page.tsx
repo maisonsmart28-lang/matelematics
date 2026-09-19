@@ -9,7 +9,6 @@ import Benefits from "../components/Benefits";
 import TestimonialsCarousel from "../components/TestimonialsCarousel";
 import Testimonials from "../components/Testimonials";
 import FAQAccordion from "../components/FAQAccordion";
-import Footer from "../components/Footer";
 
 export default function Home() {
   return (
