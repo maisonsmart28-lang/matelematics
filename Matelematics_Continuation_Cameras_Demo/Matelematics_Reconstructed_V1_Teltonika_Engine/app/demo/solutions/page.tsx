@@ -176,7 +176,7 @@ export default function DemoSolutionsPage() {
           </h2>
 
           <p className="mt-2 max-w-2xl text-sm text-slate-500">
-            Une suite complète d'outils pour suivre, analyser et optimiser
+            Une suite complète d&apos;outils pour suivre, analyser et optimiser
             vos opérations.
           </p>
 
@@ -240,7 +240,7 @@ export default function DemoSolutionsPage() {
           </p>
 
           <h2 className="mt-2 text-2xl font-bold text-white">
-            Une plateforme pensée pour l'efficacité
+            Une plateforme pensée pour l&apos;efficacité
           </h2>
 
         </div>
