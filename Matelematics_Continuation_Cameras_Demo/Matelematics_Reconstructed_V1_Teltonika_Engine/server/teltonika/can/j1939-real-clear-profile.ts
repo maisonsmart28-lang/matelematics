@@ -471,6 +471,7 @@ export function canTransmitRealJ1939Clear(
   _profile:
     J1939RealClearProfile,
 ) {
+  void _profile;
   /*
    * ABSOLUTE INTERLOCK V1.
    *
