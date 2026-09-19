@@ -1,5 +1,4 @@
 import type {
-  AvlSourceProfile,
   SupportedDeviceModel,
 } from "../avl/catalog";
 
