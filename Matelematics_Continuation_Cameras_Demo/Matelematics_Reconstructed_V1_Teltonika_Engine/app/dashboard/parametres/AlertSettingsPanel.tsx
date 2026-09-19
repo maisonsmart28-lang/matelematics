@@ -379,7 +379,7 @@ export default function AlertSettingsPanel() {
 
   useEffect(
     () => {
-      void load();
+      queueMicrotask(() => void load());
     },
     [
       load,
