@@ -591,7 +591,7 @@ export default function VehiclePage() {
           className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-medium text-white transition hover:bg-blue-500"
         >
           <Route className="h-4 w-4" />
-          Voir l'historique
+          Voir l&apos;historique
         </Link>
       </div>
     </div>
