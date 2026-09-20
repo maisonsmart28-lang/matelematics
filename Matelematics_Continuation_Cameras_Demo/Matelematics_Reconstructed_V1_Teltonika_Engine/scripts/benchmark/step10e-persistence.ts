@@ -68,6 +68,7 @@ async function sampleRows(limit: number) {
 }
 
 async function main() {
+  console.log(JSON.stringify({event:"benchmark-start",concurrency:concurrencies,batchPerWorker:concurrentBatch,runs}));
   await cleanup();
   const maxBatch = Math.max(...batchSizes);
   const source = await sampleRows(maxBatch);
@@ -81,7 +82,7 @@ async function main() {
           const s = source[i % source.length];
           seq++;
           return {
-            id: -8_000_000_000_000_000_000n + BigInt(seq),
+            id: -8_000_000_000_000_000n + BigInt(seq),
             ...s,
             source: marker,
             recorded_at: new Date(Date.now() - seq).toISOString(),
@@ -122,7 +123,7 @@ async function main() {
             const s = source[i % source.length];
             seq++;
             return {
-              id: (-8_000_000_000_000_000_000n + BigInt(seq)).toString(),
+              id: (-8_000_000_000_000_000n + BigInt(seq)).toString(),
               ...s,
               source: marker,
               recorded_at: new Date(Date.now() - seq).toISOString(),
