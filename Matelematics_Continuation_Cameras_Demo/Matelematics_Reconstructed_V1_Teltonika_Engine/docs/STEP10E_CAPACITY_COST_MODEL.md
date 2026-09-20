@@ -1,6 +1,6 @@
 # Step 10E-4 — Production capacity and unit-cost model
 
-Status: BASELINE IN PROGRESS — measured capacity inputs fixed; final provider bill requires provider-specific storage pricing and production load tests.
+Status: BASELINE IN PROGRESS — measured capacity inputs fixed; Object Storage price captured from the Infomaniak calculator; final provider bill still requires production load tests and remaining service costs.
 
 ## Fixed measured inputs
 
@@ -40,6 +40,18 @@ Measured JSONL+gzip projections:
 - 10,000 vehicles: 6.01 TB
 - 50,000 vehicles: 30.04 TB
 - 100,000 vehicles: 60.08 TB
+
+Infomaniak Object Storage calculator price captured 2026-09-20: **EUR 0.000013 / GB / hour**.
+
+For Matelematics commercial planning, MAD is the reference currency. Use **1 EUR = 11 MAD as a conservative planning conversion**, not as a live accounting exchange rate. At 730 h/month this gives ~0.10439 MAD/GB/month (~104.39 MAD/TB/month, using decimal GB/TB for the provider-cost model).
+
+Approximate monthly archive cost once the 12-month retention window is fully populated:
+- 1,000 vehicles / 0.60 TB: ~62.63 MAD/month, ~0.063 MAD/vehicle/month
+- 10,000 vehicles / 6.01 TB: ~627.38 MAD/month, ~0.063 MAD/vehicle/month
+- 50,000 vehicles / 30.04 TB: ~3,135.88 MAD/month, ~0.063 MAD/vehicle/month
+- 100,000 vehicles / 60.08 TB: ~6,271.75 MAD/month, ~0.063 MAD/vehicle/month
+
+These figures cover Object Storage capacity only. They exclude compute, HOT/WARM database, queue/workers, observability, backups, HA, taxes and any chargeable egress.
 
 ### WARM — 12 months
 The read-only Step 10E-4B benchmark is validated for the components that are currently measurable from Supabase.
@@ -128,7 +140,7 @@ For each target tier (1k, 10k, 50k, 100k), approve only after production-like in
 ## Remaining work before 10E-4 closure
 
 1. Complete WARM measurement with representative trips and maintenance/compliance business-record volumes; the route/aggregate/event subset is validated at ~0.04 MB/vehicle/month.
-2. Obtain an authoritative Object Storage CHF/GB-month rate from the provider calculator/account context; do not infer it.
+2. Object Storage rate obtained from the Infomaniak calculator (EUR 0.000013/GB/hour) and normalized to MAD for planning; refresh the exchange-rate assumption before final commercial pricing.
 3. Benchmark the candidate Infomaniak production topology with the existing 1k/10k/50k/100k methodology.
 4. Measure database write path after durable queue + batching optimization.
 5. Add observability/backups/HA and calculate actual monthly CHF totals and CHF/active-vehicle.
