@@ -19,13 +19,21 @@ const months = 12;
 async function main() {
   console.log(JSON.stringify({event:"archive-benchmark-start",format:"jsonl+gzip",sampleSize}));
   const tFetch = performance.now();
-  const { data, error } = await supabase.from("telemetry")
-    .select("company_id,vehicle_id,device_id,recorded_at,codec,raw_payload,io_values,can_payload,metadata,signal_strength,battery_voltage,ignition,source")
-    .neq("source","benchmark_10e2")
-    .order("recorded_at",{ascending:false})
-    .limit(sampleSize);
-  if (error) throw error;
-  if (!data?.length) throw new Error("No telemetry rows available");
+  const pageSize = Math.min(1000, sampleSize);
+  const data: Record<string, unknown>[] = [];
+  for (let from = 0; from < sampleSize; from += pageSize) {
+    const to = Math.min(from + pageSize, sampleSize) - 1;
+    const { data: page, error } = await supabase.from("telemetry")
+      .select("company_id,vehicle_id,device_id,recorded_at,codec,raw_payload,io_values,can_payload,metadata,signal_strength,battery_voltage,ignition,source")
+      .neq("source","benchmark_10e2")
+      .order("recorded_at",{ascending:false})
+      .range(from,to);
+    if (error) throw error;
+    if (!page?.length) break;
+    data.push(...page);
+    if (page.length < to - from + 1) break;
+  }
+  if (!data.length) throw new Error("No telemetry rows available");
   const fetchMs = performance.now()-tFetch;
 
   const jsonl = Buffer.from(data.map(row=>JSON.stringify(row)).join("\n")+"\n","utf8");
