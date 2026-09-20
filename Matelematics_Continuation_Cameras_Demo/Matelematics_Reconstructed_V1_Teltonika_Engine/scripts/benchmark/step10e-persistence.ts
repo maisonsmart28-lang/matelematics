@@ -18,17 +18,32 @@ const supabase = createClient(url, key, { auth: { persistSession: false, autoRef
 const marker = "benchmark_10e2";
 const batchSizes = (process.env.BENCH_BATCHES ?? "100,500,1000").split(",").map(Number);
 const runs = Number(process.env.BENCH_RUNS ?? "5");
-const concurrencies = (process.env.BENCH_CONCURRENCY ?? "1,2,4,8,16").split(",").map(Number);
-const concurrentBatch = Number(process.env.BENCH_CONCURRENT_BATCH ?? "500");
+const concurrencies = (process.env.BENCH_CONCURRENCY ?? "1,2,4,8").split(",").map(Number);
+const concurrentBatch = Number(process.env.BENCH_CONCURRENT_BATCH ?? "250");
+const retryAttempts = Number(process.env.BENCH_RETRY_ATTEMPTS ?? "3");
 
 function percentile(values: number[], p: number) {
   const sorted = [...values].sort((a,b)=>a-b);
   return sorted[Math.min(sorted.length-1, Math.max(0, Math.ceil(p*sorted.length)-1))];
 }
 
+async function withRetry<T>(label: string, fn: () => Promise<T & { error?: unknown }>) {
+  let lastError: unknown;
+  for (let attempt=1; attempt<=retryAttempts; attempt++) {
+    try {
+      const result = await fn();
+      if (!result.error) return result;
+      lastError = result.error;
+    } catch (error) {
+      lastError = error;
+    }
+    if (attempt < retryAttempts) await new Promise(r => setTimeout(r, 1000 * attempt));
+  }
+  throw new Error(`${label} failed after ${retryAttempts} attempts: ${JSON.stringify(lastError)}`);
+}
+
 async function cleanup() {
-  const { error } = await supabase.from("telemetry").delete().eq("source", marker);
-  if (error) throw error;
+  await withRetry("cleanup", () => supabase.from("telemetry").delete().eq("source", marker));
 }
 
 async function sampleRows(limit: number) {
@@ -62,9 +77,8 @@ async function main() {
         }).map(r => ({...r, id: r.id.toString()}));
 
         const t0 = performance.now();
-        const { error } = await supabase.from("telemetry").insert(rows);
+        await withRetry(`sequential insert batch=${batch} run=${run}`, () => supabase.from("telemetry").insert(rows));
         const ms = performance.now() - t0;
-        if (error) throw error;
         results.push({ batch, run, ms, rowsPerSecond: batch/(ms/1000) });
         await cleanup();
       }
@@ -105,10 +119,10 @@ async function main() {
         );
         const totalRows = concurrency * concurrentBatch;
         const t0 = performance.now();
-        const writes = await Promise.all(payloads.map(rows => supabase.from("telemetry").insert(rows)));
+        await Promise.all(payloads.map((rows, worker) =>
+          withRetry(`concurrent insert c=${concurrency} run=${run} worker=${worker+1}`, () => supabase.from("telemetry").insert(rows))
+        ));
         const ms = performance.now() - t0;
-        const failure = writes.find(x => x.error);
-        if (failure?.error) throw failure.error;
         runResults.push(totalRows / (ms / 1000));
         await cleanup();
       }
