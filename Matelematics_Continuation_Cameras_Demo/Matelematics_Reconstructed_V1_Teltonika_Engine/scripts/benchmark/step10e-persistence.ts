@@ -53,8 +53,8 @@ async function cleanup() {
     if (error) throw error;
     if (!data?.length) return;
     const ids = data.map((row) => row.id);
-    await withRetry("cleanup-page", () =>
-      supabase.from("telemetry").delete().in("id", ids)
+    await withRetry("cleanup-page", async () =>
+      await supabase.from("telemetry").delete().in("id", ids)
     );
   }
 }
