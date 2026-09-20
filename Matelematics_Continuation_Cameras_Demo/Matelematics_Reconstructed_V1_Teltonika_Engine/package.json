@@ -44,7 +44,8 @@
     "teltonika:fleet:simulate": "tsx server/teltonika/fleet-simulator.ts",
     "benchmark:step10e:persistence": "tsx scripts/benchmark/step10e-persistence.ts",
     "benchmark:step10e:archive": "tsx scripts/benchmark/step10e-archive.ts",
-    "benchmark:step10e:parquet": "tsx scripts/benchmark/step10e-parquet.ts"
+    "benchmark:step10e:parquet": "tsx scripts/benchmark/step10e-parquet.ts",
+    "benchmark:step10e:warm": "tsx scripts/benchmark/step10e-warm.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",
