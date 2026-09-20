@@ -77,6 +77,31 @@ This projection MUST NOT be treated as the complete WARM footprint. Trips were n
 
 A complete WARM bytes/vehicle/month value remains pending representative trip and business-record measurements.
 
+## 10E-4D measured batch persistence result
+
+The controlled queue/batch persistence benchmark completed successfully with final cleanup verified at 0 remaining benchmark rows.
+
+Best observed cell:
+- batch: 500 rows
+- workers: 4
+- committed: 6,000 rows
+- failed batches: 0
+- retries: 0
+- sustained observed throughput: 292 rows/s
+- batch latency p50: 5,987.32 ms
+- p95: 8,589 ms
+- max: 8,589 ms
+
+Average adaptive-load headroom from that observed path:
+- 1,000 vehicles: 3.75x
+- 10,000 vehicles: 0.38x
+- 50,000 vehicles: 0.08x
+- 100,000 vehicles: 0.04x
+
+The 1,000-row / 4-worker cell regressed to 141.1 rows/s, required 2 retries, and reached 31,164.18 ms maximum batch latency. More concurrency/larger batches therefore cannot be assumed to improve throughput.
+
+Interpretation: this benchmark measures the client/network/PostgREST/current-schema path, not pure PostgreSQL capacity. It validates the benchmark method and demonstrates that the current direct write path is not a 10k+ vehicle production architecture. The next capacity experiment must compare a server-side worker/bulk PostgreSQL path located close to the database, behind a durable queue, before production sizing is claimed.
+
 ## Production topology baseline
 
 Trackers
@@ -142,7 +167,7 @@ For each target tier (1k, 10k, 50k, 100k), approve only after production-like in
 1. Complete WARM measurement with representative trips and maintenance/compliance business-record volumes; the route/aggregate/event subset is validated at ~0.04 MB/vehicle/month.
 2. Object Storage rate obtained from the Infomaniak calculator (EUR 0.000013/GB/hour) and normalized to MAD for planning; refresh the exchange-rate assumption before final commercial pricing.
 3. Benchmark the candidate Infomaniak production topology with the existing 1k/10k/50k/100k methodology.
-4. Measure database write path after durable queue + batching optimization.
+4. 10E-4D direct PostgREST batching measured (best 292 rows/s); next compare server-side/bulk PostgreSQL worker path behind a durable queue.
 5. Add observability/backups/HA and calculate actual monthly CHF totals and CHF/active-vehicle.
 6. Define commercial pricing only after infrastructure unit economics include safety margin and support/operations.
 
