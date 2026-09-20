@@ -42,7 +42,28 @@ Measured JSONL+gzip projections:
 - 100,000 vehicles: 60.08 TB
 
 ### WARM — 12 months
-WARM must contain customer-facing historical facts and aggregates rather than duplicate all raw events. Its final bytes/vehicle/month remain TO BE MEASURED after the optimized WARM schema is implemented. Do not invent this value.
+The read-only Step 10E-4B benchmark is validated for the components that are currently measurable from Supabase.
+
+Observed source sample:
+- 20,000 telemetry rows
+- 20,000 position rows
+- 130 alerts
+- 2 distinct vehicles
+- 14.91 observed days
+
+Measured optimized WARM representation:
+- route samples: 2,081 rows / 440,316 raw bytes
+- hourly aggregates: 31 rows / 9,265 raw bytes
+- daily aggregates: 9 rows / 2,695 raw bytes
+- important events: 130 rows / 28,897 raw bytes
+- combined: 481,173 raw bytes -> 35,821 gzip bytes
+- compression ratio: 13.43x
+- measured unit footprint: ~1,201 gzip bytes / active vehicle-day
+- projection for measured components only: ~0.04 MB / vehicle / month, ~0.43 MB / vehicle / 12 months
+
+This projection MUST NOT be treated as the complete WARM footprint. Trips were not synthesized by this benchmark, and the current maintenance/compliance populations contain no representative rows from which to measure their production frequency or storage cost. The validated conclusion is narrower: sampled route history + hourly/daily aggregates + currently observed important events are highly compact compared with the raw operational event stream.
+
+A complete WARM bytes/vehicle/month value remains pending representative trip and business-record measurements.
 
 ## Production topology baseline
 
@@ -106,7 +127,7 @@ For each target tier (1k, 10k, 50k, 100k), approve only after production-like in
 
 ## Remaining work before 10E-4 closure
 
-1. Measure an optimized WARM representation in bytes/vehicle/month.
+1. Complete WARM measurement with representative trips and maintenance/compliance business-record volumes; the route/aggregate/event subset is validated at ~0.04 MB/vehicle/month.
 2. Obtain an authoritative Object Storage CHF/GB-month rate from the provider calculator/account context; do not infer it.
 3. Benchmark the candidate Infomaniak production topology with the existing 1k/10k/50k/100k methodology.
 4. Measure database write path after durable queue + batching optimization.
