@@ -18,9 +18,10 @@ const supabase = createClient(url, key, { auth: { persistSession: false, autoRef
 const marker = "benchmark_10e2";
 const batchSizes = (process.env.BENCH_BATCHES ?? "100,500,1000").split(",").map(Number);
 const runs = Number(process.env.BENCH_RUNS ?? "5");
-const concurrencies = (process.env.BENCH_CONCURRENCY ?? "8").split(",").map(Number);
+const concurrencies = (process.env.BENCH_CONCURRENCY ?? "").split(",").filter(Boolean).map(Number);
 const concurrentBatch = Number(process.env.BENCH_CONCURRENT_BATCH ?? "250");
 const retryAttempts = Number(process.env.BENCH_RETRY_ATTEMPTS ?? "3");
+const skipSequential = process.env.BENCH_SKIP_SEQUENTIAL === "1";
 
 function percentile(values: number[], p: number) {
   const sorted = [...values].sort((a,b)=>a-b);
@@ -76,7 +77,7 @@ async function main() {
   let seq = 0;
 
   try {
-    for (const batch of batchSizes) {
+    if (!skipSequential) for (const batch of batchSizes) {
       for (let run=1; run<=runs; run++) {
         const rows = Array.from({length: batch}, (_,i) => {
           const s = source[i % source.length];
