@@ -238,6 +238,56 @@ for (
 }
 
 
+/*
+ * Local load-test registry.
+ *
+ * Disabled by default. This only admits deterministic simulator IMEIs;
+ * it does not create database rows and must never be used in production.
+ */
+const devFleetCount =
+  Number(
+    process.env
+      .TELTONIKA_DEV_FLEET_COUNT ??
+    0,
+  );
+
+if (
+  Number.isInteger(
+    devFleetCount,
+  ) &&
+  devFleetCount > 0 &&
+  devFleetCount <= 10_000
+) {
+  for (
+    let index = 0;
+    index < devFleetCount;
+    index += 1
+  ) {
+    const imei =
+      `9900000000${String(
+        index,
+      ).padStart(
+        5,
+        "0",
+      )}`;
+
+    registerDevice({
+      imei,
+      clientId:
+        "load-test-company",
+      vehicleId:
+        `load-test-vehicle-${index}`,
+      label:
+        `Load Test Vehicle ${index + 1}`,
+    });
+  }
+
+  console.log(
+    `[Teltonika] Registered ${devFleetCount} local load-test device(s)`,
+  );
+}
+
+
 function sleep(
   ms: number,
 ) {
