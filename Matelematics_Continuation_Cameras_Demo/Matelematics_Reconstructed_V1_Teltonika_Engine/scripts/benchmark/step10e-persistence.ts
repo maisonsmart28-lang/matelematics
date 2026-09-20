@@ -91,7 +91,7 @@ async function main() {
         }).map(r => ({...r, id: r.id.toString()}));
 
         const t0 = performance.now();
-        await withRetry(`sequential insert batch=${batch} run=${run}`, () => supabase.from("telemetry").insert(rows));
+        await withRetry(`sequential insert batch=${batch} run=${run}`, async () => await supabase.from("telemetry").insert(rows));
         const ms = performance.now() - t0;
         results.push({ batch, run, ms, rowsPerSecond: batch/(ms/1000) });
         await cleanup();
@@ -134,7 +134,7 @@ async function main() {
         const totalRows = concurrency * concurrentBatch;
         const t0 = performance.now();
         await Promise.all(payloads.map((rows, worker) =>
-          withRetry(`concurrent insert c=${concurrency} run=${run} worker=${worker+1}`, () => supabase.from("telemetry").insert(rows))
+          withRetry(`concurrent insert c=${concurrency} run=${run} worker=${worker+1}`, async () => await supabase.from("telemetry").insert(rows))
         ));
         const ms = performance.now() - t0;
         runResults.push(totalRows / (ms / 1000));
