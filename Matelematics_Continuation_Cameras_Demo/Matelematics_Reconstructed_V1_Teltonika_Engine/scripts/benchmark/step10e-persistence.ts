@@ -18,7 +18,7 @@ const supabase = createClient(url, key, { auth: { persistSession: false, autoRef
 const marker = "benchmark_10e2";
 const batchSizes = (process.env.BENCH_BATCHES ?? "100,500,1000").split(",").map(Number);
 const runs = Number(process.env.BENCH_RUNS ?? "5");
-const concurrencies = (process.env.BENCH_CONCURRENCY ?? "1,2,4,8").split(",").map(Number);
+const concurrencies = (process.env.BENCH_CONCURRENCY ?? "8").split(",").map(Number);
 const concurrentBatch = Number(process.env.BENCH_CONCURRENT_BATCH ?? "250");
 const retryAttempts = Number(process.env.BENCH_RETRY_ATTEMPTS ?? "3");
 
@@ -43,7 +43,19 @@ async function withRetry<T>(label: string, fn: () => Promise<T & { error?: unkno
 }
 
 async function cleanup() {
-  await withRetry("cleanup", () => supabase.from("telemetry").delete().eq("source", marker));
+  for (;;) {
+    const { data, error } = await supabase
+      .from("telemetry")
+      .select("id")
+      .eq("source", marker)
+      .limit(250);
+    if (error) throw error;
+    if (!data?.length) return;
+    const ids = data.map((row) => row.id);
+    await withRetry("cleanup-page", () =>
+      supabase.from("telemetry").delete().in("id", ids)
+    );
+  }
 }
 
 async function sampleRows(limit: number) {
