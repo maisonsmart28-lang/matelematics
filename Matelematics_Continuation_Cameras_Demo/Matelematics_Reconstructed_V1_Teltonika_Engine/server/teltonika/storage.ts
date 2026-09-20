@@ -870,7 +870,7 @@ export async function persistTelemetry(telemetry: NormalizedTelemetry) {
    * fake device/vehicle rows.
    */
   const devFleetCount = Number(process.env.TELTONIKA_DEV_FLEET_COUNT ?? 0);
-  const loadTestMatch = /^9900000000(\\d{5})$/.exec(telemetry.imei);
+  const loadTestMatch = /^9900000000(\d{5})$/.exec(telemetry.imei);
   if (
     Number.isInteger(devFleetCount) &&
     devFleetCount > 0 &&
