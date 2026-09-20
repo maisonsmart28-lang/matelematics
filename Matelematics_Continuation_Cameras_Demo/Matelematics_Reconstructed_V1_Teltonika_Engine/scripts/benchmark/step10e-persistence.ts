@@ -1,5 +1,12 @@
 import { createClient } from "@supabase/supabase-js";
 import { performance } from "node:perf_hooks";
+import { loadEnvFile } from "node:process";
+import { existsSync } from "node:fs";
+
+// Standalone tsx scripts do not automatically load Next.js .env.local.
+// Node >=20.12 provides loadEnvFile(), so load the project env explicitly.
+if (existsSync(".env.local")) loadEnvFile(".env.local");
+else if (existsSync(".env")) loadEnvFile(".env");
 
 type BatchResult = { batch: number; run: number; ms: number; rowsPerSecond: number };
 
