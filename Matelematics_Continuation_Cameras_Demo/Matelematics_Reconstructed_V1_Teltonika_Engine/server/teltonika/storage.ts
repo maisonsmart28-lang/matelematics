@@ -861,6 +861,35 @@ async function markDeviceSeen(deviceId: string) {
 }
 
 export async function persistTelemetry(telemetry: NormalizedTelemetry) {
+  /*
+   * Step 10 local load-test mode.
+   * The TCP protocol still authenticates every deterministic simulator IMEI,
+   * decodes/normalizes Codec 8E and waits for this handler before ACKing.
+   * We deliberately skip Supabase persistence for those synthetic devices so
+   * load tests do not require or pollute the live project with 100-10,000
+   * fake device/vehicle rows.
+   */
+  const devFleetCount = Number(process.env.TELTONIKA_DEV_FLEET_COUNT ?? 0);
+  const loadTestMatch = /^9900000000(\\d{5})$/.exec(telemetry.imei);
+  if (
+    Number.isInteger(devFleetCount) &&
+    devFleetCount > 0 &&
+    devFleetCount <= 10_000 &&
+    loadTestMatch &&
+    Number(loadTestMatch[1]) < devFleetCount
+  ) {
+    return {
+      deviceId: `load-test-device-${telemetry.imei}`,
+      companyId: "load-test-company",
+      vehicleId: `load-test-vehicle-${Number(loadTestMatch[1])}`,
+      recordedAt: new Date(telemetry.timestamp).toISOString(),
+      duplicate: false,
+      positionPersisted: false,
+      quality: assessTelemetryQuality(telemetry),
+      loadTest: true,
+    };
+  }
+
   const { data: device, error: deviceError } = await getSupabase()
     .from("devices")
     .select("id,company_id,vehicle_id,imei")
