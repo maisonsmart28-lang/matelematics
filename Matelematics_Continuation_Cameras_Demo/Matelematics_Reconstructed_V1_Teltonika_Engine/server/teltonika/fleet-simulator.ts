@@ -118,6 +118,7 @@ let authenticated = 0;
 let rejected = 0;
 let errors = 0;
 let closed = 0;
+const errorCodes: Record<string, number> = {};
 let peakOpen = 0;
 let telemetrySent = 0;
 let telemetryAcked = 0;
@@ -138,6 +139,7 @@ function summary(reason: string) {
     authenticated,
     rejected,
     errors,
+    errorCodes,
     closed,
     open: sockets.size,
     peakOpen,
@@ -261,8 +263,17 @@ const launcher = setInterval(() => {
     }
   });
 
-  socket.once("error", () => {
+  socket.once("error", (error: NodeJS.ErrnoException) => {
     errors++;
+    const code = error.code ?? "UNKNOWN";
+    errorCodes[code] = (errorCodes[code] ?? 0) + 1;
+    console.error(JSON.stringify({
+      event: "fleet-socket-error",
+      index,
+      imei,
+      code,
+      message: error.message,
+    }));
   });
 
   socket.once("close", () => {
