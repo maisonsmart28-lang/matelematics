@@ -1,4 +1,5 @@
 import net from "node:net";
+import { crc16Ibm } from "./crc16";
 
 type FleetProfile = "light" | "j1939";
 
@@ -11,6 +12,7 @@ type FleetConfig = {
   durationSeconds: number;
   profile: FleetProfile;
   dryRun: boolean;
+  telemetry: boolean;
 };
 
 function intEnv(name: string, fallback: number, min: number, max: number) {
@@ -26,7 +28,6 @@ function configFromEnv(): FleetConfig {
   if (profile !== "light" && profile !== "j1939") {
     throw new Error("TELTONIKA_FLEET_PROFILE must be light or j1939");
   }
-
   return {
     host: process.env.TELTONIKA_FLEET_HOST ?? "127.0.0.1",
     port: intEnv("TELTONIKA_FLEET_PORT", 5000, 1, 65535),
@@ -36,11 +37,11 @@ function configFromEnv(): FleetConfig {
     durationSeconds: intEnv("TELTONIKA_FLEET_DURATION_SECONDS", 60, 1, 86_400),
     profile,
     dryRun: process.env.TELTONIKA_FLEET_DRY_RUN === "1",
+    telemetry: process.env.TELTONIKA_FLEET_TELEMETRY === "1",
   };
 }
 
 function imeiFor(index: number) {
-  // 15 digits, deterministic and unique for indices 0..9999.
   return `9900000000${String(index).padStart(5, "0")}`;
 }
 
@@ -49,6 +50,63 @@ function handshake(imei: string) {
   const packet = Buffer.alloc(2 + value.length);
   packet.writeUInt16BE(value.length, 0);
   value.copy(packet, 2);
+  return packet;
+}
+
+function buildTelemetryPacket(index: number, sequence: number) {
+  const parts: Buffer[] = [];
+  const u8 = (value: number) => { const b = Buffer.alloc(1); b.writeUInt8(value); parts.push(b); };
+  const u16 = (value: number) => { const b = Buffer.alloc(2); b.writeUInt16BE(value); parts.push(b); };
+  const u32 = (value: number) => { const b = Buffer.alloc(4); b.writeUInt32BE(value >>> 0); parts.push(b); };
+  const i32 = (value: number) => { const b = Buffer.alloc(4); b.writeInt32BE(value); parts.push(b); };
+  const u64 = (value: bigint) => { const b = Buffer.alloc(8); b.writeBigUInt64BE(value); parts.push(b); };
+
+  const latitude = 33.5731 + (index % 100) * 0.0001 + sequence * 0.00001;
+  const longitude = -7.5898 + Math.floor(index / 100) * 0.0001 + sequence * 0.00002;
+  const speed = 40 + ((index + sequence) % 35);
+  const rpm = 1100 + ((index * 17 + sequence * 31) % 1400);
+
+  u8(0x8e);
+  u8(1);
+  u64(BigInt(Date.now()));
+  u8(1);
+  i32(Math.round(longitude * 10_000_000));
+  i32(Math.round(latitude * 10_000_000));
+  u16(35);
+  u16((90 + sequence * 3) % 360);
+  u8(11);
+  u16(speed);
+
+  // Event ID, total IO.
+  u16(239);
+  u16(6);
+
+  // N1: ignition, movement, fuel level.
+  u16(3);
+  u16(239); u8(1);
+  u16(240); u8(1);
+  u16(37); u8(70 + (index % 20));
+
+  // N2: external voltage, RPM.
+  u16(2);
+  u16(66); u16(13_800);
+  u16(35); u16(rpm);
+
+  // N4: odometer metres.
+  u16(1);
+  u16(16); u32(120_000_000 + index * 1000 + sequence * 50);
+
+  // N8, NX.
+  u16(0);
+  u16(0);
+  u8(1);
+
+  const data = Buffer.concat(parts);
+  const packet = Buffer.alloc(8 + data.length + 4);
+  packet.writeUInt32BE(0, 0);
+  packet.writeUInt32BE(data.length, 4);
+  data.copy(packet, 8);
+  packet.writeUInt32BE(crc16Ibm(data), 8 + data.length);
   return packet;
 }
 
@@ -61,11 +119,16 @@ let rejected = 0;
 let errors = 0;
 let closed = 0;
 let peakOpen = 0;
+let telemetrySent = 0;
+let telemetryAcked = 0;
+let telemetryAckErrors = 0;
+let ackLatencyTotalMs = 0;
+let ackLatencyMaxMs = 0;
 const sockets = new Set<net.Socket>();
+const timers = new Set<ReturnType<typeof setInterval>>();
 
 function summary(reason: string) {
   const elapsedSeconds = Math.max(0.001, (Date.now() - startedAt) / 1000);
-  const open = sockets.size;
   console.log(JSON.stringify({
     event: "fleet-summary",
     reason,
@@ -76,8 +139,14 @@ function summary(reason: string) {
     rejected,
     errors,
     closed,
-    open,
+    open: sockets.size,
     peakOpen,
+    telemetrySent,
+    telemetryAcked,
+    telemetryAckErrors,
+    telemetryPerSecond: Number((telemetryAcked / elapsedSeconds).toFixed(2)),
+    avgAckLatencyMs: telemetryAcked ? Number((ackLatencyTotalMs / telemetryAcked).toFixed(2)) : 0,
+    maxAckLatencyMs: Number(ackLatencyMaxMs.toFixed(2)),
     elapsedSeconds: Number(elapsedSeconds.toFixed(3)),
     connectionsPerSecond: Number((connected / elapsedSeconds).toFixed(2)),
     profile: config.profile,
@@ -86,9 +155,17 @@ function summary(reason: string) {
 }
 
 function stop(reason: string) {
+  for (const timer of timers) clearInterval(timer);
+  timers.clear();
   for (const socket of sockets) socket.destroy();
   summary(reason);
-  process.exitCode = errors > 0 || rejected > 0 ? 1 : 0;
+  process.exitCode =
+    errors > 0 ||
+    rejected > 0 ||
+    telemetryAckErrors > 0 ||
+    (config.telemetry && telemetryAcked === 0)
+      ? 1
+      : 0;
 }
 
 if (config.dryRun) {
@@ -121,23 +198,66 @@ const launcher = setInterval(() => {
   const socket = net.createConnection({ host: config.host, port: config.port });
   sockets.add(socket);
   peakOpen = Math.max(peakOpen, sockets.size);
-
   socket.setKeepAlive(true, 30_000);
   socket.setNoDelay(true);
+
+  let authenticatedSocket = false;
+  let waitingAck = false;
+  let sentAt = 0;
+  let sequence = 0;
+  let receiveBuffer = Buffer.alloc(0);
+
+  const sendTelemetry = () => {
+    if (!config.telemetry || !authenticatedSocket || waitingAck || socket.destroyed) return;
+    sequence += 1;
+    waitingAck = true;
+    sentAt = performance.now();
+    telemetrySent += 1;
+    socket.write(buildTelemetryPacket(index, sequence));
+  };
 
   socket.once("connect", () => {
     connected++;
     socket.write(handshake(imei));
   });
 
-  let authPending = true;
-  socket.on("data", (data) => {
-    if (!authPending || data.length === 0) return;
-    authPending = false;
-    if (data[0] === 1) authenticated++;
-    else {
-      rejected++;
-      socket.destroy();
+  socket.on("data", (incoming) => {
+    let data = incoming;
+    if (!authenticatedSocket) {
+      if (data.length === 0) return;
+      if (data[0] !== 1) {
+        rejected++;
+        socket.destroy();
+        return;
+      }
+      authenticatedSocket = true;
+      authenticated++;
+      data = data.subarray(1);
+
+      if (config.telemetry) {
+        sendTelemetry();
+        const timer = setInterval(sendTelemetry, config.intervalMs);
+        timers.add(timer);
+        socket.once("close", () => {
+          clearInterval(timer);
+          timers.delete(timer);
+        });
+      }
+    }
+
+    if (data.length > 0) receiveBuffer = Buffer.concat([receiveBuffer, data]);
+    while (receiveBuffer.length >= 4) {
+      const accepted = receiveBuffer.readUInt32BE(0);
+      receiveBuffer = receiveBuffer.subarray(4);
+      if (!waitingAck || accepted !== 1) {
+        telemetryAckErrors++;
+        continue;
+      }
+      const latency = performance.now() - sentAt;
+      ackLatencyTotalMs += latency;
+      ackLatencyMaxMs = Math.max(ackLatencyMaxMs, latency);
+      telemetryAcked++;
+      waitingAck = false;
     }
   });
 
