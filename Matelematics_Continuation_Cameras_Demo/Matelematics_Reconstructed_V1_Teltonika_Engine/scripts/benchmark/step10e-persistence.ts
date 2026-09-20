@@ -18,6 +18,8 @@ const supabase = createClient(url, key, { auth: { persistSession: false, autoRef
 const marker = "benchmark_10e2";
 const batchSizes = (process.env.BENCH_BATCHES ?? "100,500,1000").split(",").map(Number);
 const runs = Number(process.env.BENCH_RUNS ?? "5");
+const concurrencies = (process.env.BENCH_CONCURRENCY ?? "1,2,4,8,16").split(",").map(Number);
+const concurrentBatch = Number(process.env.BENCH_CONCURRENT_BATCH ?? "500");
 
 function percentile(values: number[], p: number) {
   const sorted = [...values].sort((a,b)=>a-b);
@@ -81,6 +83,44 @@ async function main() {
         avgRowsPerSecond:Number((rps.reduce((a,b)=>a+b,0)/rps.length).toFixed(1)),
         minRowsPerSecond:Number(Math.min(...rps).toFixed(1)),
         maxRowsPerSecond:Number(Math.max(...rps).toFixed(1))
+      }));
+
+    }
+
+    // 10E-2B: controlled concurrent writers against the same real telemetry path.
+    for (const concurrency of concurrencies) {
+      const runResults: number[] = [];
+      for (let run=1; run<=runs; run++) {
+        const payloads = Array.from({length: concurrency}, () =>
+          Array.from({length: concurrentBatch}, (_,i) => {
+            const s = source[i % source.length];
+            seq++;
+            return {
+              id: (-8_000_000_000_000_000_000n + BigInt(seq)).toString(),
+              ...s,
+              source: marker,
+              recorded_at: new Date(Date.now() - seq).toISOString(),
+            };
+          })
+        );
+        const totalRows = concurrency * concurrentBatch;
+        const t0 = performance.now();
+        const writes = await Promise.all(payloads.map(rows => supabase.from("telemetry").insert(rows)));
+        const ms = performance.now() - t0;
+        const failure = writes.find(x => x.error);
+        if (failure?.error) throw failure.error;
+        runResults.push(totalRows / (ms / 1000));
+        await cleanup();
+      }
+      console.log(JSON.stringify({
+        event:"persistence-concurrency-benchmark",
+        concurrency,
+        batchPerWorker:concurrentBatch,
+        rowsPerRun:concurrency*concurrentBatch,
+        runs,
+        avgRowsPerSecond:Number((runResults.reduce((a,b)=>a+b,0)/runResults.length).toFixed(1)),
+        minRowsPerSecond:Number(Math.min(...runResults).toFixed(1)),
+        maxRowsPerSecond:Number(Math.max(...runResults).toFixed(1))
       }));
     }
   } finally {
