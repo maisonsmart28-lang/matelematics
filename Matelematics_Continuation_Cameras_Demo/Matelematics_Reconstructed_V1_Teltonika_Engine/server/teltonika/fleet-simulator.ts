@@ -156,18 +156,73 @@ function summary(reason: string) {
   }));
 }
 
+let stopping = false;
+
 function stop(reason: string) {
+  if (stopping) return;
+  stopping = true;
+
+  // Stop producing new telemetry first, then give in-flight AVL ACKs a short
+  // drain window before closing sockets and printing the authoritative result.
   for (const timer of timers) clearInterval(timer);
   timers.clear();
-  for (const socket of sockets) socket.destroy();
-  summary(reason);
-  process.exitCode =
-    errors > 0 ||
-    rejected > 0 ||
-    telemetryAckErrors > 0 ||
-    (config.telemetry && telemetryAcked === 0)
-      ? 1
-      : 0;
+
+  const sentAtStop = telemetrySent;
+  const drainStartedAt = Date.now();
+  const drainTimeoutMs = 2_000;
+
+  const finish = () => {
+    const pendingAcks = Math.max(0, telemetrySent - telemetryAcked);
+    for (const socket of sockets) socket.destroy();
+
+    const elapsedSeconds = Math.max(0.001, (Date.now() - startedAt) / 1000);
+    console.log(JSON.stringify({
+      event: "fleet-summary",
+      reason,
+      vehicles: config.vehicles,
+      attempted,
+      connected,
+      authenticated,
+      rejected,
+      errors,
+      errorCodes,
+      closed,
+      open: sockets.size,
+      peakOpen,
+      telemetrySent,
+      telemetryAcked,
+      telemetryAckErrors,
+      pendingAcks,
+      ackDrainMs: Date.now() - drainStartedAt,
+      telemetryPerSecond: Number((telemetryAcked / elapsedSeconds).toFixed(2)),
+      avgAckLatencyMs: telemetryAcked ? Number((ackLatencyTotalMs / telemetryAcked).toFixed(2)) : 0,
+      maxAckLatencyMs: Number(ackLatencyMaxMs.toFixed(2)),
+      elapsedSeconds: Number(elapsedSeconds.toFixed(3)),
+      connectionsPerSecond: Number((connected / elapsedSeconds).toFixed(2)),
+      profile: config.profile,
+      intervalMs: config.intervalMs,
+    }));
+
+    process.exitCode =
+      errors > 0 ||
+      rejected > 0 ||
+      telemetryAckErrors > 0 ||
+      (config.telemetry && (telemetryAcked === 0 || pendingAcks > 0))
+        ? 1
+        : 0;
+  };
+
+  if (!config.telemetry || telemetryAcked >= sentAtStop) {
+    finish();
+    return;
+  }
+
+  const drain = setInterval(() => {
+    if (telemetryAcked >= sentAtStop || Date.now() - drainStartedAt >= drainTimeoutMs) {
+      clearInterval(drain);
+      finish();
+    }
+  }, 10);
 }
 
 if (config.dryRun) {
