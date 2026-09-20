@@ -40,7 +40,8 @@
     "smart:step1d:insights": "tsx server/smart/fleet-insights.selftest.ts",
     "smart:step1f:security": "tsx scripts/security/smart-step1f-tenant-audit.ts",
     "smart:step1:validate": "npm run hardware:step7b:capabilities && npm run smart:step1:core && npm run smart:step1f:security && npm run build",
-    "smart:step1f:behavioral": "tsx scripts/security/smart-step1f-behavioral.ts"
+    "smart:step1f:behavioral": "tsx scripts/security/smart-step1f-behavioral.ts",
+    "teltonika:fleet:simulate": "tsx server/teltonika/fleet-simulator.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",
