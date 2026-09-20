@@ -46,7 +46,8 @@
     "benchmark:step10e:archive": "tsx scripts/benchmark/step10e-archive.ts",
     "benchmark:step10e:parquet": "tsx scripts/benchmark/step10e-parquet.ts",
     "benchmark:step10e:warm": "tsx scripts/benchmark/step10e-warm.ts",
-    "benchmark:step10e:batch": "tsx scripts/benchmark/step10e-batch-persistence.ts"
+    "benchmark:step10e:batch": "tsx scripts/benchmark/step10e-batch-persistence.ts",
+    "benchmark:step10e:postgres": "tsx scripts/benchmark/step10e-server-postgres.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",
