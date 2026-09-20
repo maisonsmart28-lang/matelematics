@@ -178,3 +178,32 @@ https://www.infomaniak.com/fr/hebergement/public-cloud/tarifs
 
 Infomaniak Public Cloud overview:
 https://www.infomaniak.com/fr/hebergement/public-cloud
+
+
+## Mandatory Morocco compliance dimension in the benchmark
+
+The Step 10E benchmark is not considered complete if it measures only technical throughput and infrastructure cost. Moroccan compliance is a first-class benchmark dimension and must be evaluated together with capacity, storage, latency and MAD/vehicle/month.
+
+Every candidate production topology (Supabase, Infomaniak, queue, workers, HOT/WARM/archive, backups, observability, maps, notifications and any future processor) must therefore be scored factually against:
+- physical processing/storage country and international-transfer impact;
+- CNDP processing/transfer formalities applicable to the actual data flow;
+- data minimization and retention feasibility;
+- verified deletion/anonymization capability and cost;
+- tenant isolation and privileged-access controls;
+- auditability of sensitive access/exports;
+- backup/restore retention and deletion propagation;
+- encryption/security controls and processor/subprocessor evidence;
+- ANRT approval evidence for deployed tracker/radio models;
+- Moroccan cybersecurity/DGSSI scope and controls where applicable.
+
+### Benchmark outputs
+
+For each fleet tier (1k / 10k / 50k / 100k), the final benchmark must report both:
+1. technical/economic metrics: ingestion capacity, DB throughput, HOT/WARM/archive footprint, latency, resilience and MAD/active vehicle/month;
+2. compliance-operational metrics: retained personal-data volume by tier, retention/deletion workload, archive/backup implications, countries/processors, required compliance controls and their infrastructure/operational cost where measurable.
+
+A topology that is fast or inexpensive but cannot satisfy mandatory Moroccan legal/regulatory requirements is not an eligible production candidate.
+
+Compliance costs that cannot yet be measured must be shown as pending/unknown rather than treated as zero.
+
+Reference implementation checklist: `docs/STEP10E_COMPLIANCE_MOROCCO.md`.
