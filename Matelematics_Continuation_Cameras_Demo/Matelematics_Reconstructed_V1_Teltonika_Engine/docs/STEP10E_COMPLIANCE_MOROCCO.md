@@ -86,18 +86,19 @@ Do not add covert employee-monitoring features.
 
 ## 6. ANRT equipment gate
 
-Every tracker/radio/terminal model intended for importation, sale, distribution, advertising or connection in Morocco must be checked against the applicable ANRT approval/exemption regime before commercial deployment.
+Primary deployment assumption: Matelematics plans to source Teltonika equipment from a Moroccan supplier that already holds/provides the applicable ANRT approval documentation.
 
-Maintain an equipment register:
-- manufacturer;
-- exact model/hardware revision;
-- cellular/radio technologies;
-- ANRT approval number or exemption evidence;
-- approval status/date;
-- importer/distributor;
-- supporting certificate/document.
+Therefore ANRT is handled as a **documentary verification gate**, not as an assumption that Matelematics must obtain a new approval for every unit/model.
 
-Teltonika or CE certification alone must not be treated in code/docs as proof of Moroccan ANRT approval.
+Before commercial deployment, maintain evidence for each exact model/reference used:
+- manufacturer and exact model/hardware reference;
+- Moroccan supplier identity and purchase/provenance evidence;
+- applicable ANRT approval/certificate/reference supplied by the Moroccan supplier;
+- confirmation that the evidence corresponds to the exact equipment variant deployed.
+
+If a future device is imported directly by Matelematics, sourced outside Morocco, or lacks matching ANRT evidence, reassess the applicable ANRT import/approval obligations before deployment.
+
+ANRT documentary verification remains part of the benchmark/compliance checklist but does not block technical capacity benchmarking when evidence is already available from the Moroccan supplier.
 
 ## 7. Cybersecurity / DGSSI scope gate
 
