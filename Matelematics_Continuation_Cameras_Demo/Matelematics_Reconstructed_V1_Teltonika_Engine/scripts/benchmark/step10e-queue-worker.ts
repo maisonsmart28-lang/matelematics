@@ -77,13 +77,21 @@ async function main() {
       let i=0;
       while(i<TOTAL){
         const elapsed=performance.now()-producerStart;
-        const inBurst=BURST_RATE>0 && elapsed>=BURST_AFTER_MS && elapsed<(BURST_AFTER_MS+BURST_DURATION_MS);
+        const hasBurst=BURST_RATE>0 && BURST_DURATION_MS>0;
+        const burstEnd=BURST_AFTER_MS+BURST_DURATION_MS;
+        const inBurst=hasBurst && elapsed>=BURST_AFTER_MS && elapsed<burstEnd;
         const rate=inBurst ? BURST_RATE : PRODUCER_RATE;
         let emitCount=TOTAL-i;
         if(rate>0){
-          const phaseStart=inBurst ? BURST_AFTER_MS : (BURST_RATE>0 && elapsed>=BURST_AFTER_MS+BURST_DURATION_MS ? BURST_AFTER_MS+BURST_DURATION_MS : 0);
-          const phaseElapsed=Math.max(0,elapsed-phaseStart);
-          const target=Math.min(TOTAL,Math.floor(rate*phaseElapsed/1000));
+          let target:number;
+          if(!hasBurst || elapsed<BURST_AFTER_MS){
+            target=Math.floor(PRODUCER_RATE*elapsed/1000);
+          } else if(elapsed<burstEnd){
+            target=Math.floor(PRODUCER_RATE*BURST_AFTER_MS/1000 + BURST_RATE*(elapsed-BURST_AFTER_MS)/1000);
+          } else {
+            target=Math.floor(PRODUCER_RATE*BURST_AFTER_MS/1000 + BURST_RATE*BURST_DURATION_MS/1000 + PRODUCER_RATE*(elapsed-burstEnd)/1000);
+          }
+          target=Math.min(TOTAL,target);
           emitCount=Math.max(0,target-i);
           if(emitCount===0){await sleep(1);continue;}
         }
