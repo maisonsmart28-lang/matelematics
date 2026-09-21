@@ -26,6 +26,10 @@ const TOTAL = Math.max(1000, Number(process.env.PG10E4F_ROWS || 1000));
 const BATCH = Math.max(1, Number(process.env.PG10E4F_BATCH || 500));
 const WORKERS = Math.max(1, Math.min(4, Number(process.env.PG10E4F_WORKERS || 2)));
 const RETRIES = Math.max(0, Number(process.env.PG10E4F_RETRIES || 2));
+const PRODUCER_RATE = Math.max(0, Number(process.env.PG10E4F_PRODUCER_RATE || 0));
+const BURST_RATE = Math.max(0, Number(process.env.PG10E4F_BURST_RATE || 0));
+const BURST_AFTER_MS = Math.max(0, Number(process.env.PG10E4F_BURST_AFTER_MS || 0));
+const BURST_DURATION_MS = Math.max(0, Number(process.env.PG10E4F_BURST_DURATION_MS || 0));
 const SPOOL = path.join(os.tmpdir(), `matelematics-${MARKER}-${process.pid}.jsonl`);
 
 type Sample = {
@@ -67,19 +71,28 @@ async function main() {
 
     const start=performance.now();
     const out=fs.createWriteStream(SPOOL,{flags:"wx"});
-    for(let i=0;i<TOTAL;i++){
-      const row:QueueRow={...sample,id:-(9_000_000_000+i+process.pid*10000),recorded_at:new Date(Date.now()+i).toISOString(),enqueued_at:Date.now()};
-      out.write(JSON.stringify(row)+"\n"); queue.push(row); produced++; peakDepth=Math.max(peakDepth,queue.length-cursor);
-    }
-    await new Promise<void>((resolve,reject)=>{out.end(resolve);out.on("error",reject)});
-    producerDone=true;
-    const enqueueMs=performance.now()-start;
+    let producerEnd=0;
+    const producer=async()=>{
+      const producerStart=performance.now();
+      for(let i=0;i<TOTAL;i++){
+        const elapsed=performance.now()-producerStart;
+        const inBurst=BURST_RATE>0 && elapsed>=BURST_AFTER_MS && elapsed<(BURST_AFTER_MS+BURST_DURATION_MS);
+        const rate=inBurst ? BURST_RATE : PRODUCER_RATE;
+        const row:QueueRow={...sample,id:-(9_000_000_000+i+process.pid*10000),recorded_at:new Date(Date.now()+i).toISOString(),enqueued_at:Date.now()};
+        out.write(JSON.stringify(row)+"\\n"); queue.push(row); produced++; peakDepth=Math.max(peakDepth,queue.length-cursor);
+        if(rate>0) await sleep(1000/rate);
+      }
+      await new Promise<void>((resolve,reject)=>{out.end(resolve);out.on("error",reject)});
+      producerDone=true;
+      producerEnd=performance.now();
+    };
 
     const worker=async()=>{
       while(!producerDone || cursor<queue.length){
+        if(cursor>=queue.length){await sleep(2);continue;}
         const begin=cursor; cursor+=BATCH;
         const rows=queue.slice(begin,Math.min(begin+BATCH,queue.length));
-        if(!rows.length){await sleep(5);continue;}
+        if(!rows.length){await sleep(2);continue;}
         let attempt=0;
         while(true){
           const t=performance.now();
@@ -88,14 +101,17 @@ async function main() {
         }
       }
     };
+
     const drainStart=performance.now();
-    await Promise.all(Array.from({length:WORKERS},()=>worker()));
+    await Promise.all([producer(), ...Array.from({length:WORKERS},()=>worker())]);
     const drainMs=performance.now()-drainStart;
     const totalMs=performance.now()-start;
+    const producerMs=Math.max(0,producerEnd-start);
+    const postProducerDrainMs=Math.max(0,performance.now()-producerEnd);
     const sorted=[...latencies].sort((a,b)=>a-b);
     const endDepth=produced-committed-failed;
     const oldestAgeMs=endDepth>0 ? Date.now()-queue[Math.min(committed,queue.length-1)].enqueued_at : 0;
-    console.log(JSON.stringify({event:"queue-worker-result",marker:MARKER,spool:SPOOL,total:TOTAL,batch:BATCH,workers:WORKERS,produced,committed,failed,retries,enqueueRowsPerSecond:+(produced/(enqueueMs/1000)).toFixed(1),dbRowsPerSecond:+(committed/(drainMs/1000)).toFixed(1),peakDepth,endDepth,oldestAgeMs,drainMs:+drainMs.toFixed(2),totalMs:+totalMs.toFixed(2),p50Ms:+percentile(sorted,.5).toFixed(2),p95Ms:+percentile(sorted,.95).toFixed(2),maxMs:+Math.max(0,...sorted).toFixed(2)}));
+    console.log(JSON.stringify({event:"queue-worker-result",marker:MARKER,spool:SPOOL,total:TOTAL,batch:BATCH,workers:WORKERS,producerRate:PRODUCER_RATE,burstRate:BURST_RATE,burstAfterMs:BURST_AFTER_MS,burstDurationMs:BURST_DURATION_MS,produced,committed,failed,retries,enqueueRowsPerSecond:+(produced/(producerMs/1000)).toFixed(1),dbRowsPerSecond:+(committed/(drainMs/1000)).toFixed(1),peakDepth,endDepth,oldestAgeMs,producerMs:+producerMs.toFixed(2),postProducerDrainMs:+postProducerDrainMs.toFixed(2),drainMs:+drainMs.toFixed(2),totalMs:+totalMs.toFixed(2),p50Ms:+percentile(sorted,.5).toFixed(2),p95Ms:+percentile(sorted,.95).toFixed(2),maxMs:+Math.max(0,...sorted).toFixed(2)}));
   } finally {
     const remaining=await cleanup().catch(()=>-1);
     if(fs.existsSync(SPOOL)) fs.unlinkSync(SPOOL);
