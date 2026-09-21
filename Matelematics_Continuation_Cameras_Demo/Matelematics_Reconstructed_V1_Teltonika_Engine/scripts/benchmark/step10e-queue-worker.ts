@@ -90,9 +90,11 @@ async function main() {
     const worker=async()=>{
       while(!producerDone || cursor<queue.length){
         if(cursor>=queue.length){await sleep(2);continue;}
-        const begin=cursor; cursor+=BATCH;
-        const rows=queue.slice(begin,Math.min(begin+BATCH,queue.length));
-        if(!rows.length){await sleep(2);continue;}
+        const begin=cursor;
+        const available=Math.min(BATCH, queue.length-begin);
+        if(available<=0){await sleep(2);continue;}
+        cursor+=available;
+        const rows=queue.slice(begin,begin+available);
         let attempt=0;
         while(true){
           const t=performance.now();
