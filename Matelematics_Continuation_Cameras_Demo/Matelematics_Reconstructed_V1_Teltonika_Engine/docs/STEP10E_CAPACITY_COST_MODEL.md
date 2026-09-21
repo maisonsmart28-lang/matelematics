@@ -102,6 +102,54 @@ The 1,000-row / 4-worker cell regressed to 141.1 rows/s, required 2 retries, and
 
 Interpretation: this benchmark measures the client/network/PostgREST/current-schema path, not pure PostgreSQL capacity. It validates the benchmark method and demonstrates that the current direct write path is not a 10k+ vehicle production architecture. The next capacity experiment must compare a server-side worker/bulk PostgreSQL path located close to the database, behind a durable queue, before production sizing is claimed.
 
+## 10E-4E measured native PostgreSQL persistence result
+
+Status: **VALIDATED 100% for the scoped native PostgreSQL persistence experiment**.
+
+The benchmark used the PostgreSQL protocol through the Supabase shared Session pooler on port 5432, with multi-row parameterized INSERTs, persistent pooling, 5,000+ committed rows per matrix cell, and cleanup after every cell.
+
+Best observed cell:
+- batch: 500 rows
+- workers: 2
+- committed: 5,000 rows
+- failed batches: 0
+- retries: 0
+- sustained observed throughput: 440.3 rows/s
+- batch latency p50: 1,987.49 ms
+- p95: 2,544.26 ms
+- max: 2,544.26 ms
+
+Compared with the best 10E-4D PostgREST cell (292.0 rows/s), the best native PostgreSQL cell improved observed throughput by approximately **50.8%**.
+
+Average adaptive-load headroom from the best observed native PostgreSQL path:
+- 1,000 vehicles: 5.66x — candidate at the benchmark's 2x average-load gate
+- 10,000 vehicles: 0.57x — insufficient
+- 50,000 vehicles: 0.11x — insufficient
+- 100,000 vehicles: 0.06x — insufficient
+
+Concurrency did not scale monotonically. The 1,000-row / 4-worker cell collapsed to 51.7 rows/s with p50 33,581.61 ms and p95/max 121,091.63 ms. Increasing batch size or worker count is therefore not a valid scaling strategy by itself.
+
+Integrity/cleanup verification:
+- every matrix cell completed with 0 failed batches and 0 retries;
+- every per-cell cleanup reported 0 remaining benchmark rows;
+- final cleanup reported 0 remaining benchmark rows;
+- an independent Supabase SQL verification after the run confirmed 0 rows with source = `benchmark_10e4e`;
+- `pg_stat_user_tables` reported 35,838 live rows and 0 dead tuples;
+- autovacuum had run after the benchmark and the telemetry relation returned to ~115.28 MB total relation size, confirming that the temporary post-INSERT/DELETE growth was not retained benchmark data.
+
+Dependency/security review:
+- native driver: `pg@8.23.0`;
+- the post-install `npm audit` still reports 10 project vulnerabilities (2 moderate, 7 high, 1 critical), but none of the reported vulnerable packages is `pg` or its dependency chain;
+- no `npm audit fix` or `npm audit fix --force` was applied;
+- the existing Next.js and other dependency advisories remain a separate remediation gate before production.
+
+Connection/TLS notes:
+- the local benchmark required switching the Windows Wi-Fi resolver from the router DNS to Cloudflare DNS because Node/getaddrinfo intermittently failed to resolve the Supabase Session pooler while direct DNS queries succeeded;
+- `rejectUnauthorized:false` was used only as a local diagnostic to establish the connection after a self-signed-certificate-chain error;
+- disabling certificate verification is **not approved for production**. Production workers must use a properly validated TLS configuration/certificate chain.
+
+Conclusion: removing PostgREST materially improves the measured write path, but the current remote native PostgreSQL path still does not provide the required average throughput for 10,000+ vehicles. The production candidate remains durable queue + controlled workers close to the database + optimized HOT/WARM/archive design, followed by production-like Infomaniak and database-resource/burst/failover testing.
+
 ## Production topology baseline
 
 Trackers
@@ -167,9 +215,11 @@ For each target tier (1k, 10k, 50k, 100k), approve only after production-like in
 1. Complete WARM measurement with representative trips and maintenance/compliance business-record volumes; the route/aggregate/event subset is validated at ~0.04 MB/vehicle/month.
 2. Object Storage rate obtained from the Infomaniak calculator (EUR 0.000013/GB/hour) and normalized to MAD for planning; refresh the exchange-rate assumption before final commercial pricing.
 3. Benchmark the candidate Infomaniak production topology with the existing 1k/10k/50k/100k methodology.
-4. 10E-4D direct PostgREST batching measured (best 292 rows/s); next compare server-side/bulk PostgreSQL worker path behind a durable queue.
-5. Add observability/backups/HA and calculate actual monthly CHF totals and CHF/active-vehicle.
-6. Define commercial pricing only after infrastructure unit economics include safety margin and support/operations.
+4. 10E-4D PostgREST batching (best 292 rows/s) and 10E-4E native PostgreSQL batching (best 440.3 rows/s) are validated. Next benchmark the durable-queue worker path on production-like infrastructure close to the database; current native remote path is still below the 10k average-load requirement.
+5. Resolve production TLS certificate validation for the native PostgreSQL worker path; diagnostic `rejectUnauthorized:false` is not acceptable in production.
+6. Remediate/revalidate the existing npm security advisories separately, especially the critical Next.js advisory, without blind `npm audit fix --force` upgrades.
+7. Add observability/backups/HA and calculate actual monthly MAD totals and MAD/active-vehicle.
+8. Define commercial pricing only after infrastructure unit economics and measurable compliance costs include safety margin and support/operations.
 
 ## Sources checked 2026-09-20
 
