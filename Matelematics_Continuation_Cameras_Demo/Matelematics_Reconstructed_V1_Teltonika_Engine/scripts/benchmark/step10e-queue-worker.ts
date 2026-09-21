@@ -74,13 +74,24 @@ async function main() {
     let producerEnd=0;
     const producer=async()=>{
       const producerStart=performance.now();
-      for(let i=0;i<TOTAL;i++){
+      let i=0;
+      while(i<TOTAL){
         const elapsed=performance.now()-producerStart;
         const inBurst=BURST_RATE>0 && elapsed>=BURST_AFTER_MS && elapsed<(BURST_AFTER_MS+BURST_DURATION_MS);
         const rate=inBurst ? BURST_RATE : PRODUCER_RATE;
-        const row:QueueRow={...sample,id:-(9_000_000_000+i+process.pid*10000),recorded_at:new Date(Date.now()+i).toISOString(),enqueued_at:Date.now()};
-        out.write(JSON.stringify(row)+"\\n"); queue.push(row); produced++; peakDepth=Math.max(peakDepth,queue.length-cursor);
-        if(rate>0) await sleep(1000/rate);
+        let emitCount=TOTAL-i;
+        if(rate>0){
+          const phaseStart=inBurst ? BURST_AFTER_MS : (BURST_RATE>0 && elapsed>=BURST_AFTER_MS+BURST_DURATION_MS ? BURST_AFTER_MS+BURST_DURATION_MS : 0);
+          const phaseElapsed=Math.max(0,elapsed-phaseStart);
+          const target=Math.min(TOTAL,Math.floor(rate*phaseElapsed/1000));
+          emitCount=Math.max(0,target-i);
+          if(emitCount===0){await sleep(1);continue;}
+        }
+        for(let n=0;n<emitCount && i<TOTAL;n++,i++){
+          const row:QueueRow={...sample,id:-(9_000_000_000+i+process.pid*10000),recorded_at:new Date(Date.now()+i).toISOString(),enqueued_at:Date.now()};
+          out.write(JSON.stringify(row)+"\\n"); queue.push(row); produced++; peakDepth=Math.max(peakDepth,queue.length-cursor);
+        }
+        if(rate>0) await sleep(1);
       }
       await new Promise<void>((resolve,reject)=>{out.end(resolve);out.on("error",reject)});
       producerDone=true;
