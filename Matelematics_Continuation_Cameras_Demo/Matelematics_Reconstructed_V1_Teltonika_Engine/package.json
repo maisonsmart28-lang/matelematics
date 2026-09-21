@@ -53,6 +53,7 @@
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",
     "@supabase/supabase-js": "^2.112.4",
+    "amqplib": "^2.0.1",
     "framer-motion": "^12.42.2",
     "leaflet": "^1.9.4",
     "lucide-react": "^1.21.0",
