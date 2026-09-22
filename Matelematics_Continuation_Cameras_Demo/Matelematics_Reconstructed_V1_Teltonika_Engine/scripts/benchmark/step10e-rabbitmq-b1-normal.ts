@@ -11,6 +11,7 @@ import { existsSync } from "node:fs";
 import { loadEnvFile } from "node:process";
 import amqp from "amqplib";
 import pg from "pg";
+import { localRabbitUrl, topology } from "./step10e-rabbitmq-b1-config";
 
 if (existsSync(".env.local")) loadEnvFile(".env.local");
 else if (existsSync(".env")) loadEnvFile(".env");
@@ -18,12 +19,9 @@ else if (existsSync(".env")) loadEnvFile(".env");
 const { Pool } = pg;
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error("Missing server-only DATABASE_URL");
-const rabbitUrl = process.env.RABBITMQ_URL ?? "amqp://guest:guest@127.0.0.1:5672";
+const rabbitUrl = localRabbitUrl();
 const marker = "benchmark_10e4f_b1";
-const exchange = "matelematics.telemetry";
-const queue = "matelematics.telemetry.persist";
-const dlx = "matelematics.telemetry.dlx";
-const dlq = "matelematics.telemetry.dlq";
+const { exchange, queue, dlx, dlq } = topology;
 const total = 5;
 const timeoutMs = 60_000;
 const pool = new Pool({
@@ -95,18 +93,18 @@ async function main() {
     await producer.assertExchange(exchange, "direct", { durable: true });
     await producer.assertExchange(dlx, "direct", { durable: true });
     await producer.assertQueue(dlq, { durable: true, arguments: { "x-queue-type": "quorum" } });
-    await producer.bindQueue(dlq, dlx, "dead");
+    await producer.bindQueue(dlq, dlx, topology.deadLetterRoutingKey);
     await producer.assertQueue(queue, {
       durable: true,
       arguments: {
         "x-queue-type": "quorum",
         "x-dead-letter-exchange": dlx,
-        "x-dead-letter-routing-key": "dead",
-        "x-delivery-limit": 3,
+        "x-dead-letter-routing-key": topology.deadLetterRoutingKey,
+        "x-delivery-limit": topology.deliveryLimit,
       },
     });
-    await producer.bindQueue(queue, exchange, "persist");
-    await consumer.prefetch(100);
+    await producer.bindQueue(queue, exchange, topology.routingKey);
+    await consumer.prefetch(topology.prefetch);
 
     const before = await consumer.checkQueue(queue);
     const beforeDlq = await consumer.checkQueue(dlq);
@@ -181,7 +179,7 @@ async function main() {
         payload: { benchmark: marker, sequence },
         attempt: 0,
       };
-      producer.publish(exchange, "persist", Buffer.from(JSON.stringify(envelope)), {
+      producer.publish(exchange, topology.routingKey, Buffer.from(JSON.stringify(envelope)), {
         persistent: true,
         mandatory: true,
         contentType: "application/json",
