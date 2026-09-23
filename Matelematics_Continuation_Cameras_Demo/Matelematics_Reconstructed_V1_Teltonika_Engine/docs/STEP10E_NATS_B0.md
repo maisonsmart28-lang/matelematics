@@ -289,6 +289,12 @@ To reproduce the instrumented NATS diagnostic run:
 node scripts/benchmark/step10e-nats-b2-pilot.mjs --count=20000 --rate=2000 --confirm-window=512
 ```
 
+The next local profiler records batch size, time to the first JetStream
+message, time to fill each pull batch, empty pulls and peak ACK pending,
+alongside the DB transaction and ACK timings. It uses the same command
+and workload as the instrumented run above; inspect these fields before
+changing the consumer or database configuration. Profiling result pending.
+
 These are single node diagnostics, not production capacity claims. If the
 script reports `incomplete`, inspect its run ID, both streams and the
 benchmark rows before another test; do not purge retained messages.

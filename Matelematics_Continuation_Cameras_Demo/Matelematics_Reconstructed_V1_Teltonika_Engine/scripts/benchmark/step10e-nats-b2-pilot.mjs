@@ -41,11 +41,13 @@ async function main() {
   const workers = [], workerDbs = [];
   let nc, completed = false, fatal, published = 0, confirmed = 0;
   let commits = 0, acks = 0, deliveries = 0, peakPending = 0, peakReady = 0;
+  let peakAckPending = 0, emptyFetches = 0;
   let peakUnconfirmed = 0, oldestPendingMs = 0, producerEnd = 0, lastAck = 0;
   let lastCommit = 0;
   let firstDelivery = 0, stopping = false;
   const sent = new Map(), seen = new Set(), inFlight = new Set();
   const dbLatency = [], endToEnd = [], transactionMs = [], ackConfirmMs = [];
+  const fetchFirstMessageMs = [], fetchCompletionMs = [], batchSizes = [];
   const fail = error => { fatal ??= error instanceof Error ? error : new Error('B2 worker failed'); };
   async function state(manager) {
     const [main, dead, consumer] = await Promise.all([
@@ -84,9 +86,12 @@ async function main() {
       workers.push((async () => {
         while (!stopping && !fatal) {
           const batch = [];
+          const fetchStarted = performance.now();
+          let firstFetchedAt = 0;
           const fetched = await consumer.fetch({ max_messages: 20, expires: 1000 });
           for await (const msg of fetched) {
             if (fatal) break;
+            firstFetchedAt ||= performance.now();
             deliveries++;
             const started = performance.now();
             firstDelivery ||= started;
@@ -99,7 +104,10 @@ async function main() {
             seen.add(event.message_id);
             batch.push({ event, msg, started, sentAt: expected.at });
           }
-          if (!batch.length) continue;
+          if (!batch.length) { emptyFetches++; continue; }
+          fetchFirstMessageMs.push(firstFetchedAt - fetchStarted);
+          fetchCompletionMs.push(performance.now() - firstFetchedAt);
+          batchSizes.push(batch.length);
           const confirmations = [];
           const transactionStarted = performance.now();
           await persistBatchThenAck(db, runId, batch.map(item => ({ event: item.event,
@@ -127,6 +135,7 @@ async function main() {
         const snapshot = await state(manager);
         peakReady = Math.max(peakReady,
           snapshot.main.state.messages - snapshot.consumer.num_ack_pending, 0);
+        peakAckPending = Math.max(peakAckPending, snapshot.consumer.num_ack_pending);
         const oldest = sent.values().next().value;
         if (oldest) oldestPendingMs = Math.max(oldestPendingMs, performance.now() - oldest.at);
         await sleep(200);
@@ -189,7 +198,15 @@ async function main() {
         observedCommitDrainPerSec: Math.round(count * 1000 / (lastCommit - firstDelivery) * 100) / 100,
         observedDbDrainPerSec: Math.round(count * 1000 / (lastAck - firstDelivery) * 100) / 100,
         postProducerDrainMs: Math.max(0, Math.round(lastAck - producerEnd)),
-        peakPending, peakReady, peakUnconfirmed, oldestPendingMs: Math.round(oldestPendingMs),
+        peakPending, peakReady, peakAckPending, peakUnconfirmed,
+        oldestPendingMs: Math.round(oldestPendingMs),
+        batchFetch: { batches: batchSizes.length, emptyFetches,
+          averageSize: Math.round(count / batchSizes.length * 100) / 100,
+          minimumSize: Math.min(...batchSizes),
+          firstMessageMs: { p50: percentile(fetchFirstMessageMs, 0.5),
+            p95: percentile(fetchFirstMessageMs, 0.95) },
+          completionMs: { p50: percentile(fetchCompletionMs, 0.5),
+            p95: percentile(fetchCompletionMs, 0.95) } },
         transactionMs: { p50: percentile(transactionMs, 0.5), p95: percentile(transactionMs, 0.95) },
         ackConfirmMs: { p50: percentile(ackConfirmMs, 0.5), p95: percentile(ackConfirmMs, 0.95) },
         dbLatencyMs: { p50: percentile(dbLatency, 0.5), p95: percentile(dbLatency, 0.95) },
