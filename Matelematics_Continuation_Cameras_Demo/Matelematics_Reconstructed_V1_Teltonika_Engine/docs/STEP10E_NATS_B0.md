@@ -313,7 +313,7 @@ local load and test interference before attributing the entire difference
 to NATS. The runs were sequential, so it does not prove which resource
 caused the slowdown. Recheck under controlled container and host load.
 
-## Local broker isolation controls — ongoing
+## Local broker isolation controls — PASS
 
 The next diagnostic verifies the exact dedicated NATS Compose container,
 its named JetStream volume, an empty primary stream, the one retained
@@ -381,7 +381,23 @@ node scripts/benchmark/step10e-nats-b2-isolate-rabbitmq.mjs --count=60000
 
 Only run this control if the 20,000-message run cleared both NATS pending
 and benchmark rows, as observed above. A pass is still a local diagnostic,
-not a production or HA approval. The 60,000-message result is pending.
+not a production or HA approval.
+
+Observed local isolated 30-second NATS run on 2026-09-23 (run
+`9624caf1-369a-468f-9aa7-cfe57e090239`): all 60,000 publications
+confirmed, 60,000 unique commits and ACKs, no messages in the primary
+stream or awaiting ACK, quarantine=1 and DB rows=0. Producer observed
+1,999.95/s; commit drain 1,934.59/s and commit plus ACK drain
+1,933.90/s. Pending at 20,000/40,000/60,000 publications was
+60/60/60. Peak pending reached 1,993, oldest pending 989 ms and
+post-producer drain took 1,039 ms; end to end p95 was 800.10 ms.
+Transaction p95 was 33.70 ms, batch ACK confirmation p95 9.10 ms.
+`RABBITMQ_RESTORED` confirmed main ready=0 and the exact prior DLQ ID
+retained. The three checkpoints do not show a steadily rising backlog,
+but the peak and post-producer drain reveal transient congestion.
+The measured commit average is below 2,000/s and above the local
+10,000-vehicle twofold target of approximately 1,556/s. One 30-second
+single-node run cannot qualify HA or production capacity.
 
 These are single node diagnostics, not production capacity claims. If the
 script reports `incomplete`, inspect its run ID, both streams and the
