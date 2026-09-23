@@ -96,7 +96,7 @@ confirmed ACK after recovery in 30,057 ms. Primary pending=0, ACK
 pending=0, quarantine=0 and benchmark rows=0 after cleanup. The Node
 module-type warning in the output did not affect this result.
 
-## Crash after DB commit, before ACK — awaiting local result
+## Crash after DB commit, before ACK — PASS
 
 The complementary control commits one message inside a separate worker,
 then exits before JetStream receives an ACK. The parent checks that the row
@@ -111,6 +111,16 @@ node scripts/benchmark/step10e-nats-b1-crash-after-commit.mjs
 The ACK wait again makes this test take about 30 seconds. If it reports
 `incomplete`, inspect the stream, consumer and local DB before any repeat;
 do not purge the message or remove the database volume.
+
+Observed local result on 2026-09-23 (run
+`689d2a34-ba3a-46b4-a46c-05d6acf7560c`): one publication/confirmation,
+two deliveries including one redelivery, one unique commit, one detected
+duplicate delivery and one confirmed ACK. Recovery took 29,990 ms; primary
+pending=0, ACK pending=0, quarantine=0 and benchmark rows=0. Together with
+the pre-commit test, this demonstrates idempotent replay around both sides
+of the DB commit on a single local NATS node. A real DB outage, permanent
+poison/quarantine handling, broker restart and a comparable B2 throughput
+test remain open.
 
 ## Contract for B1 and B2 implementation
 
