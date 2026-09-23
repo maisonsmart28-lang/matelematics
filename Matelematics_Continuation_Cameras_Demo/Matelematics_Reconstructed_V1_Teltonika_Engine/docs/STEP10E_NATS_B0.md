@@ -1,7 +1,7 @@
 # Step 10E-4F — NATS JetStream local B0 comparison setup
 
-Status: local server preflight prepared, not yet run. No stream, consumer,
-publisher, PostgreSQL connection or production resource is created by B0.
+Status: local server preflight PASS on 2026-09-23. B0 creates no stream,
+consumer, publisher, PostgreSQL connection or production resource.
 
 The dedicated Compose project uses NATS Server 2.14.7 with JetStream enabled,
 file data at `/data` on a named volume, and loopback-only client and
@@ -22,6 +22,30 @@ Expected result: `status: "ok"`, `serverVersion: "2.14.7"`, and a JetStream
 store directory under `/data`. If another process owns localhost ports 4222
 or 18222, stop and inspect instead of replacing any existing container.
 Preserve the named volume between runs; do not use `down -v`.
+
+Observed B0 result: NATS 2.14.7, JetStream enabled, file store directory
+`/data/jetstream`, initially 0 memory bytes and 0 stored bytes, monitoring
+on 127.0.0.1:18222 and client port 127.0.0.1:4222.
+
+## Local B1 topology — awaiting local result
+
+Install the two pinned official NATS JavaScript packages from the committed
+package lock, then run the topology script from the application root:
+
+```powershell
+npm install --no-audit --no-fund
+node scripts/benchmark/step10e-nats-b1-topology.mjs
+```
+
+The script creates two local file-backed streams if absent: a work-queue
+stream for `matelematics.local.telemetry.persist`, and an independent
+quarantine stream for `matelematics.local.telemetry.failed`. It also creates
+one durable pull consumer with explicit ACK, a 30-second ACK wait, a
+four-delivery maximum and 100 maximum outstanding ACKs. Stream limits reject
+new messages when full rather than evict existing work. It checks existing
+resources and stops on an incompatible configuration; it never purges,
+deletes or silently updates them. The quarantine stream currently has no
+automatic handoff; it is reserved for a later, explicitly tested procedure.
 
 ## Contract for B1 and B2 implementation
 
