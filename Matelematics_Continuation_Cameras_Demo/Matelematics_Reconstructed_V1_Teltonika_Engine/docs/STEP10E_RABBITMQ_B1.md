@@ -114,6 +114,28 @@ The resume result is `RECOVERY_PASS` only if the healthy event commits/ACKs,
 the poison reaches the DLQ with a delivery-limit reason, and the healthy row
 is cleaned. Leave the poison message available for inspection.
 
+B1.5 recovery passed on 2026-09-23: the healthy event committed and ACKed,
+the poison reached the DLQ with reason `delivery_limit`, main ready=0,
+DLQ ready=1, and remainingRows=0. The independent broker check showed
+main ready=0/unacked=0/consumers=0 and DLQ ready=1/unacked=0/consumers=0.
+The original two publications were confirmed in the earlier run; a new clean
+single-run B1.5 execution was not performed. Keep the DLQ evidence intact.
+
+B1.6 publishes three durable confirmed events, stops and starts only the
+`matelematics-rabbitmq` Docker container, then verifies that all three events
+and the retained B1.5 DLQ message survive. It commits/ACKs the healthy events,
+checks the exact DLQ identity and leaves the poison untouched. It requires
+the main queue empty and exactly this one DLQ message before starting. Run
+from the application root while the local benchmark PostgreSQL is healthy:
+
+```powershell
+npx --no-install tsx scripts/benchmark/step10e-rabbitmq-b1-broker-restart.ts 8234335e-7e64-48d5-bbc4-3367a1dcb98d:poison
+```
+
+On failure, the script attempts to restart the broker and retains messages
+and benchmark DB rows. Do not purge either queue or remove any Docker volume.
+A single local broker restart does not demonstrate high availability.
+
 The first B1.4 run (`0c07ff4d-0ee7-47c1-9bf9-a4b65eaf422f`) on 2026-09-23
 completed three confirmed publications, one failed DB connection, three commits
 and three ACKs, but failed an unspecified final assertion. Both queues were
