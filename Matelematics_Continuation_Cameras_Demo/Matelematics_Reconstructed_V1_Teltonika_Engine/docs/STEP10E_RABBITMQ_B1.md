@@ -42,7 +42,21 @@ npx --no-install tsx scripts/benchmark/step10e-rabbitmq-b1-crash-before-commit.t
 
 The worker exits with code 42 intentionally. On failure, test messages and rows
 are retained for inspection; do not purge either queue or remove the Postgres volume.
-B1.3-B1.6 crash, outage, poison and broker restart scenarios remain pending. A
+B1.2 passed locally on 2026-09-23: 1 confirmed publication, 2 deliveries,
+1 redelivery, 1 logical commit, 1 ACK, empty queues and 0 remaining rows.
+
+B1.3 tests a separate worker process exiting after its PostgreSQL COMMIT but
+before RabbitMQ ACK. The replay must detect the same logical event, ACK it,
+and leave exactly one committed row before cleanup. Run from the application root
+only when both queues are empty and there are no other consumers:
+
+```powershell
+npx --no-install tsx scripts/benchmark/step10e-rabbitmq-b1-crash-after-commit.ts
+```
+
+On failure, messages and rows are retained for inspection; do not purge either
+queue or remove the PostgreSQL volume. B1.4-B1.6 outage, poison and broker
+restart scenarios remain pending. A
 single local broker is not an HA or production capacity validation.
 
 Vercel: the `git.deploymentEnabled` branch rule in vercel.json is intended to disable
