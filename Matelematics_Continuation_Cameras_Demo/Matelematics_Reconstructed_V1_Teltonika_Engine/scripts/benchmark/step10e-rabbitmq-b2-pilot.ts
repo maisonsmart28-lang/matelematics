@@ -25,7 +25,7 @@ function percentile(samples: number[], ratio: number) {
 async function main() {
   for (const arg of process.argv.slice(2))
     if (!/^--(?:count|rate|confirm-window|workers|burst-rate|batch-size)=\d+$/.test(arg)) throw new Error(`Unknown B2 pilot option: ${arg}`);
-  const count = option('count', 1000, 100, 20000);
+  const count = option('count', 1000, 100, 60000);
   const rate = option('rate', 200, 10, 2000);
   const confirmWindow = option('confirm-window', 128, 1, 512);
   const workers = option('workers', 1, 1, 4);
@@ -34,10 +34,10 @@ async function main() {
   if (batchSize !== 1 && batchSize !== 20)
     throw new Error('B2 experiment supports only --batch-size=1 or --batch-size=20');
   const sustainedCell = batchSize === 20 && rate === 2000 && workers === 4 &&
-    count === 20000 && burstRate === 0;
+    (count === 20000 || count === 60000) && burstRate === 0;
   if (batchSize === 20 && !sustainedCell &&
       (rate !== 778 || workers !== 4 || count !== 10000 || burstRate !== 2000))
-    throw new Error('Batch experiment requires the bounded burst or --count=20000 --rate=2000 --workers=4 --batch-size=20');
+    throw new Error('Batch experiment requires the bounded burst or --count=20000|60000 --rate=2000 --workers=4 --batch-size=20');
   if (count > 10000 && !sustainedCell)
     throw new Error('Runs above 10000 events require the bounded 2000/s batch cell');
   if (burstRate && (burstRate !== 2000 || rate !== 778 || workers !== 4 || count !== 10000))
@@ -67,6 +67,7 @@ async function main() {
   let firstDeliveryAt = 0, lastAckAt = 0, producerSentAt = 0, producerDoneAt = 0;
   let burstFirstSentAt = 0, burstLastSentAt = 0, backlogAtProducerEnd = 0;
   let midpointPending: number | null = null;
+  const pendingCheckpoints: Array<{ published: number; pending: number }> = [];
   const pending = new Map<string, { raw: string; sentAt: number }>();
   const dbLatencies: number[] = [], endToEndLatencies: number[] = [];
   const fail = (error: unknown) => { fatal ??= error instanceof Error ? error : new Error('B2 broker error'); };
@@ -205,6 +206,8 @@ async function main() {
       }
       peakPending = Math.max(peakPending, published - acks);
       if (sustainedCell && published === count / 2) midpointPending = published - acks;
+      if (sustainedCell && published % 20000 === 0)
+        pendingCheckpoints.push({ published, pending: published - acks });
       if (!writable) {
         const controller = new AbortController();
         try { await Promise.race([once(publisher, 'drain', { signal: controller.signal }), sleep(1000)]); }
@@ -266,6 +269,7 @@ async function main() {
     console.log(JSON.stringify({ event: 'step10e-rabbitmq-b2-pilot',
       result: rateTargetMet ? 'PASS' : 'INTEGRITY_PASS_RATE_MISSED', runId,
       targetRatePerSec: rate, workers, batchSize, sustainedCell, midpointPending,
+      pendingCheckpoints,
       confirmWindow, peakUnconfirmed,
       burst: burstRate ? { startMs: 3000, durationMs: 3000,
         targetRatePerSec: burstRate, observedRatePerSec: observedBurstRatePerSec,

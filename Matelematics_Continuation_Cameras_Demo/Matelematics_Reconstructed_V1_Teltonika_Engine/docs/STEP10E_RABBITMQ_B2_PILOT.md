@@ -307,3 +307,25 @@ ready=0, DLQ=1 and remaining rows=0. The initial assertion's exact failing
 field is unknown because it was not logged; its observed queues and DB
 were consistent with completion. The later PASS validates this specific
 local crash point, with no claim about wider outages or HA.
+
+## Thirty-second local input cell — awaiting local result
+
+With two passing 10-second cells and the targeted batch replay PASS, the
+next bounded cell paces exactly 60,000 synthetic messages at 2,000/s for
+about 30 seconds. It keeps the same four workers, batch size 20, confirm
+window, local DB and queue. The output includes pending message counts at
+20,000, 40,000 and 60,000 publications; inspect these alongside peak
+pending, producer rate, DB drain, p95 and final queue/DB counts:
+
+```powershell
+npx --no-install tsx scripts/benchmark/step10e-rabbitmq-b2-pilot.ts --count=60000 --rate=2000 --workers=4 --batch-size=20
+```
+
+The script rejects other runs above 20,000 events. Before executing,
+ensure the main queue and benchmark table are empty, no consumers are
+active, PostgreSQL and RabbitMQ containers are healthy, and the retained
+DLQ message is still present. If interrupted, preserve the queue and DB;
+the existing recovery script accepts `--count=60000` only when all 60,000
+events were published and its strict row/queue identity checks pass. It
+cannot reconstruct a partially published run. Even a PASS is a local
+single-node observation and does not validate HA, cloud placement or cost.

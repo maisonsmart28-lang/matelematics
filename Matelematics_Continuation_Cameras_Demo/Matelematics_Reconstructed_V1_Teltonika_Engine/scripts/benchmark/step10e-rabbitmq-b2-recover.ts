@@ -9,10 +9,10 @@ async function main() {
   const countArg = process.argv[3];
   if (process.argv.length > 4 ||
       !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(runId))
-    throw new Error('Pass a B2 UUID and optional --count=20000 to recover');
-  if (countArg !== undefined && countArg !== '--count=20000')
-    throw new Error('Only --count=20000 is supported as an optional recovery count');
-  const expectedCount = countArg ? 20000 : 5000;
+    throw new Error('Pass a B2 UUID and optional --count=20000 or --count=60000 to recover');
+  if (countArg !== undefined && countArg !== '--count=20000' && countArg !== '--count=60000')
+    throw new Error('Only --count=20000 or --count=60000 is supported for recovery');
+  const expectedCount = countArg === '--count=60000' ? 60000 : countArg ? 20000 : 5000;
   const db = new pg.Client({ connectionString: benchmarkDatabaseUrl(), ssl: false,
     connectionTimeoutMillis: 10000, statement_timeout: 15000, query_timeout: 20000,
     application_name: 'matelematics_b2_recovery_local' });
