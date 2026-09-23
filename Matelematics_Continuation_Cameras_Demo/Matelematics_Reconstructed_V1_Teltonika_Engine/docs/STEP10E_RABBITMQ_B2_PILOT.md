@@ -1,6 +1,21 @@
 # Step 10E-4F B2 — bounded local RabbitMQ throughput pilot
 
-Status: ready for local execution; no throughput measurements recorded yet.
+Status: initial local control passed; baseline rate not yet reached.
+
+On 2026-09-23, the 1,000-event control at 200/s passed: 199.21 published/s,
+199.48 committed/s, peak pending 3, p95 end-to-end 10.75 ms, 0 retries,
+0 duplicates, main queue empty, DLQ unchanged at 1, and 0 remaining DB rows.
+The first 5,000-event attempt requested 778/s and passed integrity checks,
+but observed only 199.95 published/s and 200 committed/s. It waited for a
+publisher confirmation **after each individual message**, which serialized
+the producer and invalidated that run as a 778/s load test. No RabbitMQ
+capacity conclusion follows from that run.
+
+The revised script pipelines individual publisher confirmations with a
+bounded default window of 128 unconfirmed messages. It still verifies all
+5,000 confirmations before reporting PASS. The window can be adjusted with
+`--confirm-window=N` (1–512); report it alongside observed producer and
+confirmed rates. Rerun the 778/s cell before proceeding to a burst.
 
 This diagnostic pilot runs a single consumer and PostgreSQL client against
 the dedicated local B1 database and the existing RabbitMQ quorum queue. It
@@ -23,7 +38,7 @@ npx --no-install tsx scripts/benchmark/step10e-rabbitmq-b2-pilot.ts --count=5000
 ```
 
 The script allows 100–10,000 events and 10–2,000 events/s. It paces the
-publisher, waits for individual publisher confirms, persists each event in
+publisher, processes individual publisher confirms asynchronously, persists each event in
 the isolated local PostgreSQL database, and ACKs only after commit. It
 reports observed producer and DB drain rates, sampled ready depth,
 published-minus-ACKed peak, oldest outstanding message age, post-producer

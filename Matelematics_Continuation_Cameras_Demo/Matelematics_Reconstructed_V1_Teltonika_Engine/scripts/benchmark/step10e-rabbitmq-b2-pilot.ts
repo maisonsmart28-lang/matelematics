@@ -1,5 +1,6 @@
 /** B2 pilot only: bounded, paced RabbitMQ -> isolated local PostgreSQL throughput. */
 import { randomUUID } from 'node:crypto';
+import { once } from 'node:events';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as sleep } from 'node:timers/promises';
 import amqp from 'amqplib';
@@ -23,9 +24,10 @@ function percentile(samples: number[], ratio: number) {
 
 async function main() {
   for (const arg of process.argv.slice(2))
-    if (!/^--(?:count|rate)=\d+$/.test(arg)) throw new Error(`Unknown B2 pilot option: ${arg}`);
+    if (!/^--(?:count|rate|confirm-window)=\d+$/.test(arg)) throw new Error(`Unknown B2 pilot option: ${arg}`);
   const count = option('count', 1000, 100, 10000);
   const rate = option('rate', 200, 10, 2000);
+  const confirmWindow = option('confirm-window', 128, 1, 512);
   const runId = randomUUID();
   const db = new pg.Client({ connectionString: benchmarkDatabaseUrl(), ssl: false,
     connectionTimeoutMillis: 10000, statement_timeout: 10000, query_timeout: 15000,
@@ -39,10 +41,11 @@ async function main() {
   let fatal: Error | undefined;
   let work = Promise.resolve();
   let sampling = Promise.resolve();
-  let published = 0, confirmed = 0, deliveries = 0, commits = 0, acks = 0;
+  let published = 0, confirmed = 0, unconfirmed = 0, peakUnconfirmed = 0;
+  let deliveries = 0, commits = 0, acks = 0;
   let redeliveries = 0, duplicateDeliveries = 0;
   let peakPending = 0, peakReady = 0, oldestPendingMs = 0;
-  let firstDeliveryAt = 0, lastAckAt = 0, producerDoneAt = 0;
+  let firstDeliveryAt = 0, lastAckAt = 0, producerSentAt = 0, producerDoneAt = 0;
   const pending = new Map<string, { raw: string; sentAt: number }>();
   const dbLatencies: number[] = [], endToEndLatencies: number[] = [];
   const fail = (error: unknown) => { fatal ??= error instanceof Error ? error : new Error('B2 broker error'); };
@@ -115,6 +118,8 @@ async function main() {
     const startedAt = performance.now();
     for (let i = 0; i < count; i++) {
       if (fatal) throw fatal;
+      while (unconfirmed >= confirmWindow && !fatal) await sleep(1);
+      if (fatal) throw fatal;
       const delay = startedAt + i * (1000 / rate) - performance.now();
       if (delay > 0) await sleep(delay);
       const now = new Date().toISOString();
@@ -127,15 +132,28 @@ async function main() {
       };
       const raw = JSON.stringify(event);
       pending.set(event.message_id, { raw, sentAt: performance.now() });
-      publisher.publish(topology.exchange, topology.routingKey, Buffer.from(raw),
-        { persistent: true, mandatory: true, contentType: 'application/json', messageId: event.message_id });
+      unconfirmed++;
+      peakUnconfirmed = Math.max(peakUnconfirmed, unconfirmed);
+      const writable = publisher.publish(topology.exchange, topology.routingKey, Buffer.from(raw),
+        { persistent: true, mandatory: true, contentType: 'application/json', messageId: event.message_id },
+        (error: Error | null) => {
+          unconfirmed--;
+          if (error) fail(error);
+          else confirmed++;
+        });
       published++;
       peakPending = Math.max(peakPending, published - acks);
-      await publisher.waitForConfirms();
+      if (!writable) {
+        const controller = new AbortController();
+        try { await Promise.race([once(publisher, 'drain', { signal: controller.signal }), sleep(1000)]); }
+        finally { controller.abort(); }
+      }
       if (fatal) throw fatal;
-      confirmed++;
     }
+    producerSentAt = performance.now();
+    await publisher.waitForConfirms();
     producerDoneAt = performance.now();
+    if (fatal || confirmed !== count) throw fatal ?? new Error('Missing publisher confirmations');
     const deadline = Date.now() + 120000;
     while (acks < count && !fatal && Date.now() < deadline) await sleep(50);
     if (fatal) throw fatal;
@@ -171,12 +189,17 @@ async function main() {
     const remaining = await db.query('SELECT count(*)::int AS n FROM b1.events WHERE run_id=$1::uuid', [runId]);
     if (remaining.rows[0].n !== 0) throw new Error('B2 cleanup incomplete');
     completed = true;
-    console.log(JSON.stringify({ event: 'step10e-rabbitmq-b2-pilot', result: 'PASS', runId,
-      targetRatePerSec: rate, published, confirmed, deliveries,
+    const observedProducerRatePerSec = Math.round(count * 1000 / (producerSentAt - startedAt) * 100) / 100;
+    const rateTargetMet = observedProducerRatePerSec >= rate * 0.95;
+    console.log(JSON.stringify({ event: 'step10e-rabbitmq-b2-pilot',
+      result: rateTargetMet ? 'PASS' : 'INTEGRITY_PASS_RATE_MISSED', runId,
+      targetRatePerSec: rate, confirmWindow, peakUnconfirmed,
+      published, confirmed, deliveries,
       uniqueLogicalCommits: commits, acks, redeliveries, duplicateDeliveries,
-      observedProducerRatePerSec: Math.round(count * 1000 / (producerDoneAt - startedAt) * 100) / 100,
+      observedProducerRatePerSec, rateTargetMet,
+      observedConfirmedRatePerSec: Math.round(count * 1000 / (producerDoneAt - startedAt) * 100) / 100,
       observedDbDrainPerSec: Math.round(count * 1000 / (lastAckAt - firstDeliveryAt) * 100) / 100,
-      postProducerDrainMs: Math.max(0, Math.round(lastAckAt - producerDoneAt)),
+      postProducerDrainMs: Math.max(0, Math.round(lastAckAt - producerSentAt)),
       peakPending, peakReady, oldestPendingMs: Math.round(oldestPendingMs),
       dbLatencyMs: { p50: percentile(dbLatencies, 0.5), p95: percentile(dbLatencies, 0.95), max: Math.round(Math.max(...dbLatencies) * 100) / 100 },
       endToEndMs: { p50: percentile(endToEndLatencies, 0.5), p95: percentile(endToEndLatencies, 0.95), max: Math.round(Math.max(...endToEndLatencies) * 100) / 100 },
