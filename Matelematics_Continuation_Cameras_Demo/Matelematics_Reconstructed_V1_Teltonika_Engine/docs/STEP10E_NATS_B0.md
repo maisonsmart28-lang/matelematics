@@ -27,7 +27,7 @@ Observed B0 result: NATS 2.14.7, JetStream enabled, file store directory
 `/data/jetstream`, initially 0 memory bytes and 0 stored bytes, monitoring
 on 127.0.0.1:18222 and client port 127.0.0.1:4222.
 
-## Local B1 topology — awaiting local result
+## Local B1 topology — PASS
 
 Install the two pinned official NATS JavaScript packages from the committed
 package lock, then run the topology script from the application root:
@@ -46,6 +46,28 @@ new messages when full rather than evict existing work. It checks existing
 resources and stops on an incompatible configuration; it never purges,
 deletes or silently updates them. The quarantine stream currently has no
 automatic handoff; it is reserved for a later, explicitly tested procedure.
+
+Observed local topology result on 2026-09-23: primary stream on file storage,
+work-queue retention and one replica; durable consumer with explicit ACK
+and max-deliver 4. Primary pending=0, ACK pending=0 and quarantine stored=0.
+No publish, DB commit, retry, quarantine transfer or restart has been tested
+by this topology result.
+
+## Local B1 normal flow — awaiting local result
+
+The next control publishes five synthetic telemetry envelopes to the local
+JetStream stream and requires five publisher acknowledgements. It uses the
+dedicated `matelematics_b1` PostgreSQL database, commits each unique event,
+then requests a server-confirmed JetStream ACK. It checks empty stream and
+consumer state before publishing; on success it removes only this run's
+five DB rows. On failure it retains DB rows and unacknowledged messages:
+
+```powershell
+node scripts/benchmark/step10e-nats-b1-normal.mjs
+```
+
+Do not repeat an incomplete run or purge streams. Inspect the durable
+consumer, stream and local DB first; a dedicated recovery path will follow.
 
 ## Contract for B1 and B2 implementation
 
