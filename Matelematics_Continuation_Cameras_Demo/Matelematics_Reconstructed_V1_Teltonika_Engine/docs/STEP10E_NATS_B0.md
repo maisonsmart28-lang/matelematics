@@ -289,11 +289,28 @@ To reproduce the instrumented NATS diagnostic run:
 node scripts/benchmark/step10e-nats-b2-pilot.mjs --count=20000 --rate=2000 --confirm-window=512
 ```
 
-The next local profiler records batch size, time to the first JetStream
-message, time to fill each pull batch, empty pulls and peak ACK pending,
-alongside the DB transaction and ACK timings. It uses the same command
-and workload as the instrumented run above; inspect these fields before
-changing the consumer or database configuration. Profiling result pending.
+The pull profiling run (run `231fe610-aa2b-481d-a7d8-1fbebb8d4ad0`)
+passed integrity and producer pacing: 20,000 confirmed, committed once
+and ACKed; producer 1,999.87/s, commit drain 1,125.20/s, commit plus ACK
+drain 1,123.30/s. Across 1,001 batches, average size was 19.98/20;
+only five pulls were empty. Pull time to first message p50/p95 was
+2.30/17.97 ms, batch completion p50/p95 was 0.74/29.21 ms, and peak ACK
+pending reached 80 of 100. Transaction p50/p95 was 11.35/109.43 ms;
+ACK confirmation p50/p95 was 3.87/43.66 ms. Peak pending=12,177,
+post producer drain=7,810 ms, end to end p95=7,456.44 ms; stream and DB
+cleared, quarantine=1. Almost full pull batches and ACK pending below the
+configured limit argue against a simple batch fill or ACK pending cap.
+They do not isolate local CPU, disk, broker, or PostgreSQL contention.
+
+A same machine RabbitMQ 20,000 message control immediately afterward
+(run `671eb5bb-9d1d-488b-ba3f-d67d2f0cc6fe`) also slowed relative to
+its earlier near 2,000/s runs: producer 1,981.39/s, DB drain 1,632.38/s,
+peak pending 5,088, post producer drain 2,174 ms, end to end p95
+2,819.88 ms. All 20,000 confirmed, uniquely committed and ACKed;
+main ready=0, DLQ=1, DB rows=0. This supports investigating shared
+local load and test interference before attributing the entire difference
+to NATS. The runs were sequential, so it does not prove which resource
+caused the slowdown. Recheck under controlled container and host load.
 
 These are single node diagnostics, not production capacity claims. If the
 script reports `incomplete`, inspect its run ID, both streams and the
