@@ -214,6 +214,25 @@ explicit quarantine, and broker restart. The controlled B2 throughput
 comparison and longer runs remain open; single-node recovery is not an
 availability or HA guarantee.
 
+## B2 batch throughput pilot — ready for local validation
+
+The local B2 pilot uses four pull workers with at most 20 events per
+PostgreSQL transaction, 128 concurrent publisher confirmations, and the
+same synthetic envelope and dedicated database as the RabbitMQ B2 pilot.
+It checks all confirmations, deliveries, commits and ACKs, keeps the
+quarantine entry for inspection and deletes only its own committed rows.
+Start with the bounded 1,000 message / 200 per second diagnostic cell:
+
+```powershell
+node scripts/benchmark/step10e-nats-b2-pilot.mjs --count=1000 --rate=200
+```
+
+The 20,000 message / 2,000 per second cell is available after the first
+result and state inspection. These are local single node measurements,
+not claims about production capacity. If the script reports `incomplete`,
+retain its run ID and inspect both streams and the benchmark rows before
+another test; do not purge the retained messages. Local result pending.
+
 ## Contract for B1 and B2 implementation
 
 - File-backed stream and durable pull consumer; declare exact subjects,
