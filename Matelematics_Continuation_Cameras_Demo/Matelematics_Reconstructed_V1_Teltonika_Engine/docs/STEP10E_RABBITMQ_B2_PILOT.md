@@ -185,3 +185,31 @@ contains exactly the retained poison event. If the pilot reports incomplete,
 stop and inspect its queue/DB evidence; do not rerun or purge. Compare
 post-producer drain, backlog, p95 and producer rate. One successful local
 batch run alone cannot establish the sustained 1,556/s gate.
+
+The first local batch run passed on 2026-09-23 (run
+`8c0fd910-7f63-436f-8026-776e4f4e85b8`). Its 2,000/s burst was observed
+at 1,999.09/s. All 10,000 publications, confirmations, unique commits and
+ACKs matched, without redelivery or duplicate delivery. Main ready=0,
+DLQ=1, remaining benchmark rows=0. Comparable single-run observations:
+
+| Four workers, same burst | Batch 1 | Batch 20 |
+| --- | ---: | ---: |
+| Overall producer rate | 1,228.64/s | 1,228.49/s |
+| Overall DB drain | 798.09/s | 1,228.28/s |
+| Peak pending | 3,676 | 85 |
+| Pending at producer completion | 3,612 | 18 |
+| Post-producer drain | 4,401 ms | 15 ms |
+| Oldest pending | 4,447 ms | 30 ms |
+| End-to-end p95 | 4,422.77 ms | 25.49 ms |
+| DB p95 | 6.40 ms | 18.19 ms |
+
+Batching improved latency and backlog substantially for this paced local
+profile, while each batch took longer to commit than an individual event.
+The batch run's 1,195.54/s post-producer rate is based on only 18 pending
+events and 15 ms: it is too short to estimate maximum DB drain. Likewise,
+the 1,228.28/s overall DB rate is bounded by the test's producer pacing.
+Repeat comparable cells and add a bounded capacity test whose input exceeds
+1,556/s for long enough to observe sustained drain and backlog behavior.
+Verify batch replay after a commit/ACK interruption before treating this
+experimental worker as production ready. The twofold capacity gate remains
+unproven; no production or HA result follows from the local pilot.
