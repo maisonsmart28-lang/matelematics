@@ -53,7 +53,7 @@ and max-deliver 4. Primary pending=0, ACK pending=0 and quarantine stored=0.
 No publish, DB commit, retry, quarantine transfer or restart has been tested
 by this topology result.
 
-## Local B1 normal flow — awaiting local result
+## Local B1 normal flow — PASS
 
 The next control publishes five synthetic telemetry envelopes to the local
 JetStream stream and requires five publisher acknowledgements. It uses the
@@ -68,6 +68,26 @@ node scripts/benchmark/step10e-nats-b1-normal.mjs
 
 Do not repeat an incomplete run or purge streams. Inspect the durable
 consumer, stream and local DB first; a dedicated recovery path will follow.
+
+Observed local B1 normal result on 2026-09-23 (run
+`6c0f7ca4-cbb0-45ef-af4a-96a688dcc2f4`): five published/confirmed,
+five deliveries, five unique commits and server-confirmed ACKs. Primary
+pending=0, ACK pending=0, quarantine=0 and benchmark rows=0 after cleanup.
+
+## Crash before DB commit — awaiting local result
+
+The next isolated control publishes one synthetic message with a JetStream
+confirmation. A separate worker receives it, then exits before any DB
+query or ACK. The durable consumer must redeliver it after its configured
+30-second ACK wait; the parent commits once and requests a confirmed ACK:
+
+```powershell
+node scripts/benchmark/step10e-nats-b1-crash-before-commit.mjs
+```
+
+This test can wait about 30 seconds for redelivery. If it reports
+`incomplete`, stop and inspect the stream, consumer state and rows for its
+run ID. The message remains in JetStream; do not purge or repeat blindly.
 
 ## Contract for B1 and B2 implementation
 
