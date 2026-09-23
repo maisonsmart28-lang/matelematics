@@ -144,3 +144,22 @@ misses the rate, it reports `INTEGRITY_PASS_RATE_MISSED` and cleans successful
 test rows. The queue must be empty before the run; the existing single
 poison message in DLQ remains untouched. Do not treat a local burst as proof
 of the 2× sustained-capacity gate or high availability.
+
+The bounded burst passed locally on 2026-09-23 (run
+`46bb1bb2-b174-4df7-b78b-8b2d96a17cbb`). The observed burst publication
+rate was 1,998.44/s against the requested 2,000/s; 10,000 publications,
+confirmations, unique commits and ACKs matched, with zero redeliveries or
+duplicate deliveries. The overall producer rate was 1,228.64/s. Peak pending
+reached 3,676 and sampled ready depth reached 3,271. At producer completion,
+3,612 messages remained pending; draining that backlog took 4,401 ms, or
+820.70 commits/s. End-to-end p95 was 4,422.77 ms. Main ready=0, DLQ=1
+and benchmark rows=0 after cleanup.
+
+The broker accepted the short publication burst and the backlog drained,
+but four workers did not keep pace during it. The measured post-producer
+drain of 820.70/s is below the 1,556/s twofold baseline target. These
+single-node observations cannot establish sustained DB capacity; the B2
+twofold gate remains unmet. Next, measure repeated comparable runs and
+investigate bounded transaction batching while preserving unique event IDs,
+commit-before-ACK and failure recovery. Keep the retained poison message
+in the DLQ; do not purge it.
