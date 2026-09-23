@@ -24,11 +24,16 @@ function percentile(samples: number[], ratio: number) {
 
 async function main() {
   for (const arg of process.argv.slice(2))
-    if (!/^--(?:count|rate|confirm-window|workers)=\d+$/.test(arg)) throw new Error(`Unknown B2 pilot option: ${arg}`);
+    if (!/^--(?:count|rate|confirm-window|workers|burst-rate)=\d+$/.test(arg)) throw new Error(`Unknown B2 pilot option: ${arg}`);
   const count = option('count', 1000, 100, 10000);
   const rate = option('rate', 200, 10, 2000);
   const confirmWindow = option('confirm-window', 128, 1, 512);
   const workers = option('workers', 1, 1, 4);
+  const burstRate = option('burst-rate', 0, 0, 2000);
+  if (burstRate && (burstRate !== 2000 || rate !== 778 || workers !== 4 || count !== 10000))
+    throw new Error('Bounded burst requires --count=10000 --rate=778 --workers=4 --burst-rate=2000');
+  const beforeBurst = burstRate ? Math.ceil(rate * 3) : 0;
+  const duringBurst = burstRate ? burstRate * 3 : 0;
   const runId = randomUUID();
   const db = new pg.Client({ connectionString: benchmarkDatabaseUrl(), ssl: false,
     connectionTimeoutMillis: 10000, statement_timeout: 10000, query_timeout: 15000,
@@ -47,6 +52,7 @@ async function main() {
   let redeliveries = 0, duplicateDeliveries = 0;
   let peakPending = 0, peakReady = 0, oldestPendingMs = 0;
   let firstDeliveryAt = 0, lastAckAt = 0, producerSentAt = 0, producerDoneAt = 0;
+  let burstFirstSentAt = 0, burstLastSentAt = 0, backlogAtProducerEnd = 0;
   const pending = new Map<string, { raw: string; sentAt: number }>();
   const dbLatencies: number[] = [], endToEndLatencies: number[] = [];
   const fail = (error: unknown) => { fatal ??= error instanceof Error ? error : new Error('B2 broker error'); };
@@ -134,7 +140,10 @@ async function main() {
       if (fatal) throw fatal;
       while (unconfirmed >= confirmWindow && !fatal) await sleep(1);
       if (fatal) throw fatal;
-      const delay = startedAt + i * (1000 / rate) - performance.now();
+      const plannedOffset = !burstRate || i < beforeBurst ? i * (1000 / rate) :
+        i < beforeBurst + duringBurst ? 3000 + (i - beforeBurst) * (1000 / burstRate) :
+          6000 + (i - beforeBurst - duringBurst) * (1000 / rate);
+      const delay = startedAt + plannedOffset - performance.now();
       if (delay > 0) await sleep(delay);
       const now = new Date().toISOString();
       const event: Envelope = {
@@ -156,6 +165,10 @@ async function main() {
           else confirmed++;
         });
       published++;
+      if (burstRate && i >= beforeBurst && i < beforeBurst + duringBurst) {
+        burstFirstSentAt ||= performance.now();
+        burstLastSentAt = performance.now();
+      }
       peakPending = Math.max(peakPending, published - acks);
       if (!writable) {
         const controller = new AbortController();
@@ -165,6 +178,7 @@ async function main() {
       if (fatal) throw fatal;
     }
     producerSentAt = performance.now();
+    backlogAtProducerEnd = published - acks;
     await publisher.waitForConfirms();
     producerDoneAt = performance.now();
     if (fatal || confirmed !== count) throw fatal ?? new Error('Missing publisher confirmations');
@@ -205,16 +219,26 @@ async function main() {
     if (remaining.rows[0].n !== 0) throw new Error('B2 cleanup incomplete');
     completed = true;
     const observedProducerRatePerSec = Math.round(count * 1000 / (producerSentAt - startedAt) * 100) / 100;
-    const rateTargetMet = observedProducerRatePerSec >= rate * 0.95;
+    const observedBurstRatePerSec = burstRate ?
+      Math.round(duringBurst * 1000 / (burstLastSentAt - burstFirstSentAt + 1000 / burstRate) * 100) / 100 : null;
+    const burstRateTargetMet = burstRate ? (observedBurstRatePerSec ?? 0) >= burstRate * 0.95 : null;
+    const rateTargetMet = observedProducerRatePerSec >= rate * 0.95 &&
+      (burstRateTargetMet === null || burstRateTargetMet);
     console.log(JSON.stringify({ event: 'step10e-rabbitmq-b2-pilot',
       result: rateTargetMet ? 'PASS' : 'INTEGRITY_PASS_RATE_MISSED', runId,
       targetRatePerSec: rate, workers, confirmWindow, peakUnconfirmed,
+      burst: burstRate ? { startMs: 3000, durationMs: 3000,
+        targetRatePerSec: burstRate, observedRatePerSec: observedBurstRatePerSec,
+        rateTargetMet: burstRateTargetMet } : null,
       published, confirmed, deliveries,
       uniqueLogicalCommits: commits, acks, redeliveries, duplicateDeliveries,
       observedProducerRatePerSec, rateTargetMet,
       observedConfirmedRatePerSec: Math.round(count * 1000 / (producerDoneAt - startedAt) * 100) / 100,
       observedDbDrainPerSec: Math.round(count * 1000 / (lastAckAt - firstDeliveryAt) * 100) / 100,
       postProducerDrainMs: Math.max(0, Math.round(lastAckAt - producerSentAt)),
+      backlogAtProducerEnd,
+      postProducerDbDrainPerSec: backlogAtProducerEnd && lastAckAt > producerSentAt ?
+        Math.round(backlogAtProducerEnd * 1000 / (lastAckAt - producerSentAt) * 100) / 100 : null,
       peakPending, peakReady, oldestPendingMs: Math.round(oldestPendingMs),
       dbLatencyMs: { p50: percentile(dbLatencies, 0.5), p95: percentile(dbLatencies, 0.95), max: Math.round(Math.max(...dbLatencies) * 100) / 100 },
       endToEndMs: { p50: percentile(endToEndLatencies, 0.5), p95: percentile(endToEndLatencies, 0.95), max: Math.round(Math.max(...endToEndLatencies) * 100) / 100 },

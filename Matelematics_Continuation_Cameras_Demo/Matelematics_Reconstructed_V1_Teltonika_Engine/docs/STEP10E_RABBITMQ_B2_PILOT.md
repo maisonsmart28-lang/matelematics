@@ -109,3 +109,38 @@ After inspecting two-worker results, a four-worker cell may be justified.
 Increasing concurrency is a measured experiment: it is not assumed to
 improve PostgreSQL throughput or the 2× capacity gate. Batch persistence,
 repeatability and the controlled burst remain separate B2 work.
+
+Both additional 5,000-event local runs passed all identity/ACK/cleanup checks
+on 2026-09-23. These are single observations with the same 778/s input:
+
+| Workers | Published/s | DB observed/s | Peak pending | Post-producer drain | End-to-end p95 |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 778.09 | 255.27 | 3,470 | 13,172 ms | 12,503.35 ms |
+| 2 | 778.10 | 465.99 | 2,145 | 4,315 ms | 4,151.69 ms |
+| 4 | 778.23 | 741.91 | 256 | 324 ms | 322.82 ms |
+
+The four-worker run observed peak ready=0, but published-minus-ACKed pending
+reached 256 (including in-flight deliveries); peak ready is sampled every
+200 ms and can miss short-lived ready depth. Four workers approached the
+778/s input, but the paced test does not measure maximum drain capacity.
+The 1,556/s (2×) gate remains unproven.
+
+## Controlled local burst after the four-worker baseline
+
+The next bounded cell reuses Phase A's 778/s base rate and a 2,000/s burst
+starting at 3 seconds for 3 seconds, then returns to 778/s until exactly
+10,000 events are sent. It requires four workers and 128 unconfirmed-message
+window by default. The script refuses arbitrary burst shapes in this pilot:
+
+```powershell
+npx --no-install tsx scripts/benchmark/step10e-rabbitmq-b2-pilot.ts --count=10000 --rate=778 --workers=4 --burst-rate=2000
+```
+
+The output separates the observed burst publication rate from the overall
+producer rate and adds the backlog at producer completion and the DB drain
+rate during that post-producer backlog. A `PASS` requires every logical
+commit/ACK and at least 95% of the requested burst rate; if publication
+misses the rate, it reports `INTEGRITY_PASS_RATE_MISSED` and cleans successful
+test rows. The queue must be empty before the run; the existing single
+poison message in DLQ remains untouched. Do not treat a local burst as proof
+of the 2× sustained-capacity gate or high availability.
