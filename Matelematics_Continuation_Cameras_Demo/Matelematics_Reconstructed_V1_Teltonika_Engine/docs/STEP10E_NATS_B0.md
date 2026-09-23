@@ -157,6 +157,26 @@ Recovery took 30,039 ms; primary pending=0, ACK pending=0, quarantine=0,
 benchmark rows=0 after cleanup. This confirms local database outage recovery
 with a durable JetStream consumer; it does not measure HA.
 
+## Poison message and explicit quarantine — ready for local validation
+
+The local poison control publishes a malformed envelope and a healthy one.
+The healthy event must commit and receive a confirmed ACK despite the
+malformed message. The poison is rejected four times using the durable
+consumer's configured maximum delivery count, then copied into the separate
+file backed quarantine stream. Publication is confirmed before the original
+is ACKed. The script verifies the retained quarantine payload and deletes
+only its healthy synthetic database row; the quarantine entry remains for
+inspection. Run only when both NATS streams and the benchmark DB are clear:
+
+```powershell
+node scripts/benchmark/step10e-nats-b1-poison.mjs
+```
+
+If it reports `incomplete`, retain its run ID and inspect both streams and
+the local DB before retrying; no stream is purged. The quarantine step is
+explicit application logic, not an automatic JetStream DLQ. Local result
+pending.
+
 ## Contract for B1 and B2 implementation
 
 - File-backed stream and durable pull consumer; declare exact subjects,
