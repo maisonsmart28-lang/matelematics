@@ -234,3 +234,21 @@ UUID and `--count=20000`; it refuses a partial publication or inconsistent
 DB/queue identities. Never start another load cell over an incomplete run.
 Passing this one 10-second cell only qualifies the configuration for
 repeated and longer tests of the sustained 1,556/s decision rule.
+
+The first sustained-input local cell passed on 2026-09-23 (run
+`04cc67fe-9af1-4d9f-96f0-96a6bb0ed475`): 20,000 published and confirmed
+in about 10 seconds, 20,000 unique commits and ACKs, no redeliveries or
+duplicates. Observed producer rate was 2,000.08/s and overall DB drain was
+1,996.69/s. Pending at halfway was 29, pending at producer completion 39,
+peak pending 102, and post-producer drain took 28 ms. Oldest pending was
+31 ms, end-to-end p95 was 27.64 ms, main ready=0, DLQ=1 and remaining
+benchmark rows=0. The sampled ready peak was 0; pending counts include
+unacknowledged deliveries and are the stronger backlog indicator here.
+
+This local 10-second observation exceeds the numerical 1,556/s twofold
+target while keeping pending work low. The 1,371.93/s post-producer metric
+uses just 39 events and 28 ms, so it is not a useful steady-capacity
+estimate. Repeat the same cell under comparable conditions, extend the
+duration with a separately bounded protocol, and test batch replay across
+commit/ACK interruption before considering the sustained-capacity decision.
+It does not establish HA, cloud placement, cost or production readiness.
