@@ -6,6 +6,69 @@ import pg from 'pg';
 import { localRabbitUrl, topology } from './step10e-rabbitmq-b1-config';
 import { benchmarkDatabaseUrl, persistThenAck, type Envelope } from './step10e-rabbitmq-b1-store';
 
+async function acknowledgeInspectedDlq(messageId: string) {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:poison$/i.test(messageId))
+    throw new Error('Pass one exact B1.5 poison message ID');
+  const runId = messageId.slice(0, -':poison'.length);
+  const expectedRaw = JSON.stringify({ message_id: messageId, schema_version: 1,
+    payload: { benchmark: 'step10e4f_b1', sequence: 1 }, company_id: null });
+  const db = new pg.Client({ connectionString: benchmarkDatabaseUrl(), ssl: false,
+    connectionTimeoutMillis: 10000, statement_timeout: 10000, query_timeout: 15000,
+    application_name: 'matelematics_b1_local' });
+  let connection: Awaited<ReturnType<typeof amqp.connect>> | undefined;
+  let channel: Awaited<ReturnType<NonNullable<typeof connection>['createChannel']>> | undefined;
+  let acked = false, verified = false;
+  try {
+    await db.connect();
+    const identity = await db.query('SELECT current_database() AS db, current_user AS username');
+    if (identity.rows[0]?.db !== 'matelematics_b1' || identity.rows[0]?.username !== 'b1_benchmark')
+      throw new Error('Unexpected benchmark database identity');
+    const lock = await db.query('SELECT pg_try_advisory_lock(1046, 11) AS locked');
+    if (!lock.rows[0]?.locked) throw new Error('Another B1 run is in progress');
+    const rows = await db.query('SELECT count(*)::int AS n FROM b1.events');
+    if (rows.rows[0].n !== 0) throw new Error('Benchmark DB contains events; refusing DLQ acknowledgment');
+    connection = await amqp.connect(localRabbitUrl(), { timeout: 10000 });
+    channel = await connection.createChannel();
+    const main = await channel.checkQueue(topology.queue);
+    const dead = await channel.checkQueue(topology.dlq);
+    if (main.messageCount || main.consumerCount || dead.messageCount !== 1 || dead.consumerCount)
+      throw new Error('Expected empty main queue and exactly one DLQ message without consumers');
+    const msg = await channel.get(topology.dlq, { noAck: false });
+    const deaths = msg?.properties.headers?.['x-death'];
+    if (!msg || msg.properties.messageId !== messageId ||
+        msg.content.toString('utf8') !== expectedRaw || msg.properties.deliveryMode !== 2 ||
+        !Array.isArray(deaths) || !deaths.some((entry: { reason?: string }) =>
+          entry.reason === 'delivery_limit'))
+      throw new Error('DLQ identity or delivery-limit evidence differs; message retained');
+    channel.ack(msg); // explicit acknowledgment of this exact inspected benchmark poison
+    acked = true;
+    await channel.close();
+    channel = undefined;
+    const verify = await connection.createChannel();
+    try {
+      const deadline = Date.now() + 10000;
+      let state = await verify.checkQueue(topology.dlq);
+      while (state.messageCount !== 0 && Date.now() < deadline) {
+        await sleep(50);
+        state = await verify.checkQueue(topology.dlq);
+      }
+      const mainAfter = await verify.checkQueue(topology.queue);
+      if (state.messageCount || state.consumerCount || mainAfter.messageCount || mainAfter.consumerCount)
+        throw new Error('Queue state after exact DLQ acknowledgment is unexpected');
+      console.log(JSON.stringify({ event: 'step10e-rabbitmq-b1-dlq-ack', result: 'PASS',
+        runId, messageId, acknowledged: 1, readyDepth: mainAfter.messageCount,
+        dlqDepth: state.messageCount, remainingRows: 0 }));
+      verified = true;
+    } finally { await verify.close().catch(() => undefined); }
+  } finally {
+    if (channel) await channel.close().catch(() => undefined);
+    if (connection) await connection.close().catch(() => undefined);
+    await db.end().catch(() => undefined);
+    if (acked && !verified) console.error(JSON.stringify({ event: 'step10e-rabbitmq-b1-dlq-ack-audit',
+      runId, messageId, action: 'exact message acknowledged' }));
+  }
+}
+
 async function main() {
   const resume = process.argv[2] === '--resume-failed-run';
   const runId = resume ? process.argv[3] : randomUUID();
@@ -176,7 +239,7 @@ async function main() {
       cleanup: 'Evidence retained for inspection' }));
   }
 }
-main().catch(error => {
+(process.argv[2] === '--ack-inspected-dlq' ? acknowledgeInspectedDlq(process.argv[3] ?? '') : main()).catch(error => {
   console.error((error instanceof Error ? error.message : 'Unknown error')
     .replace(/(?:postgres(?:ql)?|amqps?):\/\/[^\s]+/g, '[connection URL withheld]'));
   process.exitCode = 1;

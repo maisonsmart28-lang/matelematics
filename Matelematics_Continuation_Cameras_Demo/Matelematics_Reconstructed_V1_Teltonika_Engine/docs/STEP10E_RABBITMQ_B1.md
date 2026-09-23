@@ -17,6 +17,21 @@ RabbitMQ check after B1.6 showed main ready=0/unacked=0/consumers=0 and
 DLQ ready=1/unacked=0/consumers=0. The retained DLQ message ID is
 `8234335e-7e64-48d5-bbc4-3367a1dcb98d:poison`; **do not purge it**.
 
+For the clean B1.5 rerun, the prior poison evidence was inspected in the B1.5
+recovery and B1.6 broker restart. Only after checking RabbitMQ reports main
+ready=0/unacked=0/consumers=0 and DLQ ready=1/unacked=0/consumers=0, run the
+exact-message acknowledgment below. It verifies local DB identity, zero rows,
+queue depths, full poison payload, persistent delivery and `delivery_limit`
+death reason. It ACKs only that one inspected message; it never purges a queue:
+
+```powershell
+npx --no-install tsx scripts/benchmark/step10e-rabbitmq-b1-poison.ts --ack-inspected-dlq 8234335e-7e64-48d5-bbc4-3367a1dcb98d:poison
+```
+
+After `step10e-rabbitmq-b1-dlq-ack` reports `PASS`, run the B1.5 normal
+command shown below once to verify the complete poison/healthy flow. That
+clean run deliberately leaves its newly generated poison message in the DLQ.
+
 This is a local, single-node functional validation. It does not establish HA,
 capacity at fleet scale, cost, or production suitability. Before a production
 queue decision, run a clean B1.5 end-to-end test after separately reviewing
