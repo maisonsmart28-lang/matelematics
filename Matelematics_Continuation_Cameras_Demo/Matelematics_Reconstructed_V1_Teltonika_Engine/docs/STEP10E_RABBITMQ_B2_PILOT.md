@@ -252,3 +252,28 @@ estimate. Repeat the same cell under comparable conditions, extend the
 duration with a separately bounded protocol, and test batch replay across
 commit/ACK interruption before considering the sustained-capacity decision.
 It does not establish HA, cloud placement, cost or production readiness.
+
+The repeat cell also passed locally on 2026-09-23 (run
+`25462cf5-1c3c-4d06-a4fb-a3d4b7d6d5bb`): 1,999.95/s observed producer
+rate, 1,995.38/s observed DB drain, 20,000 unique commits and ACKs, zero
+duplicates or redeliveries. Pending at halfway was 43, at producer end 37,
+peak 144; post-producer drain took 35 ms. Oldest pending was 65 ms and
+end-to-end p95 was 28.98 ms. Main ready=0, DLQ=1, remaining rows=0.
+Both 10-second local cells stayed above the 1,556/s numerical target with
+small pending work. A longer sustained run and failure/replay validation
+remain before any capacity or production decision.
+
+## Batch replay after commit, before ACK — awaiting local result
+
+The isolated 20-event test publishes with confirms, commits one batch in a
+separate worker, exits that worker before any ACK, then validates 20 broker
+redeliveries and 20 idempotent replay ACKs without new DB rows. It requires
+an empty main queue and benchmark table and preserves the retained DLQ item:
+
+```powershell
+npx --no-install tsx scripts/benchmark/step10e-rabbitmq-b2-batch-replay.ts
+```
+
+If the result is incomplete, stop and inspect retained messages and rows;
+do not purge. A passing result covers this one local crash window and does
+not establish distributed failover or production reliability.
