@@ -1,5 +1,30 @@
 # Step 10E-4F B1 - local functional validation
 
+## Result as of 2026-09-23
+
+| Scenario | Local evidence | Status |
+| --- | --- | --- |
+| B1.1 Normal delivery | 5 confirms, 5 commits/ACKs, both queues empty | PASS |
+| B1.2 Crash before DB commit | 2 deliveries, 1 redelivery, 1 commit/ACK | PASS |
+| B1.3 Crash after DB commit | 2 deliveries, duplicate detected, 1 logical commit/ACK | PASS |
+| B1.4 PostgreSQL outage | 3 confirms, backlog 3, 1 failed DB attempt, 3 commits/ACKs | PASS |
+| B1.5 Poison and healthy event | Initial 2 confirms; retained run resumed: healthy commit/ACK, poison in DLQ with `delivery_limit` | RECOVERY PASS; clean single-run pending |
+| B1.6 Broker restart | 3 confirmed messages recovered and committed/ACKed; same poison ID retained in DLQ | PASS |
+
+B1.6 run `d5f530e5-f49b-4019-baa2-c8309d459404` completed in
+7,557 ms after restart with 0 remaining benchmark rows. The independent
+RabbitMQ check after B1.6 showed main ready=0/unacked=0/consumers=0 and
+DLQ ready=1/unacked=0/consumers=0. The retained DLQ message ID is
+`8234335e-7e64-48d5-bbc4-3367a1dcb98d:poison`; **do not purge it**.
+
+This is a local, single-node functional validation. It does not establish HA,
+capacity at fleet scale, cost, or production suitability. Before a production
+queue decision, run a clean B1.5 end-to-end test after separately reviewing
+and explicitly removing only the retained poison message; benchmark B2
+throughput at the baseline and controlled burst; evaluate NATS JetStream on
+the same functional criteria; then assess HA, Infomaniak-compatible capacity,
+Morocco/CNDP constraints and MAD cost as required by `STEP10E_QUEUE_PHASE_B.md`.
+
 RabbitMQ topology preflight was observed PASS: both quorum queues empty, prefetch 100,
 delivery limit 3. B1.1 passed on the user's Windows PC on 2026-09-23:
 5 published/confirmed, 5 unique commits/ACKs, ready=0, DLQ=0, remainingRows=0.
@@ -73,8 +98,7 @@ empty and no other consumers:
 npx --no-install tsx scripts/benchmark/step10e-rabbitmq-b1-db-outage.ts
 ```
 
-B1.5-B1.6 poison and broker restart scenarios remain pending. A
-single local broker is not an HA or production capacity validation.
+A single local broker is not an HA or production capacity validation.
 
 B1.4 passed locally on 2026-09-23 after awaiting broker consumer removal:
 3 published/confirmed, 1 failed DB attempt, peak backlog 3, 4 deliveries,
@@ -95,7 +119,6 @@ npx --no-install tsx scripts/benchmark/step10e-rabbitmq-b1-poison.ts
 ```
 
 Inspect the result before any explicit DLQ cleanup. Do not purge the queue.
-B1.6 broker restart remains pending.
 
 The first B1.5 run (`8234335e-7e64-48d5-bbc4-3367a1dcb98d`) stopped safely
 after six poison deliveries with 0 commits/ACKs. Both confirmed events remain
@@ -135,12 +158,15 @@ npx --no-install tsx scripts/benchmark/step10e-rabbitmq-b1-broker-restart.ts 823
 On failure, the script attempts to restart the broker and retains messages
 and benchmark DB rows. Do not purge either queue or remove any Docker volume.
 A single local broker restart does not demonstrate high availability.
+The B1.6 local run passed on 2026-09-23 with 3 confirms, 3 unique commits,
+3 ACKs, main ready=0, DLQ ready=1, and 0 remaining rows. The independent
+broker inspection confirmed both queues have 0 unacked messages/consumers.
 
 The first B1.4 run (`0c07ff4d-0ee7-47c1-9bf9-a4b65eaf422f`) on 2026-09-23
 completed three confirmed publications, one failed DB connection, three commits
 and three ACKs, but failed an unspecified final assertion. Both queues were
-observed empty afterward, and exactly three matching rows remained. B1.4 is
-**not validated**. The revised script prints each assertion and offers exact
+observed empty afterward, and exactly three matching rows remained. B1.4 was
+**not validated at this point**; a subsequent full run passed. The revised script prints each assertion and offers exact
 run cleanup after checking the benchmark container identity, empty queues and
 exactly the three matching rows. Never purge queues or remove the volume:
 
