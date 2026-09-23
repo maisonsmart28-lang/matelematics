@@ -76,6 +76,21 @@ npx --no-install tsx scripts/benchmark/step10e-rabbitmq-b1-db-outage.ts
 B1.5-B1.6 poison and broker restart scenarios remain pending. A
 single local broker is not an HA or production capacity validation.
 
+The first B1.4 run (`0c07ff4d-0ee7-47c1-9bf9-a4b65eaf422f`) on 2026-09-23
+completed three confirmed publications, one failed DB connection, three commits
+and three ACKs, but failed an unspecified final assertion. Both queues were
+observed empty afterward, and exactly three matching rows remained. B1.4 is
+**not validated**. The revised script prints each assertion and offers exact
+run cleanup after checking the benchmark container identity, empty queues and
+exactly the three matching rows. Never purge queues or remove the volume:
+
+```powershell
+npx --no-install tsx scripts/benchmark/step10e-rabbitmq-b1-db-outage.ts --cleanup-failed-run 0c07ff4d-0ee7-47c1-9bf9-a4b65eaf422f
+```
+
+Only after cleanup reports `PASS` should the B1.4 script be rerun to identify
+whether a counter or a transient queue state caused the assertion failure.
+
 Vercel: the `git.deploymentEnabled` branch rule in vercel.json is intended to disable
 automatic deploys for this development branch in both linked projects. Check the
 projects after publication; do not launch a manual deployment.

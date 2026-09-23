@@ -50,6 +50,39 @@ async function assertIdentity(db: pg.Client) {
     throw new Error('Unexpected database identity');
 }
 
+async function cleanupFailedRun(runId: string) {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(runId))
+    throw new Error('Invalid benchmark run ID');
+  await verifyContainer();
+  const db = client();
+  let connection: Awaited<ReturnType<typeof amqp.connect>> | undefined;
+  try {
+    await db.connect();
+    await assertIdentity(db);
+    const lock = await db.query('SELECT pg_try_advisory_lock(1046, 11) AS locked');
+    if (!lock.rows[0]?.locked) throw new Error('Another B1 run is in progress');
+    connection = await amqp.connect(localRabbitUrl(), { timeout: 10000 });
+    const channel = await connection.createChannel();
+    try {
+      const main = await channel.checkQueue(topology.queue);
+      const dead = await channel.checkQueue(topology.dlq);
+      if (main.messageCount || main.consumerCount || dead.messageCount || dead.consumerCount)
+        throw new Error('Queues or consumers are not empty; refusing cleanup');
+    } finally { await channel.close().catch(() => undefined); }
+    const all = await db.query('SELECT message_id, run_id::text AS run_id FROM b1.events ORDER BY message_id');
+    if (all.rows.length !== count || all.rows.some((row, index) =>
+      row.run_id !== runId || row.message_id !== `${runId}:${index}`))
+      throw new Error('Rows do not match this failed B1.4 run; refusing cleanup');
+    const removed = await db.query('DELETE FROM b1.events WHERE run_id=$1::uuid', [runId]);
+    if (removed.rowCount !== count) throw new Error('Unexpected cleanup count');
+    console.log(JSON.stringify({ event: 'step10e-rabbitmq-b1-db-outage-cleanup',
+      result: 'PASS', runId, removedRows: removed.rowCount }));
+  } finally {
+    if (connection) await connection.close().catch(() => undefined);
+    await db.end().catch(() => undefined);
+  }
+}
+
 async function main() {
   const runId = randomUUID();
   const events: Envelope[] = Array.from({ length: count }, (_, sequence) => ({
@@ -146,11 +179,23 @@ async function main() {
     const after = await publisher.checkQueue(topology.queue);
     const dlq = await publisher.checkQueue(topology.dlq);
     const rows = await db.query('SELECT message_id FROM b1.events WHERE run_id=$1::uuid', [runId]);
-    if (rows.rows.length !== count || rows.rows.some(row => !expected.has(row.message_id)) ||
-        published !== count || confirmed !== count || failedDbAttempts !== 1 ||
-        deliveries !== count + 1 || redeliveries !== 1 || commits !== count || acks !== count ||
-        after.messageCount || after.consumerCount || dlq.messageCount)
+    const checks = {
+      published: published === count, confirmed: confirmed === count,
+      failedDbAttempts: failedDbAttempts === 1,
+      deliveries: deliveries === count + 1, redeliveries: redeliveries === 1,
+      commits: commits === count, acks: acks === count,
+      rows: rows.rows.length === count && rows.rows.every(row => expected.has(row.message_id)),
+      ready: after.messageCount === 0, consumers: after.consumerCount === 0,
+      dlq: dlq.messageCount === 0,
+    };
+    const failures = Object.entries(checks).filter(([, pass]) => !pass).map(([name]) => name);
+    if (failures.length) {
+      console.error(JSON.stringify({ event: 'step10e-rabbitmq-b1-db-outage-assertion', runId,
+        failures, published, confirmed, failedDbAttempts, deliveries, redeliveries,
+        commits, acks, rows: rows.rows.length, readyDepth: after.messageCount,
+        consumers: after.consumerCount, dlqDepth: dlq.messageCount }));
       throw new Error('B1.4 assertion failed; evidence retained');
+    }
     await db.query('DELETE FROM b1.events WHERE run_id=$1::uuid', [runId]);
     const remaining = await db.query('SELECT count(*)::int AS n FROM b1.events WHERE run_id=$1::uuid', [runId]);
     if (remaining.rows[0].n !== 0) throw new Error('B1.4 cleanup incomplete');
@@ -173,7 +218,7 @@ async function main() {
       published, confirmed, failedDbAttempts, commits, acks, cleanup: 'Evidence retained for inspection' }));
   }
 }
-main().catch(error => {
+(process.argv[2] === '--cleanup-failed-run' ? cleanupFailedRun(process.argv[3] ?? '') : main()).catch(error => {
   console.error((error instanceof Error ? error.message : 'Unknown error')
     .replace(/(?:postgres(?:ql)?|amqps?):\/\/[^\s]+/g, '[connection URL withheld]'));
   process.exitCode = 1;
