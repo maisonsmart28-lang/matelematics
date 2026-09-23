@@ -69,9 +69,9 @@ async function checkDbEmpty() {
     if (rows.rows[0].n) throw new Error('Benchmark database has existing rows');
   } finally { await db.end().catch(() => undefined); }
 }
-async function runRabbitCell() {
+async function runRabbitCell(count) {
   const script = 'scripts/benchmark/step10e-rabbitmq-b2-pilot.ts';
-  const args = [script, '--count=20000', '--rate=2000', '--workers=4', '--batch-size=20'];
+  const args = [script, `--count=${count}`, '--rate=2000', '--workers=4', '--batch-size=20'];
   const command = process.platform === 'win32' ? 'cmd.exe' : 'npx';
   const commandArgs = process.platform === 'win32' ?
     ['/d', '/s', '/c', `npx --no-install tsx ${args.join(' ')}`] :
@@ -84,7 +84,10 @@ async function runRabbitCell() {
   if (code !== 0) throw new Error(`RabbitMQ pilot exited with code ${code}; inspect its run ID`);
 }
 async function main() {
-  if (process.argv.length !== 2) throw new Error('Isolated local comparison takes no arguments');
+  if (process.argv.length !== 2 &&
+      !(process.argv.length === 3 && process.argv[2] === '--count=60000'))
+    throw new Error('Use no arguments or exactly --count=60000');
+  const count = process.argv.length === 3 ? 60000 : 20000;
   let stopAttempted = false, restored = false;
   await inspectContainer();
   await checkDbEmpty();
@@ -92,7 +95,7 @@ async function main() {
   try {
     stopAttempted = true;
     await docker('stop', '--time', '5', container);
-    await runRabbitCell();
+    await runRabbitCell(count);
   } finally {
     if (stopAttempted) {
       try {
@@ -100,7 +103,7 @@ async function main() {
         const after = await waitForNats();
         restored = true;
         console.log(JSON.stringify({ event: 'step10e-rabbitmq-b2-isolate-nats',
-          result: 'NATS_RESTORED', before, after }));
+          result: 'NATS_RESTORED', count, before, after }));
       } catch (error) {
         console.error('Dedicated NATS restart or quarantine verification failed:',
           error instanceof Error ? error.message : 'Unknown error');

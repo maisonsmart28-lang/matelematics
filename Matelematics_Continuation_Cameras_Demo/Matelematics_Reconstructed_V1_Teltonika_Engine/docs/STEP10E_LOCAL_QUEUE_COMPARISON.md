@@ -54,7 +54,21 @@ Detailed scripts, run IDs, recovery rules and complete output metrics:
 `STEP10E_RABBITMQ_B1.md`, `STEP10E_RABBITMQ_B2_PILOT.md`,
 `STEP10E_NATS_B0.md` and `STEP10E_QUEUE_PHASE_B.md`.
 
-The next engineering decision is whether to profile shared local CPU,
-disk and PostgreSQL contention further or advance the selected candidate
-to authorized production-like HA and cost validation. Neither local
-broker is approved for production from these measurements alone.
+The final bounded local comparison cell repeats RabbitMQ at 60,000
+messages and 2,000/s with NATS temporarily stopped, then verifies that
+NATS and its quarantine were restored:
+
+```powershell
+node scripts/benchmark/step10e-rabbitmq-b2-isolate-nats.mjs --count=60000
+```
+
+Record the three pending checkpoints, peak backlog, end to end p95,
+final queue/DB cleanup and `NATS_RESTORED` before calling the local
+comparison complete. The earlier RabbitMQ 60k run was performed before
+NATS was added, so this repeat controls the broker isolation procedure.
+
+The next engineering decision after the local comparison is whether to
+profile shared local CPU, disk and PostgreSQL contention further or
+advance the selected candidate to authorized production-like HA and
+cost validation. Neither local broker is approved for production from
+these measurements alone.
