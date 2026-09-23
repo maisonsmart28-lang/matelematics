@@ -122,6 +122,34 @@ of the DB commit on a single local NATS node. A real DB outage, permanent
 poison/quarantine handling, broker restart and a comparable B2 throughput
 test remain open.
 
+## Dedicated PostgreSQL outage — ready for local validation
+
+Run from the application directory with the dedicated RabbitMQ B1 PostgreSQL
+container healthy. This control checks the exact Docker Compose identity,
+stops only `matelematics-b1-postgres`, confirms three JetStream publications,
+and verifies that no message is ACKed while the database is unavailable.
+It restarts the same container in a `finally` block, waits for recovery and
+checks three unique commits followed by three confirmed ACKs. One first
+delivery is deliberately left unacknowledged, so redelivery may add about
+30 seconds. The test removes only its own three rows on a complete pass:
+
+```powershell
+node scripts/benchmark/step10e-nats-b1-db-outage.mjs
+```
+
+If it reports `incomplete`, record its `runId` and inspect the NATS stream,
+durable consumer, dedicated DB and Docker container before recovery. When
+the container is healthy and the three messages belong to this run, the
+targeted recovery command drains and ACKs them, then deletes only their
+three synthetic rows:
+
+```powershell
+node scripts/benchmark/step10e-nats-b1-db-outage-recover.mjs <runId>
+```
+
+Do not purge the streams, delete the database volume, or repeat the test
+over retained evidence. Local result pending.
+
 ## Contract for B1 and B2 implementation
 
 - File-backed stream and durable pull consumer; declare exact subjects,
