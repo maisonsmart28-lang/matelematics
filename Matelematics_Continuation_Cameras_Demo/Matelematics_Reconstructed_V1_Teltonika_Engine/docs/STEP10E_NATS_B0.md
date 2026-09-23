@@ -157,7 +157,7 @@ Recovery took 30,039 ms; primary pending=0, ACK pending=0, quarantine=0,
 benchmark rows=0 after cleanup. This confirms local database outage recovery
 with a durable JetStream consumer; it does not measure HA.
 
-## Poison message and explicit quarantine — ready for local validation
+## Poison message and explicit quarantine — PASS
 
 The local poison control publishes a malformed envelope and a healthy one.
 The healthy event must commit and receive a confirmed ACK despite the
@@ -174,8 +174,32 @@ node scripts/benchmark/step10e-nats-b1-poison.mjs
 
 If it reports `incomplete`, retain its run ID and inspect both streams and
 the local DB before retrying; no stream is purged. The quarantine step is
-explicit application logic, not an automatic JetStream DLQ. Local result
-pending.
+explicit application logic, not an automatic JetStream DLQ.
+
+Observed local result on 2026-09-23 (run
+`d643263c-6936-4d03-b62e-ca5971e6ef6d`): two confirmed publications,
+four poison deliveries including three redeliveries, one healthy commit and
+one confirmed healthy ACK. Primary pending=0, ACK pending=0, rows=0;
+quarantine retains exactly one message with ID
+`d643263c-6936-4d03-b62e-ca5971e6ef6d:poison`. Preserve it for the
+broker restart comparison.
+
+## Dedicated NATS broker restart — ready for local validation
+
+This control checks the exact Compose container, its named JetStream volume
+and the retained quarantine message. It publishes three confirmed messages,
+stops and starts only `matelematics-nats`, then verifies the three messages
+and the same quarantined payload survived. It commits the three messages to
+the isolated database, confirms each ACK and deletes only its own rows.
+The quarantined payload remains after the test:
+
+```powershell
+node scripts/benchmark/step10e-nats-b1-broker-restart.mjs d643263c-6936-4d03-b62e-ca5971e6ef6d:poison
+```
+
+If the control reports `incomplete`, inspect the run ID, database and both
+streams before any retry; do not delete the data volume or purge streams.
+Local result pending.
 
 ## Contract for B1 and B2 implementation
 
