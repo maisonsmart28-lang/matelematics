@@ -6,7 +6,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import amqp from 'amqplib';
 import pg from 'pg';
 import { localRabbitUrl, topology } from './step10e-rabbitmq-b1-config';
-import { benchmarkDatabaseUrl, persistThenAck, type Envelope } from './step10e-rabbitmq-b1-store';
+import { benchmarkDatabaseUrl, persistBatchThenAck, persistThenAck, type Envelope } from './step10e-rabbitmq-b1-store';
 
 function option(name: string, fallback: number, min: number, max: number) {
   const flag = `--${name}=`;
@@ -24,12 +24,17 @@ function percentile(samples: number[], ratio: number) {
 
 async function main() {
   for (const arg of process.argv.slice(2))
-    if (!/^--(?:count|rate|confirm-window|workers|burst-rate)=\d+$/.test(arg)) throw new Error(`Unknown B2 pilot option: ${arg}`);
+    if (!/^--(?:count|rate|confirm-window|workers|burst-rate|batch-size)=\d+$/.test(arg)) throw new Error(`Unknown B2 pilot option: ${arg}`);
   const count = option('count', 1000, 100, 10000);
   const rate = option('rate', 200, 10, 2000);
   const confirmWindow = option('confirm-window', 128, 1, 512);
   const workers = option('workers', 1, 1, 4);
   const burstRate = option('burst-rate', 0, 0, 2000);
+  const batchSize = option('batch-size', 1, 1, 20);
+  if (batchSize !== 1 && batchSize !== 20)
+    throw new Error('B2 experiment supports only --batch-size=1 or --batch-size=20');
+  if (batchSize === 20 && (rate !== 778 || workers !== 4 || count !== 10000 || burstRate !== 2000))
+    throw new Error('Batch experiment requires --count=10000 --rate=778 --workers=4 --burst-rate=2000 --batch-size=20');
   if (burstRate && (burstRate !== 2000 || rate !== 778 || workers !== 4 || count !== 10000))
     throw new Error('Bounded burst requires --count=10000 --rate=778 --workers=4 --burst-rate=2000');
   const beforeBurst = burstRate ? Math.ceil(rate * 3) : 0;
@@ -42,7 +47,10 @@ async function main() {
   let publisher: Awaited<ReturnType<NonNullable<typeof connection>['createConfirmChannel']>> | undefined;
   let monitor: Awaited<ReturnType<NonNullable<typeof connection>['createChannel']>> | undefined;
   type WorkerChannel = Awaited<ReturnType<NonNullable<typeof connection>['createChannel']>>;
-  const consumers: Array<{ channel: WorkerChannel; tag?: string; work: Promise<void> }> = [];
+  type Job = { msg: NonNullable<Parameters<WorkerChannel['ack']>[0]>; event: Envelope;
+    expected: { raw: string; sentAt: number }; started: number };
+  const consumers: Array<{ channel: WorkerChannel; tag?: string; work: Promise<void>;
+    batch: Job[]; timer?: ReturnType<typeof setTimeout>; flush: () => void }> = [];
   const workerDbs: pg.Client[] = [];
   let stopping = false, completed = false;
   let fatal: Error | undefined;
@@ -89,15 +97,45 @@ async function main() {
       await workerDb.connect();
       workerDb.on('error', fail);
       const channel = await connection.createChannel();
-      const entry: { channel: WorkerChannel; tag?: string; work: Promise<void> } = {
-        channel, work: Promise.resolve(),
+      const entry: { channel: WorkerChannel; tag?: string; work: Promise<void>;
+        batch: Job[]; timer?: ReturnType<typeof setTimeout>; flush: () => void } = {
+        channel, work: Promise.resolve(), batch: [], flush: () => undefined,
       };
       consumers.push(entry);
       channel.on('error', fail);
       await channel.prefetch(topology.prefetch);
+      entry.flush = () => {
+        if (entry.timer) { clearTimeout(entry.timer); entry.timer = undefined; }
+        if (fatal || !entry.batch.length) return;
+        const jobs = entry.batch.splice(0, batchSize);
+        entry.work = entry.work.then(async () => {
+          if (fatal) return;
+          if (batchSize === 1) {
+            const job = jobs[0];
+            const inserted = await persistThenAck(workerDb, runId, job.event, () => {
+              if (fatal) throw fatal;
+              channel.ack(job.msg); acks++;
+            });
+            if (!inserted) { duplicateDeliveries++; throw new Error('Unexpected B2 duplicate'); }
+          } else {
+            await persistBatchThenAck(workerDb, runId, jobs.map(job => ({ event: job.event, ack: () => {
+              if (fatal) throw fatal;
+              channel.ack(job.msg); acks++;
+            } })));
+          }
+          const ended = performance.now();
+          for (const job of jobs) {
+            commits++;
+            dbLatencies.push(ended - job.started);
+            endToEndLatencies.push(ended - job.expected.sentAt);
+            pending.delete(job.event.message_id);
+          }
+          lastAckAt = Math.max(lastAckAt, ended);
+        }).catch(fail);
+      };
       const subscription = await channel.consume(topology.queue, msg => {
         if (!msg) { fail(new Error('B2 consumer cancelled unexpectedly')); return; }
-        entry.work = entry.work.then(async () => {
+        try {
           if (fatal) return;
           deliveries++;
           firstDeliveryAt ||= performance.now();
@@ -107,20 +145,10 @@ async function main() {
           const expected = pending.get(event.message_id);
           if (!expected || expected.raw !== raw || msg.properties.messageId !== event.message_id)
             throw new Error('Unexpected B2 message; retained without ACK');
-          const started = performance.now();
-          const inserted = await persistThenAck(workerDb, runId, event, () => {
-            if (fatal) throw fatal;
-            channel.ack(msg);
-            acks++;
-          });
-          if (!inserted) { duplicateDeliveries++; throw new Error('Unexpected B2 duplicate'); }
-          const ended = performance.now();
-          commits++;
-          dbLatencies.push(ended - started);
-          endToEndLatencies.push(ended - expected.sentAt);
-          pending.delete(event.message_id);
-          lastAckAt = Math.max(lastAckAt, ended);
-        }).catch(fail);
+          entry.batch.push({ msg, event, expected, started: performance.now() });
+          if (entry.batch.length >= batchSize) entry.flush();
+          else if (!entry.timer) entry.timer = setTimeout(entry.flush, 10);
+        } catch (error) { fail(error); }
       }, { noAck: false, exclusive: workers === 1 });
       entry.tag = subscription.consumerTag;
     }
@@ -179,11 +207,15 @@ async function main() {
     }
     producerSentAt = performance.now();
     backlogAtProducerEnd = published - acks;
+    for (const entry of consumers) entry.flush();
     await publisher.waitForConfirms();
     producerDoneAt = performance.now();
     if (fatal || confirmed !== count) throw fatal ?? new Error('Missing publisher confirmations');
     const deadline = Date.now() + 120000;
-    while (acks < count && !fatal && Date.now() < deadline) await sleep(50);
+    while (acks < count && !fatal && Date.now() < deadline) {
+      for (const entry of consumers) entry.flush();
+      await sleep(50);
+    }
     if (fatal) throw fatal;
     if (acks !== count) throw new Error('B2 drain timed out; evidence retained');
     stopping = true;
@@ -226,7 +258,7 @@ async function main() {
       (burstRateTargetMet === null || burstRateTargetMet);
     console.log(JSON.stringify({ event: 'step10e-rabbitmq-b2-pilot',
       result: rateTargetMet ? 'PASS' : 'INTEGRITY_PASS_RATE_MISSED', runId,
-      targetRatePerSec: rate, workers, confirmWindow, peakUnconfirmed,
+      targetRatePerSec: rate, workers, batchSize, confirmWindow, peakUnconfirmed,
       burst: burstRate ? { startMs: 3000, durationMs: 3000,
         targetRatePerSec: burstRate, observedRatePerSec: observedBurstRatePerSec,
         rateTargetMet: burstRateTargetMet } : null,
@@ -248,6 +280,7 @@ async function main() {
   } finally {
     stopping = true;
     await sampling;
+    for (const entry of consumers) if (entry.timer) clearTimeout(entry.timer);
     for (const entry of consumers)
       if (entry.tag) await entry.channel.cancel(entry.tag).catch(() => undefined);
     await Promise.all(consumers.map(entry => entry.work));

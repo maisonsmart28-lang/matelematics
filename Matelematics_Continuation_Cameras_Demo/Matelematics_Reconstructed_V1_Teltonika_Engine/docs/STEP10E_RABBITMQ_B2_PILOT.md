@@ -163,3 +163,25 @@ twofold gate remains unmet. Next, measure repeated comparable runs and
 investigate bounded transaction batching while preserving unique event IDs,
 commit-before-ACK and failure recovery. Keep the retained poison message
 in the DLQ; do not purge it.
+
+## Bounded local batch experiment
+
+The optional `--batch-size=20` groups up to 20 messages per worker into
+one PostgreSQL transaction. A partial group is flushed after at most 10 ms.
+All individual ACKs follow the group's successful commit; a failed or
+conflicting insert leaves the group's messages unacknowledged for inspection.
+The default `--batch-size=1` preserves all previous cells. The batch option
+is restricted to the same four-worker, 10,000-event burst profile so its
+measurements can be compared with the previous run:
+
+```powershell
+npx --no-install tsx scripts/benchmark/step10e-rabbitmq-b2-batch.selftest.ts
+npx --no-install tsx scripts/benchmark/step10e-rabbitmq-b2-pilot.ts --count=10000 --rate=778 --workers=4 --burst-rate=2000 --batch-size=20
+```
+
+Run the selftest first. Before starting the pilot, ensure Docker containers
+are healthy, the main queue and benchmark table are empty, and DLQ still
+contains exactly the retained poison event. If the pilot reports incomplete,
+stop and inspect its queue/DB evidence; do not rerun or purge. Compare
+post-producer drain, backlog, p95 and producer rate. One successful local
+batch run alone cannot establish the sustained 1,556/s gate.

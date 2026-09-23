@@ -37,3 +37,26 @@ export async function persistThenAck(db: DB, runId: string, event: Envelope, ack
   ack(); // failure after COMMIT preserves the event for replay
   return inserted;
 }
+
+/** Local B2 experiment: one transaction for a bounded set of validated messages. */
+export async function persistBatchThenAck(db: DB, runId: string,
+  batch: Array<{ event: Envelope; ack: () => void }>): Promise<void> {
+  if (batch.length < 1 || batch.length > 20) throw new Error('B2 batch must contain 1–20 events');
+  const ids = batch.map(({ event }) => event.message_id);
+  if (new Set(ids).size !== ids.length || ids.some(id => !id.startsWith(`${runId}:`)))
+    throw new Error('Invalid or repeated B2 batch identity');
+  await db.query('BEGIN');
+  try {
+    const rows = batch.map(({ event }) => ({ message_id: event.message_id, envelope: event }));
+    const result = await db.query(`INSERT INTO b1.events (message_id, run_id, envelope)
+      SELECT item.message_id, $1::uuid, item.envelope
+      FROM jsonb_to_recordset($2::jsonb) AS item(message_id text, envelope jsonb)
+      ON CONFLICT (message_id) DO NOTHING`, [runId, JSON.stringify(rows)]);
+    if (result.rowCount !== batch.length) throw new Error('B2 batch identity conflict');
+    await db.query('COMMIT');
+  } catch (error) {
+    await db.query('ROLLBACK').catch(() => undefined);
+    throw error;
+  }
+  for (const item of batch) item.ack(); // each ACK follows the whole committed batch
+}
