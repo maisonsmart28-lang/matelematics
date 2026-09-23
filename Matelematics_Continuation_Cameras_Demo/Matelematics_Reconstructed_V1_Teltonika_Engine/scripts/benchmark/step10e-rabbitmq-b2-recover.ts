@@ -4,13 +4,15 @@ import pg from 'pg';
 import { localRabbitUrl, topology } from './step10e-rabbitmq-b1-config';
 import { benchmarkDatabaseUrl, persistThenAck, type Envelope } from './step10e-rabbitmq-b1-store';
 
-const expectedCount = 5000;
-
 async function main() {
   const runId = process.argv[2] ?? '';
-  if (process.argv.length !== 3 ||
+  const countArg = process.argv[3];
+  if (process.argv.length > 4 ||
       !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(runId))
-    throw new Error('Pass exactly one B2 UUID to recover');
+    throw new Error('Pass a B2 UUID and optional --count=20000 to recover');
+  if (countArg !== undefined && countArg !== '--count=20000')
+    throw new Error('Only --count=20000 is supported as an optional recovery count');
+  const expectedCount = countArg ? 20000 : 5000;
   const db = new pg.Client({ connectionString: benchmarkDatabaseUrl(), ssl: false,
     connectionTimeoutMillis: 10000, statement_timeout: 15000, query_timeout: 20000,
     application_name: 'matelematics_b2_recovery_local' });
@@ -25,7 +27,7 @@ async function main() {
     const lock = await db.query('SELECT pg_try_advisory_lock(1046, 11) AS locked');
     if (!lock.rows[0]?.locked) throw new Error('Another B1/B2 run is in progress');
     const rows = await db.query('SELECT message_id, envelope FROM b1.events ORDER BY message_id');
-    if (rows.rows.length < 1 || rows.rows.length >= expectedCount)
+    if (rows.rows.length >= expectedCount)
       throw new Error('Unexpected number of existing B2 rows; refusing recovery');
     const seen = new Set<number>();
     for (const row of rows.rows) {
@@ -46,7 +48,7 @@ async function main() {
     const dlq = await channel.checkQueue(topology.dlq);
     if (main.consumerCount || main.messageCount !== expectedCount - seen.size ||
         dlq.messageCount !== 1 || dlq.consumerCount)
-      throw new Error('Queue depth does not complement DB rows to 5000; refusing recovery');
+      throw new Error(`Queue depth does not complement DB rows to ${expectedCount}; refusing recovery`);
     const queuedAtStart = main.messageCount;
     for (let i = 0; i < queuedAtStart; i++) {
       const msg = await channel.get(topology.queue, { noAck: false });

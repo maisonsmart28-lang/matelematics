@@ -213,3 +213,24 @@ Repeat comparable cells and add a bounded capacity test whose input exceeds
 Verify batch replay after a commit/ACK interruption before treating this
 experimental worker as production ready. The twofold capacity gate remains
 unproven; no production or HA result follows from the local pilot.
+
+## Bounded sustained input cell — awaiting local result
+
+The next cell sends exactly 20,000 synthetic events at a paced 2,000/s
+for about 10 seconds using four workers and batch size 20. This is a
+separate controlled configuration; the earlier options remain bounded.
+It reports pending events halfway through publication, at the end, and at
+peak, plus observed publication/DB rates and the time needed to drain.
+Run only after the main queue and benchmark table are empty, no other
+consumers exist, and the one retained DLQ event is present:
+
+```powershell
+npx --no-install tsx scripts/benchmark/step10e-rabbitmq-b2-pilot.ts --count=20000 --rate=2000 --workers=4 --batch-size=20
+```
+
+If the result is incomplete, inspect first and keep all evidence. The
+recovery tool now accepts a fully published 20,000-event run with an exact
+UUID and `--count=20000`; it refuses a partial publication or inconsistent
+DB/queue identities. Never start another load cell over an incomplete run.
+Passing this one 10-second cell only qualifies the configuration for
+repeated and longer tests of the sustained 1,556/s decision rule.
