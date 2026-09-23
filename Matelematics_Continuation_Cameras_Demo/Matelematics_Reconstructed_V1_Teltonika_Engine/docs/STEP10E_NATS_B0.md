@@ -217,7 +217,7 @@ availability or HA guarantee.
 ## B2 batch throughput pilot — ongoing
 
 The local B2 pilot uses four pull workers with at most 20 events per
-PostgreSQL transaction, 128 concurrent publisher confirmations, and the
+PostgreSQL transaction, 128 or 512 concurrent publisher confirmations, and the
 same synthetic envelope and dedicated database as the RabbitMQ B2 pilot.
 It checks all confirmations, deliveries, commits and ACKs, keeps the
 quarantine entry for inspection and deletes only its own committed rows.
@@ -244,9 +244,20 @@ rate miss. The producer confirmation window may contribute to the missed
 rate, but the database also trailed production. Treat these as separate
 measurements rather than inferring a capacity limit from one run.
 
-The next controlled run increases only the publisher confirmation window
-to 512 while retaining four workers, batches of 20 and the same 20,000
-events at 2,000/s:
+The second local run (run `b11edaad-24e9-4599-ae10-04466e1e214e`)
+increased only the confirmation window to 512. It returned PASS for
+producer rate and integrity: 20,000 confirmed and uniquely committed,
+20,000 ACKs, producer 1,999.76/s, confirmations 1,998.58/s, and
+commit plus ACK drain 1,182.12/s. Post producer drain took 6,923 ms,
+peak pending reached 12,368, end to end p95 was 7,569.45 ms; main and
+ACK pending=0, quarantine=1, database rows=0. The faster producer grew
+the backlog. The reported `observedDbDrainPerSec` in these earlier runs
+includes ACK confirmation and therefore does not isolate DB performance.
+
+The next diagnostic run retains the same 20,000 events, 2,000/s target,
+four workers, batches of 20 and 512 window. It additionally reports
+PostgreSQL transaction time, ACK confirmation time and commit drain
+separately. Compare the two runs cautiously because local load can vary:
 
 ```powershell
 node scripts/benchmark/step10e-nats-b2-pilot.mjs --count=20000 --rate=2000 --confirm-window=512

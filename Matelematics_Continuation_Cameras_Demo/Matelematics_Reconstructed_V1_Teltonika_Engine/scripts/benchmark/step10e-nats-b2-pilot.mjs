@@ -42,9 +42,10 @@ async function main() {
   let nc, completed = false, fatal, published = 0, confirmed = 0;
   let commits = 0, acks = 0, deliveries = 0, peakPending = 0, peakReady = 0;
   let peakUnconfirmed = 0, oldestPendingMs = 0, producerEnd = 0, lastAck = 0;
+  let lastCommit = 0;
   let firstDelivery = 0, stopping = false;
   const sent = new Map(), seen = new Set(), inFlight = new Set();
-  const dbLatency = [], endToEnd = [];
+  const dbLatency = [], endToEnd = [], transactionMs = [], ackConfirmMs = [];
   const fail = error => { fatal ??= error instanceof Error ? error : new Error('B2 worker failed'); };
   async function state(manager) {
     const [main, dead, consumer] = await Promise.all([
@@ -100,14 +101,19 @@ async function main() {
           }
           if (!batch.length) continue;
           const confirmations = [];
+          const transactionStarted = performance.now();
           await persistBatchThenAck(db, runId, batch.map(item => ({ event: item.event,
             ack: () => confirmations.push(item.msg.ackAck({ timeout: 5000 })) })));
+          const committedAt = performance.now();
+          lastCommit = Math.max(lastCommit, committedAt);
           if (!(await Promise.all(confirmations)).every(Boolean))
             throw new Error('Missing confirmed batch ACK; preserve evidence');
           const ended = performance.now();
+          transactionMs.push(committedAt - transactionStarted);
+          ackConfirmMs.push(ended - committedAt);
           for (const item of batch) {
             commits++; acks++;
-            dbLatency.push(ended - item.started);
+            dbLatency.push(committedAt - item.started);
             endToEnd.push(ended - item.sentAt);
             sent.delete(item.event.message_id);
           }
@@ -180,9 +186,12 @@ async function main() {
         published, confirmed, deliveries, uniqueLogicalCommits: commits, acks,
         observedProducerRatePerSec: observedRate, rateTargetMet: observedRate >= rate * 0.95,
         observedConfirmedRatePerSec: Math.round(count * 1000 / (confirmedAt - startedAt) * 100) / 100,
+        observedCommitDrainPerSec: Math.round(count * 1000 / (lastCommit - firstDelivery) * 100) / 100,
         observedDbDrainPerSec: Math.round(count * 1000 / (lastAck - firstDelivery) * 100) / 100,
         postProducerDrainMs: Math.max(0, Math.round(lastAck - producerEnd)),
         peakPending, peakReady, peakUnconfirmed, oldestPendingMs: Math.round(oldestPendingMs),
+        transactionMs: { p50: percentile(transactionMs, 0.5), p95: percentile(transactionMs, 0.95) },
+        ackConfirmMs: { p50: percentile(ackConfirmMs, 0.5), p95: percentile(ackConfirmMs, 0.95) },
         dbLatencyMs: { p50: percentile(dbLatency, 0.5), p95: percentile(dbLatency, 0.95) },
         endToEndMs: { p50: percentile(endToEnd, 0.5), p95: percentile(endToEnd, 0.95) },
         pendingMessages: after.main.state.messages, ackPending: after.consumer.num_ack_pending,
