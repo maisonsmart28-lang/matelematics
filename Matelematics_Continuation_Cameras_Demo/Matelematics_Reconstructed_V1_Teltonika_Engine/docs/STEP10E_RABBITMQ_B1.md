@@ -8,14 +8,21 @@
 | B1.2 Crash before DB commit | 2 deliveries, 1 redelivery, 1 commit/ACK | PASS |
 | B1.3 Crash after DB commit | 2 deliveries, duplicate detected, 1 logical commit/ACK | PASS |
 | B1.4 PostgreSQL outage | 3 confirms, backlog 3, 1 failed DB attempt, 3 commits/ACKs | PASS |
-| B1.5 Poison and healthy event | Initial 2 confirms; retained run resumed: healthy commit/ACK, poison in DLQ with `delivery_limit` | RECOVERY PASS; clean single-run pending |
+| B1.5 Poison and healthy event | Clean run: 2 confirms, 4 poison deliveries, 1 healthy commit/ACK, poison in DLQ with `delivery_limit` | PASS |
 | B1.6 Broker restart | 3 confirmed messages recovered and committed/ACKed; same poison ID retained in DLQ | PASS |
 
 B1.6 run `d5f530e5-f49b-4019-baa2-c8309d459404` completed in
 7,557 ms after restart with 0 remaining benchmark rows. The independent
 RabbitMQ check after B1.6 showed main ready=0/unacked=0/consumers=0 and
-DLQ ready=1/unacked=0/consumers=0. The retained DLQ message ID is
-`8234335e-7e64-48d5-bbc4-3367a1dcb98d:poison`; **do not purge it**.
+DLQ ready=1/unacked=0/consumers=0. The prior DLQ ID
+`8234335e-7e64-48d5-bbc4-3367a1dcb98d:poison` was subsequently ACKed
+by exact identity after inspection. The clean B1.5 run
+`0f2ef9bb-81ed-43e4-8dfe-f8dd4a9f9358` confirmed 2 publications,
+4 poison deliveries (3 redeliveries), 1 healthy commit/ACK, main ready=0,
+DLQ ready=1 and remainingRows=0. An independent broker check showed main
+ready=0/unacked=0/consumers=0 and DLQ ready=1/unacked=0/consumers=0.
+The **current retained DLQ message** is
+`0f2ef9bb-81ed-43e4-8dfe-f8dd4a9f9358:poison`; do not purge it.
 
 For the clean B1.5 rerun, the prior poison evidence was inspected in the B1.5
 recovery and B1.6 broker restart. Only after checking RabbitMQ reports main
@@ -28,15 +35,14 @@ death reason. It ACKs only that one inspected message; it never purges a queue:
 npx --no-install tsx scripts/benchmark/step10e-rabbitmq-b1-poison.ts --ack-inspected-dlq 8234335e-7e64-48d5-bbc4-3367a1dcb98d:poison
 ```
 
-After `step10e-rabbitmq-b1-dlq-ack` reports `PASS`, run the B1.5 normal
-command shown below once to verify the complete poison/healthy flow. That
-clean run deliberately leaves its newly generated poison message in the DLQ.
+The exact-message acknowledgment reported `PASS`, removing only the prior
+inspected poison. The subsequent clean B1.5 command passed and intentionally
+left the new poison ID listed above in the DLQ.
 
 This is a local, single-node functional validation. It does not establish HA,
 capacity at fleet scale, cost, or production suitability. Before a production
-queue decision, run a clean B1.5 end-to-end test after separately reviewing
-and explicitly removing only the retained poison message; benchmark B2
-throughput at the baseline and controlled burst; evaluate NATS JetStream on
+queue decision, benchmark B2 throughput at the baseline and controlled burst;
+evaluate NATS JetStream on
 the same functional criteria; then assess HA, Infomaniak-compatible capacity,
 Morocco/CNDP constraints and MAD cost as required by `STEP10E_QUEUE_PHASE_B.md`.
 
@@ -157,7 +163,9 @@ the poison reached the DLQ with reason `delivery_limit`, main ready=0,
 DLQ ready=1, and remainingRows=0. The independent broker check showed
 main ready=0/unacked=0/consumers=0 and DLQ ready=1/unacked=0/consumers=0.
 The original two publications were confirmed in the earlier run; a new clean
-single-run B1.5 execution was not performed. Keep the DLQ evidence intact.
+single-run B1.5 execution had not yet been performed at that point. The prior
+DLQ message was later ACKed by exact identity and a clean B1.5 run passed;
+the new poison evidence remains intact.
 
 B1.6 publishes three durable confirmed events, stops and starts only the
 `matelematics-rabbitmq` Docker container, then verifies that all three events
