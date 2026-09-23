@@ -7,8 +7,11 @@ import { localRabbitUrl, topology } from './step10e-rabbitmq-b1-config';
 import { benchmarkDatabaseUrl, persistThenAck, type Envelope } from './step10e-rabbitmq-b1-store';
 
 async function main() {
-  const runId = randomUUID();
-  const healthy: Envelope = {
+  const resume = process.argv[2] === '--resume-failed-run';
+  const runId = resume ? process.argv[3] : randomUUID();
+  if (!runId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(runId))
+    throw new Error('Invalid benchmark run ID');
+  let healthy: Envelope = {
     message_id: `${runId}:healthy`, schema_version: 1,
     company_id: '00000000-0000-0000-0000-000000000001',
     vehicle_id: '00000000-0000-0000-0000-000000000002',
@@ -49,20 +52,54 @@ async function main() {
     await publisher.checkExchange(topology.exchange);
     const before = await publisher.checkQueue(topology.queue);
     const deadBefore = await publisher.checkQueue(topology.dlq);
-    if (before.messageCount || before.consumerCount || deadBefore.messageCount || deadBefore.consumerCount)
-      throw new Error('Queues must be empty without consumers; no automatic purge');
+    if (before.messageCount !== (resume ? 2 : 0) || before.consumerCount ||
+        deadBefore.messageCount || deadBefore.consumerCount)
+      throw new Error('Unexpected queue depth or consumers; no automatic purge');
     let returned = false;
     publisher.on('return', () => { returned = true; });
-    for (const [id, raw] of [[poisonId, poisonRaw], [healthy.message_id, JSON.stringify(healthy)]]) {
-      publisher.publish(topology.exchange, topology.routingKey, Buffer.from(raw),
-        { persistent: true, mandatory: true, contentType: 'application/json', messageId: id });
-      published++;
-      await publisher.waitForConfirms();
-      if (returned) throw new Error('Mandatory publish was unroutable');
-      confirmed++;
+    if (!resume) {
+      for (const [id, raw] of [[poisonId, poisonRaw], [healthy.message_id, JSON.stringify(healthy)]]) {
+        publisher.publish(topology.exchange, topology.routingKey, Buffer.from(raw),
+          { persistent: true, mandatory: true, contentType: 'application/json', messageId: id });
+        published++;
+        await publisher.waitForConfirms();
+        if (returned) throw new Error('Mandatory publish was unroutable');
+        confirmed++;
+      }
     }
 
-    // basic.get has no consumer registration. Bound retries and wait between nacks.
+    // Hold poison unacked while accepting the healthy event. This avoids
+    // a head-of-queue retry loop starving healthy telemetry.
+    const first = await worker.get(topology.queue, { noAck: false });
+    const second = await worker.get(topology.queue, { noAck: false });
+    if (!first || !second) throw new Error('Expected two messages; retained without ACK');
+    const poisonMsg = first.properties.messageId === poisonId ? first : second;
+    const healthyMsg = first.properties.messageId === `${runId}:healthy` ? first : second;
+    if (poisonMsg.properties.messageId !== poisonId ||
+        poisonMsg.content.toString('utf8') !== poisonRaw ||
+        healthyMsg.properties.messageId !== `${runId}:healthy`)
+      throw new Error('Unexpected message identities; retained without ACK');
+    const healthyRaw = healthyMsg.content.toString('utf8');
+    if (resume) healthy = JSON.parse(healthyRaw) as Envelope;
+    if (healthyRaw !== JSON.stringify(healthy) || healthy.message_id !== `${runId}:healthy` ||
+        healthy.schema_version !== 1 || healthy.payload?.benchmark !== 'step10e4f_b1' ||
+        healthy.payload.sequence !== 0 || healthy.company_id !== '00000000-0000-0000-0000-000000000001' ||
+        healthy.vehicle_id !== '00000000-0000-0000-0000-000000000002' ||
+        healthyMsg.properties.deliveryMode !== 2)
+      throw new Error('Unexpected healthy envelope; messages retained');
+    if (!await persistThenAck(db, runId, healthy, () => { worker!.ack(healthyMsg); acks++; }))
+      throw new Error('Healthy event identity already exists');
+    healthyCommits++;
+    const decoded = JSON.parse(poisonRaw) as { company_id?: unknown };
+    if (typeof decoded.company_id === 'string') throw new Error('Poison unexpectedly passed validation');
+    poisonDeliveries++;
+    if (poisonMsg.fields.redelivered) poisonRedeliveries++;
+    failedValidationAttempts++;
+    worker.reject(poisonMsg, true); // actual failed delivery counts toward quorum limit
+    await sleep(100);
+
+    // basic.reject increments the delivery-failure counter; basic.nack does not
+    // on recent RabbitMQ releases. Bound retries and wait between rejects.
     const deadline = Date.now() + 30000;
     while (Date.now() < deadline) {
       const msg = await worker.get(topology.queue, { noAck: false });
@@ -78,17 +115,12 @@ async function main() {
         if (msg.fields.redelivered) poisonRedeliveries++;
         if (poisonDeliveries > topology.deliveryLimit + 2)
           throw new Error('Poison retry bound exceeded; message retained without ACK');
-        const decoded = JSON.parse(raw) as { company_id?: unknown };
-        if (typeof decoded.company_id === 'string')
+        const decodedAttempt = JSON.parse(raw) as { company_id?: unknown };
+        if (typeof decodedAttempt.company_id === 'string')
           throw new Error('Poison unexpectedly passed validation');
         failedValidationAttempts++;
-        worker.nack(msg, false, true); // broker delivery limit routes to DLQ
+        worker.reject(msg, true); // broker delivery limit routes to DLQ
         await sleep(100);
-      } else if (msg.properties.messageId === healthy.message_id && raw === JSON.stringify(healthy)) {
-        if (healthyCommits) throw new Error('Unexpected healthy duplicate; message retained');
-        if (!await persistThenAck(db, runId, healthy, () => { worker!.ack(msg); acks++; }))
-          throw new Error('Healthy event identity already exists');
-        healthyCommits++;
       } else throw new Error('Unexpected message; retained without ACK');
     }
     await worker.close();
@@ -96,7 +128,8 @@ async function main() {
     const ready = await publisher.checkQueue(topology.queue);
     const dead = await publisher.checkQueue(topology.dlq);
     const rows = await db.query('SELECT message_id FROM b1.events WHERE run_id=$1::uuid', [runId]);
-    if (published !== 2 || confirmed !== 2 || healthyCommits !== 1 || acks !== 1 ||
+    if (published !== (resume ? 0 : 2) || confirmed !== (resume ? 0 : 2) ||
+        healthyCommits !== 1 || acks !== 1 ||
         poisonDeliveries < 2 || poisonDeliveries > topology.deliveryLimit + 2 ||
         failedValidationAttempts !== poisonDeliveries || poisonRedeliveries < 1 ||
         ready.messageCount || ready.consumerCount || dead.messageCount !== 1 ||
@@ -125,7 +158,8 @@ async function main() {
     const remaining = await db.query('SELECT count(*)::int AS n FROM b1.events WHERE run_id=$1::uuid', [runId]);
     if (remaining.rows[0].n !== 0) throw new Error('B1.5 healthy-row cleanup incomplete');
     completed = true;
-    console.log(JSON.stringify({ event: 'step10e-rabbitmq-b1-poison', result: 'PASS', runId,
+    console.log(JSON.stringify({ event: 'step10e-rabbitmq-b1-poison',
+      result: resume ? 'RECOVERY_PASS' : 'PASS', runId,
       published, confirmed, poisonDeliveries, poisonRedeliveries,
       failedValidationAttempts, healthyCommits, acks, readyDepth: ready.messageCount,
       dlqDepth: settled.messageCount, poisonMessageId: poisonId,

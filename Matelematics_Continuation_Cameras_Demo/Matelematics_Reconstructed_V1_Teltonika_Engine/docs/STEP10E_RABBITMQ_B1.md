@@ -97,6 +97,23 @@ npx --no-install tsx scripts/benchmark/step10e-rabbitmq-b1-poison.ts
 Inspect the result before any explicit DLQ cleanup. Do not purge the queue.
 B1.6 broker restart remains pending.
 
+The first B1.5 run (`8234335e-7e64-48d5-bbc4-3367a1dcb98d`) stopped safely
+after six poison deliveries with 0 commits/ACKs. Both confirmed events remain
+ready in the main queue; DLQ is empty. RabbitMQ's current quorum documentation
+states that AMQP 0-9-1 `basic.nack` with requeue does not increment the
+delivery-failure count, whereas `basic.reject` does. The revised script uses
+bounded rejects, holds both initial messages to process the healthy event
+without starvation, and offers a resume mode that checks exactly these two
+messages and republishes nothing:
+
+```powershell
+npx --no-install tsx scripts/benchmark/step10e-rabbitmq-b1-poison.ts --resume-failed-run 8234335e-7e64-48d5-bbc4-3367a1dcb98d
+```
+
+The resume result is `RECOVERY_PASS` only if the healthy event commits/ACKs,
+the poison reaches the DLQ with a delivery-limit reason, and the healthy row
+is cleaned. Leave the poison message available for inspection.
+
 The first B1.4 run (`0c07ff4d-0ee7-47c1-9bf9-a4b65eaf422f`) on 2026-09-23
 completed three confirmed publications, one failed DB connection, three commits
 and three ACKs, but failed an unspecified final assertion. Both queues were
