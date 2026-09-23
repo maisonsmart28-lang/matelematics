@@ -76,6 +76,27 @@ npx --no-install tsx scripts/benchmark/step10e-rabbitmq-b1-db-outage.ts
 B1.5-B1.6 poison and broker restart scenarios remain pending. A
 single local broker is not an HA or production capacity validation.
 
+B1.4 passed locally on 2026-09-23 after awaiting broker consumer removal:
+3 published/confirmed, 1 failed DB attempt, peak backlog 3, 4 deliveries,
+1 redelivery, 3 unique commits/ACKs, ready=0, DLQ=0, remainingRows=0.
+An independent `rabbitmqctl list_queues` check showed 0 ready, 0 unacked,
+0 consumers for both queues.
+
+B1.5 publishes one invalid synthetic envelope and one healthy event to the
+local quorum queue. The invalid event is retried within a hard bound; the
+broker's delivery limit must move it into the DLQ with a `delivery_limit`
+reason. The healthy event must commit and ACK. The script checks the DLQ
+message identity and requeues it after inspection; **it intentionally leaves
+the poison message in the DLQ**. Run with initially empty queues and no
+other consumers:
+
+```powershell
+npx --no-install tsx scripts/benchmark/step10e-rabbitmq-b1-poison.ts
+```
+
+Inspect the result before any explicit DLQ cleanup. Do not purge the queue.
+B1.6 broker restart remains pending.
+
 The first B1.4 run (`0c07ff4d-0ee7-47c1-9bf9-a4b65eaf422f`) on 2026-09-23
 completed three confirmed publications, one failed DB connection, three commits
 and three ACKs, but failed an unspecified final assertion. Both queues were
