@@ -25,10 +25,13 @@ function percentile(items, ratio) {
   return Math.round((sorted[Math.ceil(sorted.length * ratio) - 1] ?? 0) * 100) / 100;
 }
 async function main() {
-  if (process.argv.slice(2).some(arg => !/^--(?:count|rate)=\d+$/.test(arg)))
-    throw new Error('Only --count and --rate are supported');
+  if (process.argv.slice(2).some(arg => !/^--(?:count|rate|confirm-window)=\d+$/.test(arg)))
+    throw new Error('Only --count, --rate and --confirm-window are supported');
   const count = option('count', 1000, 100, 20000);
   const rate = option('rate', 200, 10, 2000);
+  const confirmWindow = option('confirm-window', 128, 128, 512);
+  if (![128, 256, 512].includes(confirmWindow))
+    throw new Error('Confirm window must be 128, 256 or 512');
   if (count !== 1000 && count !== 20000) throw new Error('Use 1000 or 20000 events');
   if (count === 20000 && rate !== 2000) throw new Error('20000 events require rate=2000');
   const runId = randomUUID();
@@ -127,7 +130,7 @@ async function main() {
       const startedAt = performance.now();
       for (let i = 0; i < count; i++) {
         if (fatal) throw fatal;
-        while (inFlight.size >= 128 && !fatal) await Promise.race(inFlight);
+        while (inFlight.size >= confirmWindow && !fatal) await Promise.race(inFlight);
         if (fatal) throw fatal;
         const delay = startedAt + i * 1000 / rate - performance.now();
         if (delay > 0) await sleep(delay);
@@ -173,7 +176,7 @@ async function main() {
       const observedRate = Math.round(count * 1000 / (producerEnd - startedAt) * 100) / 100;
       console.log(JSON.stringify({ event: 'step10e-nats-b2-pilot',
         result: observedRate >= rate * 0.95 ? 'PASS' : 'INTEGRITY_PASS_RATE_MISSED',
-        runId, targetRatePerSec: rate, workers: 4, batchSize: 20, confirmWindow: 128,
+        runId, targetRatePerSec: rate, workers: 4, batchSize: 20, confirmWindow,
         published, confirmed, deliveries, uniqueLogicalCommits: commits, acks,
         observedProducerRatePerSec: observedRate, rateTargetMet: observedRate >= rate * 0.95,
         observedConfirmedRatePerSec: Math.round(count * 1000 / (confirmedAt - startedAt) * 100) / 100,

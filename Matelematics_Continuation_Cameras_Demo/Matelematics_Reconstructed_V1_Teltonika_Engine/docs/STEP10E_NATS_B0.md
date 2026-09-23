@@ -214,7 +214,7 @@ explicit quarantine, and broker restart. The controlled B2 throughput
 comparison and longer runs remain open; single-node recovery is not an
 availability or HA guarantee.
 
-## B2 batch throughput pilot — ready for local validation
+## B2 batch throughput pilot — ongoing
 
 The local B2 pilot uses four pull workers with at most 20 events per
 PostgreSQL transaction, 128 concurrent publisher confirmations, and the
@@ -227,11 +227,34 @@ Start with the bounded 1,000 message / 200 per second diagnostic cell:
 node scripts/benchmark/step10e-nats-b2-pilot.mjs --count=1000 --rate=200
 ```
 
-The 20,000 message / 2,000 per second cell is available after the first
-result and state inspection. These are local single node measurements,
-not claims about production capacity. If the script reports `incomplete`,
-retain its run ID and inspect both streams and the benchmark rows before
-another test; do not purge the retained messages. Local result pending.
+Observed local 1,000 message / 200 per second result on 2026-09-23 (run
+`0ac9c489-a690-41e2-8801-93033d0eef9b`): PASS, 1,000 confirmed and
+uniquely committed, 1,000 ACKs, producer 200.18/s, DB drain 167.78/s,
+end to end p95 391.43 ms and 969 ms of drain after production.
+Primary pending=0, ACK pending=0, quarantine=1, benchmark rows=0.
+
+The initial 20,000 message / 2,000 per second local run (run
+`e8b52231-7d05-42c3-b9aa-c569e139620c`) returned
+`INTEGRITY_PASS_RATE_MISSED`: all 20,000 publications confirmed, 20,000
+unique commits and ACKs, primary pending=0, ACK pending=0, quarantine=1,
+rows=0; observed producer 1,861.72/s, confirmed 1,859.34/s, DB drain
+1,428.69/s, 3,261 ms of drain after production. Peak unconfirmed reached
+the configured 128; peak pending=10,680. This is an integrity pass and a
+rate miss. The producer confirmation window may contribute to the missed
+rate, but the database also trailed production. Treat these as separate
+measurements rather than inferring a capacity limit from one run.
+
+The next controlled run increases only the publisher confirmation window
+to 512 while retaining four workers, batches of 20 and the same 20,000
+events at 2,000/s:
+
+```powershell
+node scripts/benchmark/step10e-nats-b2-pilot.mjs --count=20000 --rate=2000 --confirm-window=512
+```
+
+These are single node diagnostics, not production capacity claims. If the
+script reports `incomplete`, inspect its run ID, both streams and the
+benchmark rows before another test; do not purge retained messages.
 
 ## Contract for B1 and B2 implementation
 
