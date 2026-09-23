@@ -53,3 +53,25 @@ capacity, HA, Infomaniak performance or MAD cost. Later B2 steps must add
 the controlled 2,000/s burst and controlled worker/prefetch combinations,
 repeat comparable runs, and benchmark NATS JetStream on equivalent semantics.
 Cloud B3 work requires explicit authorization and a Morocco/CNDP review.
+
+## Interrupted local run — inspect and recover before any new benchmark
+
+A later run `af93dc2d-a37b-454f-8a62-510245913c3b` was found with
+3,584 matching rows in `b1.events` and 1,416 ready RabbitMQ main-queue
+messages (0 unacked, 0 consumers); DLQ retained its prior one poison.
+The next pilot refused to publish because rows remained. Do not infer the
+original target rate or publisher-confirm count from the 5,000 persisted/
+queued messages, and do not purge the queue or delete rows manually.
+
+The targeted recovery script checks the benchmark DB identity, all existing
+row identities and envelopes, that DB rows plus ready depth equal exactly
+5,000, empty consumer counts and unchanged DLQ depth. It then validates each
+queued message before DB commit and ACK, verifies all 5,000 logical IDs and
+cleans only this run's rows on success. It publishes nothing:
+
+```powershell
+npx --no-install tsx scripts/benchmark/step10e-rabbitmq-b2-recover.ts af93dc2d-a37b-454f-8a62-510245913c3b
+```
+
+Only after recovery reports `PASS` should the paced 778/s cell be rerun with
+the pipelined-confirm version of the pilot.
