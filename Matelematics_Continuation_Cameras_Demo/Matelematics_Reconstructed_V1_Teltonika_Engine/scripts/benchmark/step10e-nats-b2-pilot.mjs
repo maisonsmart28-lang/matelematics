@@ -27,13 +27,15 @@ function percentile(items, ratio) {
 async function main() {
   if (process.argv.slice(2).some(arg => !/^--(?:count|rate|confirm-window)=\d+$/.test(arg)))
     throw new Error('Only --count, --rate and --confirm-window are supported');
-  const count = option('count', 1000, 100, 20000);
+  const count = option('count', 1000, 100, 60000);
   const rate = option('rate', 200, 10, 2000);
   const confirmWindow = option('confirm-window', 128, 128, 512);
   if (![128, 256, 512].includes(confirmWindow))
     throw new Error('Confirm window must be 128, 256 or 512');
-  if (count !== 1000 && count !== 20000) throw new Error('Use 1000 or 20000 events');
-  if (count === 20000 && rate !== 2000) throw new Error('20000 events require rate=2000');
+  if (![1000, 20000, 60000].includes(count))
+    throw new Error('Use 1000, 20000 or 60000 events');
+  if (count >= 20000 && rate !== 2000)
+    throw new Error('20000 and 60000 events require rate=2000');
   const runId = randomUUID();
   const monitorDb = new pg.Client({ connectionString: benchmarkDatabaseUrl(), ssl: false,
     connectionTimeoutMillis: 10000, statement_timeout: 10000, query_timeout: 15000,
@@ -46,6 +48,7 @@ async function main() {
   let lastCommit = 0;
   let firstDelivery = 0, stopping = false;
   const sent = new Map(), seen = new Set(), inFlight = new Set();
+  const pendingCheckpoints = [];
   const dbLatency = [], endToEnd = [], transactionMs = [], ackConfirmMs = [];
   const fetchFirstMessageMs = [], fetchCompletionMs = [], batchSizes = [];
   const fail = error => { fatal ??= error instanceof Error ? error : new Error('B2 worker failed'); };
@@ -167,6 +170,8 @@ async function main() {
         published++;
         peakUnconfirmed = Math.max(peakUnconfirmed, inFlight.size);
         peakPending = Math.max(peakPending, published - acks);
+        if (count === 60000 && published % 20000 === 0)
+          pendingCheckpoints.push({ published, pending: published - acks });
       }
       producerEnd = performance.now();
       await Promise.all(inFlight);
@@ -199,6 +204,7 @@ async function main() {
         observedDbDrainPerSec: Math.round(count * 1000 / (lastAck - firstDelivery) * 100) / 100,
         postProducerDrainMs: Math.max(0, Math.round(lastAck - producerEnd)),
         peakPending, peakReady, peakAckPending, peakUnconfirmed,
+        pendingCheckpoints,
         oldestPendingMs: Math.round(oldestPendingMs),
         batchFetch: { batches: batchSizes.length, emptyFetches,
           averageSize: Math.round(count / batchSizes.length * 100) / 100,

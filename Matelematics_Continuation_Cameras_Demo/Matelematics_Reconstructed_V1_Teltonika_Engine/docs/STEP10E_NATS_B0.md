@@ -277,11 +277,12 @@ The RabbitMQ pilot's reported drain window and NATS commit window use
 different ACK timing, so these measurements compare the local harnesses,
 not an intrinsic broker limit. NATS B1 reliability controls passed; the
 current NATS B2 harness does not sustain the 2,000/s goal without backlog.
-A 60,000 message NATS run is deferred while its 20,000 message backlog
-grows. Profile the local PostgreSQL transactions and JetStream consumer
-pull/batch scheduling before changing architecture or making a production
-capacity claim. The RabbitMQ 60,000 message run did sustain 2,000/s in
-the same local test setup.
+At that point a 60,000 message NATS run was deferred because its
+20,000-message backlog grew with both brokers running. Later pull
+profiling and broker-isolated controls are recorded below. They are
+needed before changing architecture or making a production capacity
+claim. The earlier RabbitMQ 60,000 message run sustained 2,000/s
+under its then-local conditions.
 
 To reproduce the instrumented NATS diagnostic run:
 
@@ -354,7 +355,33 @@ node scripts/benchmark/step10e-nats-b2-isolate-rabbitmq.mjs
 
 Wait for both the NATS pilot output and `RABBITMQ_RESTORED`. If externally
 interrupted, inspect and restart the dedicated RabbitMQ container before
-further tests. The reverse isolation result remains pending.
+further tests.
+
+Observed local isolated NATS result (run
+`1da42789-3f17-435d-9550-4f3d71b1e23b`): all 20,000 publications
+confirmed, 20,000 unique commits and ACKs; producer 1,999.65/s,
+commit drain 1,999.66/s, commit plus ACK drain 1,999.01/s,
+post producer drain 21 ms. Peak pending=696, end to end p95=319.07 ms,
+transaction p95=34.35 ms. Primary pending=0, ACK pending=0,
+quarantine=1, rows=0. `RABBITMQ_RESTORED` confirmed the original DLQ
+message remains. With the other broker stopped, this NATS configuration
+met the local 2,000/s goal for one 10-second cell. The earlier concurrent
+local run drained at about 1,125/s; the isolation controls support
+resource contention as a working explanation, but do not identify the
+host resource or establish long duration capacity.
+
+The next bounded cell keeps RabbitMQ stopped only for the duration of a
+60,000-event NATS run at 2,000/s (30 seconds), then restores it and
+checks its retained DLQ. The pilot reports pending checkpoints after
+20,000, 40,000 and 60,000 publications so a growing backlog is visible:
+
+```powershell
+node scripts/benchmark/step10e-nats-b2-isolate-rabbitmq.mjs --count=60000
+```
+
+Only run this control if the 20,000-message run cleared both NATS pending
+and benchmark rows, as observed above. A pass is still a local diagnostic,
+not a production or HA approval. The 60,000-message result is pending.
 
 These are single node diagnostics, not production capacity claims. If the
 script reports `incomplete`, inspect its run ID, both streams and the

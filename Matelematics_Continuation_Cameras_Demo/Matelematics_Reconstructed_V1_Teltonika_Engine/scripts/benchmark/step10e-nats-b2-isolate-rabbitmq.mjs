@@ -64,9 +64,9 @@ async function checkDbEmpty() {
     if (rows.rows[0].n) throw new Error('Benchmark database has existing rows');
   } finally { await db.end().catch(() => undefined); }
 }
-async function runNatsCell() {
+async function runNatsCell(count) {
   const script = 'scripts/benchmark/step10e-nats-b2-pilot.mjs';
-  const args = [script, '--count=20000', '--rate=2000', '--confirm-window=512'];
+  const args = [script, `--count=${count}`, '--rate=2000', '--confirm-window=512'];
   const child = spawn(process.execPath, args, { stdio: 'inherit', windowsHide: true });
   const code = await new Promise((resolve, reject) => {
     child.once('error', reject);
@@ -75,7 +75,10 @@ async function runNatsCell() {
   if (code !== 0) throw new Error(`NATS pilot exited with code ${code}; inspect its run ID`);
 }
 async function main() {
-  if (process.argv.length !== 2) throw new Error('Isolated local comparison takes no arguments');
+  if (process.argv.length !== 2 &&
+      !(process.argv.length === 3 && process.argv[2] === '--count=60000'))
+    throw new Error('Use no arguments or exactly --count=60000');
+  const count = process.argv.length === 3 ? 60000 : 20000;
   let stopAttempted = false, restored = false;
   await inspectContainer();
   await checkDbEmpty();
@@ -83,7 +86,7 @@ async function main() {
   try {
     stopAttempted = true;
     await docker('stop', '--time', '5', container);
-    await runNatsCell();
+    await runNatsCell(count);
   } finally {
     if (stopAttempted) {
       try {
@@ -91,7 +94,7 @@ async function main() {
         const after = await waitForRabbit();
         restored = true;
         console.log(JSON.stringify({ event: 'step10e-nats-b2-isolate-rabbitmq',
-          result: 'RABBITMQ_RESTORED', before, after }));
+          result: 'RABBITMQ_RESTORED', count, before, after }));
       } catch (error) {
         console.error('Dedicated RabbitMQ restart or DLQ verification failed:',
           error instanceof Error ? error.message : 'Unknown error');
