@@ -24,22 +24,23 @@ function percentile(samples: number[], ratio: number) {
 
 async function main() {
   for (const arg of process.argv.slice(2))
-    if (!/^--(?:count|rate|confirm-window)=\d+$/.test(arg)) throw new Error(`Unknown B2 pilot option: ${arg}`);
+    if (!/^--(?:count|rate|confirm-window|workers)=\d+$/.test(arg)) throw new Error(`Unknown B2 pilot option: ${arg}`);
   const count = option('count', 1000, 100, 10000);
   const rate = option('rate', 200, 10, 2000);
   const confirmWindow = option('confirm-window', 128, 1, 512);
+  const workers = option('workers', 1, 1, 4);
   const runId = randomUUID();
   const db = new pg.Client({ connectionString: benchmarkDatabaseUrl(), ssl: false,
     connectionTimeoutMillis: 10000, statement_timeout: 10000, query_timeout: 15000,
     application_name: 'matelematics_b2_local' });
   let connection: Awaited<ReturnType<typeof amqp.connect>> | undefined;
   let publisher: Awaited<ReturnType<NonNullable<typeof connection>['createConfirmChannel']>> | undefined;
-  let consumer: Awaited<ReturnType<NonNullable<typeof connection>['createChannel']>> | undefined;
   let monitor: Awaited<ReturnType<NonNullable<typeof connection>['createChannel']>> | undefined;
-  let tag: string | undefined;
+  type WorkerChannel = Awaited<ReturnType<NonNullable<typeof connection>['createChannel']>>;
+  const consumers: Array<{ channel: WorkerChannel; tag?: string; work: Promise<void> }> = [];
+  const workerDbs: pg.Client[] = [];
   let stopping = false, completed = false;
   let fatal: Error | undefined;
-  let work = Promise.resolve();
   let sampling = Promise.resolve();
   let published = 0, confirmed = 0, unconfirmed = 0, peakUnconfirmed = 0;
   let deliveries = 0, commits = 0, acks = 0;
@@ -66,49 +67,62 @@ async function main() {
     connection = await amqp.connect(localRabbitUrl(), { timeout: 10000 });
     connection.on('error', fail);
     publisher = await connection.createConfirmChannel();
-    consumer = await connection.createChannel();
     monitor = await connection.createChannel();
-    for (const channel of [publisher, consumer, monitor]) channel.on('error', fail);
+    for (const channel of [publisher, monitor]) channel.on('error', fail);
     publisher.on('return', () => fail(new Error('Mandatory B2 publish was unroutable')));
     await publisher.checkExchange(topology.exchange);
     const before = await monitor.checkQueue(topology.queue);
     const dlqBefore = await monitor.checkQueue(topology.dlq);
     if (before.messageCount || before.consumerCount || dlqBefore.messageCount !== 1 || dlqBefore.consumerCount)
       throw new Error('Expected empty main queue and one retained B1.5 DLQ event without consumers');
-    await consumer.prefetch(100);
-    const worker = consumer;
-    const subscription = await worker.consume(topology.queue, msg => {
-      if (!msg) { fail(new Error('B2 consumer cancelled unexpectedly')); return; }
-      work = work.then(async () => {
-        if (fatal) return;
-        deliveries++;
-        firstDeliveryAt ||= performance.now();
-        if (msg.fields.redelivered) { redeliveries++; throw new Error('Unexpected B2 redelivery'); }
-        const raw = msg.content.toString('utf8');
-        const event = JSON.parse(raw) as Envelope;
-        const expected = pending.get(event.message_id);
-        if (!expected || expected.raw !== raw || msg.properties.messageId !== event.message_id)
-          throw new Error('Unexpected B2 message; retained without ACK');
-        const started = performance.now();
-        const inserted = await persistThenAck(db, runId, event, () => {
-          if (fatal) throw fatal;
-          worker.ack(msg);
-          acks++;
-        });
-        if (!inserted) { duplicateDeliveries++; throw new Error('Unexpected B2 duplicate'); }
-        const ended = performance.now();
-        commits++;
-        dbLatencies.push(ended - started);
-        endToEndLatencies.push(ended - expected.sentAt);
-        pending.delete(event.message_id);
-        lastAckAt = ended;
-      }).catch(fail);
-    }, { noAck: false, exclusive: true });
-    tag = subscription.consumerTag;
+    for (let index = 0; index < workers; index++) {
+      const workerDb = new pg.Client({ connectionString: benchmarkDatabaseUrl(), ssl: false,
+        connectionTimeoutMillis: 10000, statement_timeout: 10000, query_timeout: 15000,
+        application_name: 'matelematics_b2_worker_local' });
+      workerDbs.push(workerDb);
+      await workerDb.connect();
+      workerDb.on('error', fail);
+      const channel = await connection.createChannel();
+      const entry: { channel: WorkerChannel; tag?: string; work: Promise<void> } = {
+        channel, work: Promise.resolve(),
+      };
+      consumers.push(entry);
+      channel.on('error', fail);
+      await channel.prefetch(topology.prefetch);
+      const subscription = await channel.consume(topology.queue, msg => {
+        if (!msg) { fail(new Error('B2 consumer cancelled unexpectedly')); return; }
+        entry.work = entry.work.then(async () => {
+          if (fatal) return;
+          deliveries++;
+          firstDeliveryAt ||= performance.now();
+          if (msg.fields.redelivered) { redeliveries++; throw new Error('Unexpected B2 redelivery'); }
+          const raw = msg.content.toString('utf8');
+          const event = JSON.parse(raw) as Envelope;
+          const expected = pending.get(event.message_id);
+          if (!expected || expected.raw !== raw || msg.properties.messageId !== event.message_id)
+            throw new Error('Unexpected B2 message; retained without ACK');
+          const started = performance.now();
+          const inserted = await persistThenAck(workerDb, runId, event, () => {
+            if (fatal) throw fatal;
+            channel.ack(msg);
+            acks++;
+          });
+          if (!inserted) { duplicateDeliveries++; throw new Error('Unexpected B2 duplicate'); }
+          const ended = performance.now();
+          commits++;
+          dbLatencies.push(ended - started);
+          endToEndLatencies.push(ended - expected.sentAt);
+          pending.delete(event.message_id);
+          lastAckAt = Math.max(lastAckAt, ended);
+        }).catch(fail);
+      }, { noAck: false, exclusive: workers === 1 });
+      entry.tag = subscription.consumerTag;
+    }
 
     sampling = (async () => {
       while (!stopping && !fatal) {
         const state = await monitor!.checkQueue(topology.queue);
+        if (state.consumerCount !== workers) throw new Error('Unexpected number of B2 consumers');
         peakReady = Math.max(peakReady, state.messageCount);
         const oldest = pending.values().next().value as { sentAt: number } | undefined;
         if (oldest) oldestPendingMs = Math.max(oldestPendingMs, performance.now() - oldest.sentAt);
@@ -160,11 +174,12 @@ async function main() {
     if (acks !== count) throw new Error('B2 drain timed out; evidence retained');
     stopping = true;
     await sampling;
-    await worker.cancel(tag);
-    tag = undefined;
-    await work;
-    await worker.close();
-    consumer = undefined;
+    for (const entry of consumers) {
+      if (entry.tag) await entry.channel.cancel(entry.tag);
+      entry.tag = undefined;
+    }
+    await Promise.all(consumers.map(entry => entry.work));
+    for (const entry of consumers) await entry.channel.close();
     let after = await monitor.checkQueue(topology.queue);
     const settleDeadline = Date.now() + 10000;
     while ((after.messageCount || after.consumerCount) && Date.now() < settleDeadline) {
@@ -193,7 +208,7 @@ async function main() {
     const rateTargetMet = observedProducerRatePerSec >= rate * 0.95;
     console.log(JSON.stringify({ event: 'step10e-rabbitmq-b2-pilot',
       result: rateTargetMet ? 'PASS' : 'INTEGRITY_PASS_RATE_MISSED', runId,
-      targetRatePerSec: rate, confirmWindow, peakUnconfirmed,
+      targetRatePerSec: rate, workers, confirmWindow, peakUnconfirmed,
       published, confirmed, deliveries,
       uniqueLogicalCommits: commits, acks, redeliveries, duplicateDeliveries,
       observedProducerRatePerSec, rateTargetMet,
@@ -205,13 +220,15 @@ async function main() {
       endToEndMs: { p50: percentile(endToEndLatencies, 0.5), p95: percentile(endToEndLatencies, 0.95), max: Math.round(Math.max(...endToEndLatencies) * 100) / 100 },
       readyDepth: after.messageCount, dlqDepth: dlqAfter.messageCount,
       remainingRows: remaining.rows[0].n,
-      note: 'Single local worker/DB; diagnostic pilot, not production capacity or HA' }));
+      note: 'Single-node local broker/DB; diagnostic pilot, not production capacity or HA' }));
   } finally {
     stopping = true;
     await sampling;
-    if (consumer && tag) await consumer.cancel(tag).catch(() => undefined);
-    await work;
-    if (consumer) await consumer.close().catch(() => undefined);
+    for (const entry of consumers)
+      if (entry.tag) await entry.channel.cancel(entry.tag).catch(() => undefined);
+    await Promise.all(consumers.map(entry => entry.work));
+    for (const entry of consumers) await entry.channel.close().catch(() => undefined);
+    for (const workerDb of workerDbs) await workerDb.end().catch(() => undefined);
     if (monitor) await monitor.close().catch(() => undefined);
     if (publisher) await publisher.close().catch(() => undefined);
     if (connection) await connection.close().catch(() => undefined);

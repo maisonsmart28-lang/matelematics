@@ -17,7 +17,7 @@ bounded default window of 128 unconfirmed messages. It still verifies all
 `--confirm-window=N` (1–512); report it alongside observed producer and
 confirmed rates. Rerun the 778/s cell before proceeding to a burst.
 
-This diagnostic pilot runs a single consumer and PostgreSQL client against
+This diagnostic pilot defaults to one consumer and PostgreSQL client against
 the dedicated local B1 database and the existing RabbitMQ quorum queue. It
 does not read Supabase business data or modify production schema/RLS. It
 requires the main queue empty, no consumers, no benchmark rows, and exactly
@@ -75,3 +75,37 @@ npx --no-install tsx scripts/benchmark/step10e-rabbitmq-b2-recover.ts af93dc2d-a
 
 Only after recovery reports `PASS` should the paced 778/s cell be rerun with
 the pipelined-confirm version of the pilot.
+
+That interrupted run was recovered: 1,416 deliveries/ACKs completed the
+previous 3,584 rows to 5,000 unique commits, main ready=0, DLQ=1 and
+remainingRows=0. It provides no measurement of its original producer rate.
+
+## Pipelined baseline and controlled worker count
+
+A clean 5,000-event run on 2026-09-23 reached 778.09 published/s and
+777.29 confirmed/s with 128 maximum unconfirmed (17 observed), all 5,000
+unique commits/ACKs, zero retries or duplicates. One worker drained at
+255.27 commits/s. Pending messages peaked at 3,470, the ready queue at
+3,364; post-producer drain took 13,172 ms, end-to-end p95 was 12,503.35 ms.
+Main ready=0, DLQ=1 and remainingRows=0 at completion.
+
+The incoming baseline is demonstrated locally, but one worker cannot sustain
+the 778/s input: its DB drain is 255.27/s. The Phase A/B decision rule
+requires sustained DB drain >= 2 × 778/s (1,556/s) for this tier, alongside
+bounded/draining backlog. Do not run the planned 2,000/s burst as a capacity
+claim with the one-worker configuration.
+
+The pilot now supports `--workers=N` with 1–4 isolated PostgreSQL connections
+and RabbitMQ consumer channels. The control connection still owns the run
+lock and performs final assertions. Compare the same 5,000-event 778/s cell
+with **two workers first**, only when the main queue is empty, no other
+consumers are active, benchmark rows are absent and the retained DLQ depth is 1:
+
+```powershell
+npx --no-install tsx scripts/benchmark/step10e-rabbitmq-b2-pilot.ts --count=5000 --rate=778 --workers=2
+```
+
+After inspecting two-worker results, a four-worker cell may be justified.
+Increasing concurrency is a measured experiment: it is not assumed to
+improve PostgreSQL throughput or the 2× capacity gate. Batch persistence,
+repeatability and the controlled burst remain separate B2 work.
