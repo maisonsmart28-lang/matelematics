@@ -184,7 +184,7 @@ quarantine retains exactly one message with ID
 `d643263c-6936-4d03-b62e-ca5971e6ef6d:poison`. Preserve it for the
 broker restart comparison.
 
-## Dedicated NATS broker restart — ready for local validation
+## Dedicated NATS broker restart — PASS
 
 This control checks the exact Compose container, its named JetStream volume
 and the retained quarantine message. It publishes three confirmed messages,
@@ -199,7 +199,20 @@ node scripts/benchmark/step10e-nats-b1-broker-restart.mjs d643263c-6936-4d03-b62
 
 If the control reports `incomplete`, inspect the run ID, database and both
 streams before any retry; do not delete the data volume or purge streams.
-Local result pending.
+
+Observed local result on 2026-09-23 (run
+`2a4f7cc8-41d0-434b-a155-6e5c828e31b2`): three confirmed messages
+survived the NATS container restart, followed by three unique commits and
+three confirmed ACKs. Recovery took 1,144 ms. Primary pending=0,
+ACK pending=0 and benchmark rows=0 after cleanup. The quarantine stream
+still holds the exact message
+`d643263c-6936-4d03-b62e-ca5971e6ef6d:poison`.
+
+The local NATS B1 checks now cover normal processing, crashes on either
+side of the DB commit, an actual DB outage, bounded poison retries with
+explicit quarantine, and broker restart. The controlled B2 throughput
+comparison and longer runs remain open; single-node recovery is not an
+availability or HA guarantee.
 
 ## Contract for B1 and B2 implementation
 
