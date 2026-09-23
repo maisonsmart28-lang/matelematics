@@ -55,8 +55,25 @@ npx --no-install tsx scripts/benchmark/step10e-rabbitmq-b1-crash-after-commit.ts
 ```
 
 On failure, messages and rows are retained for inspection; do not purge either
-queue or remove the PostgreSQL volume. B1.4-B1.6 outage, poison and broker
-restart scenarios remain pending. A
+queue or remove the PostgreSQL volume. B1.3 passed locally on 2026-09-23:
+1 confirmed publication, 2 deliveries, 1 redelivery, 1 unique logical commit,
+1 duplicate detected, 1 ACK and empty queues. The independent broker check
+showed 0 ready, 0 unacked, 0 consumers for both queues.
+
+B1.4 temporarily stops only the dedicated `matelematics-b1-postgres` container
+after checking its Compose labels, image and healthy state. It publishes three
+confirmed events during the outage, attempts a database connection, verifies
+no ACK and a three-message backlog, then restarts the same container and drains
+the queue with one logical commit per event. Its `finally` block attempts to
+restart the benchmark database after a failure; inspect retained messages and
+rows before retrying. From the application root, with both queues initially
+empty and no other consumers:
+
+```powershell
+npx --no-install tsx scripts/benchmark/step10e-rabbitmq-b1-db-outage.ts
+```
+
+B1.5-B1.6 poison and broker restart scenarios remain pending. A
 single local broker is not an HA or production capacity validation.
 
 Vercel: the `git.deploymentEnabled` branch rule in vercel.json is intended to disable
