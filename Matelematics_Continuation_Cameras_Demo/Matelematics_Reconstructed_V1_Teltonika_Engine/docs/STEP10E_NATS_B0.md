@@ -118,11 +118,10 @@ two deliveries including one redelivery, one unique commit, one detected
 duplicate delivery and one confirmed ACK. Recovery took 29,990 ms; primary
 pending=0, ACK pending=0, quarantine=0 and benchmark rows=0. Together with
 the pre-commit test, this demonstrates idempotent replay around both sides
-of the DB commit on a single local NATS node. A real DB outage, permanent
-poison/quarantine handling, broker restart and a comparable B2 throughput
-test remain open.
+of the DB commit on a single local NATS node. Permanent poison/quarantine
+handling, broker restart and a comparable B2 throughput test remain open.
 
-## Dedicated PostgreSQL outage — ready for local validation
+## Dedicated PostgreSQL outage — PASS
 
 Run from the application directory with the dedicated RabbitMQ B1 PostgreSQL
 container healthy. This control checks the exact Docker Compose identity,
@@ -148,7 +147,15 @@ node scripts/benchmark/step10e-nats-b1-db-outage-recover.mjs <runId>
 ```
 
 Do not purge the streams, delete the database volume, or repeat the test
-over retained evidence. Local result pending.
+over retained evidence.
+
+Observed local result on 2026-09-23 (run
+`d497e7d3-6165-4c5f-a72e-7db6b00d886e`): three publications and
+confirmations, one failed database connection during the outage, backlog
+of three, one redelivery, three unique commits and three confirmed ACKs.
+Recovery took 30,039 ms; primary pending=0, ACK pending=0, quarantine=0,
+benchmark rows=0 after cleanup. This confirms local database outage recovery
+with a durable JetStream consumer; it does not measure HA.
 
 ## Contract for B1 and B2 implementation
 
