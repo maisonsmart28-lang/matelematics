@@ -28,7 +28,10 @@ async function scenario(rowCount: number, failCommit: boolean, expectedQueries: 
   assert.equal(acked.length, expectedAcks);
 }
 
-await scenario(2, false, ['BEGIN', 'INSERT', 'COMMIT'], 2);
-await scenario(1, false, ['BEGIN', 'INSERT', 'ROLLBACK'], 0);
-await scenario(2, true, ['BEGIN', 'INSERT', 'COMMIT', 'ROLLBACK'], 0);
-console.log('B2 batch commit-before-ACK selftest PASS');
+async function main() {
+  await scenario(2, false, ['BEGIN', 'INSERT', 'COMMIT'], 2);
+  await scenario(1, false, ['BEGIN', 'INSERT', 'ROLLBACK'], 0);
+  await scenario(2, true, ['BEGIN', 'INSERT', 'COMMIT', 'ROLLBACK'], 0);
+  console.log('B2 batch commit-before-ACK selftest PASS');
+}
+main().catch(error => { console.error(error); process.exitCode = 1; });
