@@ -308,7 +308,7 @@ field is unknown because it was not logged; its observed queues and DB
 were consistent with completion. The later PASS validates this specific
 local crash point, with no claim about wider outages or HA.
 
-## Thirty-second local input cell — awaiting local result
+## Thirty-second local input cell — local PASS
 
 With two passing 10-second cells and the targeted batch replay PASS, the
 next bounded cell paces exactly 60,000 synthetic messages at 2,000/s for
@@ -329,3 +329,22 @@ the existing recovery script accepts `--count=60000` only when all 60,000
 events were published and its strict row/queue identity checks pass. It
 cannot reconstruct a partially published run. Even a PASS is a local
 single-node observation and does not validate HA, cloud placement or cost.
+
+The first 30-second local cell passed on 2026-09-23 (run
+`95f82eeb-6dc6-41dc-9ca3-59f08ccc9722`): all 60,000 publications,
+confirmations, unique logical commits and ACKs matched, with zero
+redeliveries or duplicate deliveries. Observed producer rate was
+1,999.99/s; observed overall DB drain was 1,999.47/s. Pending at
+20,000/40,000/60,000 publications was 33/45/55, peak pending 140,
+oldest pending 58 ms and post-producer drain 20 ms. DB p95 was 19.62 ms,
+end-to-end p95 was 29.89 ms; main ready=0, DLQ=1 and remaining rows=0.
+The 2,790.79/s post-producer figure divides only 55 events by 20 ms and
+must not be interpreted as sustained DB throughput.
+
+This single local 30-second run, together with two local 10-second runs,
+supports bounded backlog at the 2,000/s workload for the four-worker,
+batch-20 configuration. The target of 1,556/s is exceeded **in this local
+configuration**, without implying production capacity or HA. Phase B still
+requires comparable NATS JetStream failure/throughput tests, intended
+production topology and recovery/HA evidence, cost in MAD and a
+Morocco/CNDP review before choosing a production queue.
