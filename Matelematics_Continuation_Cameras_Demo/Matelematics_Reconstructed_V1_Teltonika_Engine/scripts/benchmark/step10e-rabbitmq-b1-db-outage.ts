@@ -244,7 +244,13 @@ async function main() {
     recoveryMs = Date.now() - recoveryStarted;
     await worker.close();
     worker = undefined;
-    const after = await publisher.checkQueue(topology.queue);
+    let after = await publisher.checkQueue(topology.queue);
+    const settledDeadline = Date.now() + 10000;
+    while ((after.consumerCount !== 0 || after.messageCount !== 0) &&
+           Date.now() < settledDeadline) {
+      await sleep(50);
+      after = await publisher.checkQueue(topology.queue);
+    }
     const dlq = await publisher.checkQueue(topology.dlq);
     const rows = await db.query('SELECT message_id FROM b1.events WHERE run_id=$1::uuid', [runId]);
     const checks = {

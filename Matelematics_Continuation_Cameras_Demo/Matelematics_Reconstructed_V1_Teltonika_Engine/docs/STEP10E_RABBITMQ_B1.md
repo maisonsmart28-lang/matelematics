@@ -111,6 +111,20 @@ three rows after successful commits/ACKs and empty queue checks. A successful
 recovery is evidence for draining this backlog; the full B1.4 run must still
 pass independently.
 
+Recovery of that run passed: 3 commits, 3 ACKs, empty queues, 3 rows cleaned.
+The subsequent full run (`816a3ada-b87b-43a6-bdd5-0ef62ea065f5`) recorded
+3 confirmed publications, 1 failed DB attempt, 4 deliveries, 1 redelivery,
+3 commits and 3 ACKs. Its final check found ready=0, DLQ=0 and all 3 rows,
+but `consumers=1` immediately after channel close. This is the sole failed
+assertion. The revised script waits up to ten seconds for ready=0 and
+consumers=0; it still fails and retains evidence if a consumer remains.
+After separately verifying both queues have no ready/unacked messages or
+consumers, remove only that run's matching rows with:
+
+```powershell
+npx --no-install tsx scripts/benchmark/step10e-rabbitmq-b1-db-outage.ts --cleanup-failed-run 816a3ada-b87b-43a6-bdd5-0ef62ea065f5
+```
+
 Vercel: the `git.deploymentEnabled` branch rule in vercel.json is intended to disable
 automatic deploys for this development branch in both linked projects. Check the
 projects after publication; do not launch a manual deployment.
