@@ -277,3 +277,22 @@ npx --no-install tsx scripts/benchmark/step10e-rabbitmq-b2-batch-replay.ts
 If the result is incomplete, stop and inspect retained messages and rows;
 do not purge. A passing result covers this one local crash window and does
 not establish distributed failover or production reliability.
+
+The first attempt, run `4fc083bf-7ce4-4419-a693-c0beacc86f04`, retained
+evidence after its final assertion failed: 20 publisher confirmations and
+20 recovery ACKs were reported. Independent read-only inspection then found
+main ready=0/unacked=0/consumers=0, DLQ ready=1, and exactly 20 unique
+rows for this run. This is **not yet a PASS**: the assertion did not record
+which field failed. The script now waits up to 10 seconds for broker queue
+and consumer counters to settle and prints each assertion field on failure.
+No message was purged. The targeted cleanup script verifies the local DB,
+idle queues, retained DLQ and all 20 synthetic row identities before
+deleting exactly that run's rows:
+
+```powershell
+npx --no-install tsx scripts/benchmark/step10e-rabbitmq-b2-batch-replay-cleanup.ts 4fc083bf-7ce4-4419-a693-c0beacc86f04
+```
+
+Run cleanup only after verifying the queue and DB evidence above. A new
+replay test may be run only if cleanup reports PASS and the benchmark DB is
+empty. If any check differs, stop and preserve the evidence.

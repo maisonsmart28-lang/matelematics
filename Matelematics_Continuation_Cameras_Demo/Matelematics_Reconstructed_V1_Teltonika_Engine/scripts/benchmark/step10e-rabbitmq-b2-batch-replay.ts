@@ -132,11 +132,23 @@ async function main() {
       duplicateDeliveries++;
     }
     await consumer.close(); consumer = undefined;
-    const after = await publisher.checkQueue(topology.queue);
-    const deadAfter = await publisher.checkQueue(topology.dlq);
+    let after = await publisher.checkQueue(topology.queue);
+    let deadAfter = await publisher.checkQueue(topology.dlq);
+    const settleDeadline = Date.now() + 10000;
+    while ((after.messageCount || after.consumerCount || deadAfter.messageCount !== 1) &&
+           Date.now() < settleDeadline) {
+      await sleep(50);
+      after = await publisher.checkQueue(topology.queue);
+      deadAfter = await publisher.checkQueue(topology.dlq);
+    }
     if (confirmed !== size || redeliveries !== size || duplicateDeliveries !== size || acks !== size ||
-        after.messageCount || after.consumerCount || deadAfter.messageCount !== 1)
+        after.messageCount || after.consumerCount || deadAfter.messageCount !== 1) {
+      console.error(JSON.stringify({ event: 'step10e-rabbitmq-b2-batch-replay-assertion',
+        confirmed, redeliveries, duplicateDeliveries, acks,
+        readyDepth: after.messageCount, consumers: after.consumerCount,
+        dlqDepth: deadAfter.messageCount }));
       throw new Error('Batch replay assertion failed; evidence retained');
+    }
     await db.query('DELETE FROM b1.events WHERE run_id=$1::uuid', [runId]);
     const remaining = await db.query('SELECT count(*)::int AS n FROM b1.events WHERE run_id=$1::uuid', [runId]);
     if (remaining.rows[0].n !== 0) throw new Error('Batch replay cleanup incomplete');
