@@ -254,10 +254,36 @@ ACK pending=0, quarantine=1, database rows=0. The faster producer grew
 the backlog. The reported `observedDbDrainPerSec` in these earlier runs
 includes ACK confirmation and therefore does not isolate DB performance.
 
-The next diagnostic run retains the same 20,000 events, 2,000/s target,
-four workers, batches of 20 and 512 window. It additionally reports
-PostgreSQL transaction time, ACK confirmation time and commit drain
-separately. Compare the two runs cautiously because local load can vary:
+The instrumented diagnostic run (run
+`49fe298e-63f8-4f59-8a6e-e5bfa7427244`) retained the same 20,000
+events, 2,000/s target, four workers, batches of 20 and 512 window.
+It returned PASS for producer rate and integrity: 20,000 confirmed,
+committed uniquely and ACKed; producer 1,997.24/s, commit drain
+1,103.47/s and commit plus ACK drain 1,103.21/s. Transaction p50/p95
+was 9.82/109.19 ms and batch ACK confirmation p50/p95 was
+3.19/48.14 ms. Peak pending=12,203, end to end p95=7,163.71 ms,
+post producer drain=8,120 ms; primary pending=0, ACK pending=0,
+quarantine=1 and rows=0. Commit throughput was already below ingress;
+confirmed ACKs did not account for most of that gap in this run.
+
+| Local 20,000 message control | RabbitMQ, 4 workers, batch 20 | NATS, 4 workers, batch 20, window 512 |
+| --- | ---: | ---: |
+| Producer observed | 2,000.08/s | 1,997.24/s |
+| DB commit / drain observed | 1,996.69/s | 1,103.47/s |
+| Peak pending | 102 | 12,203 |
+| End to end p95 | 27.64 ms | 7,163.71 ms |
+
+The RabbitMQ pilot's reported drain window and NATS commit window use
+different ACK timing, so these measurements compare the local harnesses,
+not an intrinsic broker limit. NATS B1 reliability controls passed; the
+current NATS B2 harness does not sustain the 2,000/s goal without backlog.
+A 60,000 message NATS run is deferred while its 20,000 message backlog
+grows. Profile the local PostgreSQL transactions and JetStream consumer
+pull/batch scheduling before changing architecture or making a production
+capacity claim. The RabbitMQ 60,000 message run did sustain 2,000/s in
+the same local test setup.
+
+To reproduce the instrumented NATS diagnostic run:
 
 ```powershell
 node scripts/benchmark/step10e-nats-b2-pilot.mjs --count=20000 --rate=2000 --confirm-window=512
