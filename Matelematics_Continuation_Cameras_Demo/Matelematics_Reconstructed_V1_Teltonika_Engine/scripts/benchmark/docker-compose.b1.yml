@@ -1,0 +1,20 @@
+name: matelematics-b1
+services:
+  postgres:
+    image: postgres:17
+    container_name: matelematics-b1-postgres
+    environment:
+      POSTGRES_DB: matelematics_b1
+      POSTGRES_USER: b1_benchmark
+      POSTGRES_PASSWORD: b1_local_only
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - b1_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U b1_benchmark -d matelematics_b1"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+volumes:
+  b1_postgres_data:

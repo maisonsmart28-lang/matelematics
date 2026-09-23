@@ -1,0 +1,36 @@
+# Step 10E-4F B1 - local functional validation
+
+RabbitMQ topology preflight was observed PASS: both quorum queues empty, prefetch 100,
+delivery limit 3. The real B1.1 database test remains pending on the user's Windows PC.
+
+This script uses a disposable, persistent local PostgreSQL 17 volume. It ignores
+DATABASE_URL and .env.local, and refuses remote or non-benchmark databases. It creates
+only b1.events in matelematics_b1. Successful test rows are deleted by exact run ID;
+on failure it retains rows/messages for investigation. No Supabase business data is read.
+
+From the application root, with Docker Desktop running and RabbitMQ already healthy:
+
+```powershell
+git pull --ff-only
+docker compose -f scripts/benchmark/docker-compose.b1.yml up -d --wait
+npx --no-install tsx scripts/benchmark/step10e-rabbitmq-b1-normal.ts
+```
+
+The first Docker command can download the official postgres:17 image. The database
+binds only 127.0.0.1:55432. Its password is a local, disposable benchmark credential.
+The volume allows future restart/replay tests; do not run `docker compose down -v`.
+
+B1.1 expects five published, confirmed, committed and ACKed messages, with empty
+main/DLQ, no redelivery and remainingRows=0. Check broker-wide unacked separately:
+
+```powershell
+docker exec matelematics-rabbitmq rabbitmqctl list_queues name messages_ready messages_unacknowledged consumers
+```
+
+The script's `unackedDepth: null` means it has not measured broker-wide unacked count.
+B1.2-B1.6 crash, outage, poison and broker restart scenarios remain pending. A
+single local broker is not an HA or production capacity validation.
+
+Vercel: the `git.deploymentEnabled` branch rule in vercel.json is intended to disable
+automatic deploys for this development branch in both linked projects. Check the
+projects after publication; do not launch a manual deployment.

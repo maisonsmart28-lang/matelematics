@@ -1,236 +1,145 @@
-/**
- * Step 10E-4F B1.1: local RabbitMQ normal-path functional test.
- * Benchmark-only: five deterministic messages, isolated negative telemetry IDs,
- * cleanup in finally. No production schema/RLS modifications.
- *
- * Run from the application root:
- *   npx tsx scripts/benchmark/step10e-rabbitmq-b1-normal.ts
- * Requires DATABASE_URL in .env.local and local RabbitMQ on 127.0.0.1:5672.
- */
-import { existsSync } from "node:fs";
-import { loadEnvFile } from "node:process";
-import amqp from "amqplib";
-import pg from "pg";
-import { localRabbitUrl, topology } from "./step10e-rabbitmq-b1-config";
+/** Step 10E-4F B1.1: local RabbitMQ -> local isolated PostgreSQL. */
+import { randomUUID } from 'node:crypto';
+import { setTimeout as sleep } from 'node:timers/promises';
+import amqp from 'amqplib';
+import pg from 'pg';
+import { localRabbitUrl, topology } from './step10e-rabbitmq-b1-config';
+import { benchmarkDatabaseUrl, persistThenAck, type Envelope } from './step10e-rabbitmq-b1-store';
 
-if (existsSync(".env.local")) loadEnvFile(".env.local");
-else if (existsSync(".env")) loadEnvFile(".env");
-
-const { Pool } = pg;
-const databaseUrl = process.env.DATABASE_URL;
-if (!databaseUrl) throw new Error("Missing server-only DATABASE_URL");
-const rabbitUrl = localRabbitUrl();
-const marker = "benchmark_10e4f_b1";
-const { exchange, queue, dlx, dlq } = topology;
+type Connection = Awaited<ReturnType<typeof amqp.connect>>;
+type Channel = Awaited<ReturnType<Connection['createChannel']>>;
 const total = 5;
-const timeoutMs = 60_000;
-const pool = new Pool({
-  connectionString: databaseUrl,
-  max: 2,
-  connectionTimeoutMillis: 15_000,
-  application_name: "matelematics_step10e4f_b1",
-});
-type Sample = Record<string, unknown>;
-type Envelope = {
-  message_id: string;
-  schema_version: 1;
-  company_id: string;
-  vehicle_id: number;
-  device_id: string | number | null;
-  recorded_at: string;
-  received_at: string;
-  source: "teltonika";
-  payload: { benchmark: string; sequence: number };
-  attempt: number;
-};
-const insertColumns = [
-  "id", "company_id", "vehicle_id", "device_id", "codec", "raw_payload",
-  "io_values", "can_payload", "metadata", "signal_strength",
-  "battery_voltage", "ignition", "source", "recorded_at",
-] as const;
-
 async function main() {
-  // Distinct deterministic IDs: rerunning the same B1 test must not duplicate logical events.
-  // Negative IDs are reserved for this benchmark; source marker allows exact cleanup.
-  const base = BigInt("-9000000000000000");
-  const runId = "step10e4f-b1-normal-v1";
-  let connection: Awaited<ReturnType<typeof amqp.connect>> | undefined;
-  let producer: Awaited<ReturnType<typeof amqp.connect>> extends infer C
-    ? C extends { createConfirmChannel: (...args: never[]) => Promise<infer T> } ? T : never
-    : never;
-  let consumer: Awaited<ReturnType<typeof amqp.connect>> extends infer C
-    ? C extends { createChannel: (...args: never[]) => Promise<infer T> } ? T : never
-    : never;
-  let published = 0;
-  let confirmed = 0;
-  let deliveries = 0;
-  let redeliveries = 0;
-  let commits = 0;
-  let duplicates = 0;
-  let acks = 0;
-  let failure: unknown;
+  const rabbitUrl = localRabbitUrl();
+  const dbUrl = benchmarkDatabaseUrl();
+  const runId = randomUUID();
+  const db = new pg.Client({ connectionString: dbUrl, ssl: false,
+    connectionTimeoutMillis: 10000, statement_timeout: 10000,
+    query_timeout: 15000, application_name: 'matelematics_b1_local' });
+  const events: Envelope[] = Array.from({ length: total }, (_, sequence) => ({
+    message_id: `${runId}:${sequence}`, schema_version: 1,
+    company_id: '00000000-0000-0000-0000-000000000001',
+    vehicle_id: '00000000-0000-0000-0000-000000000002', device_id: 'B1-SYNTHETIC',
+    recorded_at: new Date().toISOString(), received_at: new Date().toISOString(),
+    source: 'teltonika', payload: { benchmark: 'step10e4f_b1', sequence }, attempt: 0,
+  }));
+  const expected = new Map(events.map(e => [e.message_id, JSON.stringify(e)]));
+  const seen = new Set<string>();
+  let conn: Connection | undefined;
+  let publisher: Awaited<ReturnType<Connection['createConfirmChannel']>> | undefined;
+  let consumer: Channel | undefined;
   let consumerTag: string | undefined;
-
+  let closing = false;
+  let fatal: Error | undefined;
+  let work = Promise.resolve();
+  let published = 0, confirmed = 0, deliveries = 0, committed = 0, acks = 0;
+  const fail = (e: unknown) => { fatal ??= e instanceof Error ? e : new Error('Broker failure'); };
+  let completed = false;
   try {
-    const sampleResult = await pool.query<Sample>(
-      `SELECT company_id, vehicle_id, device_id, codec, raw_payload, io_values,
-              can_payload, metadata, signal_strength, battery_voltage, ignition
-         FROM public.telemetry
-        WHERE source IS DISTINCT FROM $1
-        ORDER BY recorded_at DESC LIMIT 1`,
-      [marker],
-    );
-    const sample = sampleResult.rows[0];
-    if (!sample) throw new Error("No source telemetry row available for B1.1");
+    await db.connect();
+    db.on('error', fail);
+    const identity = await db.query('SELECT current_database() AS db, current_user AS username');
+    if (identity.rows[0]?.db !== 'matelematics_b1' || identity.rows[0]?.username !== 'b1_benchmark')
+      throw new Error('Unexpected database identity');
+    const lock = await db.query('SELECT pg_try_advisory_lock(1046, 11) AS locked');
+    if (!lock.rows[0]?.locked) throw new Error('Another B1 run is in progress');
+    await db.query('CREATE SCHEMA IF NOT EXISTS b1');
+    await db.query(`CREATE TABLE IF NOT EXISTS b1.events (
+      message_id text PRIMARY KEY, run_id uuid NOT NULL, envelope jsonb NOT NULL,
+      committed_at timestamptz NOT NULL DEFAULT clock_timestamp())`);
+    const leftovers = await db.query('SELECT count(*)::int AS n FROM b1.events');
+    if (leftovers.rows[0].n !== 0) throw new Error('Prior B1 events remain; inspect them before rerunning');
 
-    // Remove only residue from this benchmark's own marker.
-    await pool.query("DELETE FROM public.telemetry WHERE source = $1", [marker]);
-
-    connection = await amqp.connect(rabbitUrl);
-    producer = await connection.createConfirmChannel();
-    consumer = await connection.createChannel();
-
-    await producer.assertExchange(exchange, "direct", { durable: true });
-    await producer.assertExchange(dlx, "direct", { durable: true });
-    await producer.assertQueue(dlq, { durable: true, arguments: { "x-queue-type": "quorum" } });
-    await producer.bindQueue(dlq, dlx, topology.deadLetterRoutingKey);
-    await producer.assertQueue(queue, {
-      durable: true,
-      arguments: {
-        "x-queue-type": "quorum",
-        "x-dead-letter-exchange": dlx,
-        "x-dead-letter-routing-key": topology.deadLetterRoutingKey,
-        "x-delivery-limit": topology.deliveryLimit,
-      },
-    });
-    await producer.bindQueue(queue, exchange, topology.routingKey);
+    conn = await amqp.connect(rabbitUrl, { timeout: 10000 });
+    conn.on('error', fail);
+    conn.on('close', () => { if (!closing) fail(new Error('Broker connection closed')); });
+    publisher = await conn.createConfirmChannel();
+    consumer = await conn.createChannel();
+    for (const ch of [publisher, consumer]) {
+      ch.on('error', fail);
+      ch.on('close', () => { if (!closing) fail(new Error('Broker channel closed')); });
+    }
+    publisher.on('return', () => fail(new Error('Mandatory publish was unroutable')));
+    await publisher.checkExchange(topology.exchange);
+    const before = await consumer.checkQueue(topology.queue);
+    const deadBefore = await consumer.checkQueue(topology.dlq);
+    if (before.messageCount || before.consumerCount || deadBefore.messageCount || deadBefore.consumerCount)
+      throw new Error('Queues must be empty without consumers; no automatic purge');
     await consumer.prefetch(topology.prefetch);
-
-    const before = await consumer.checkQueue(queue);
-    const beforeDlq = await consumer.checkQueue(dlq);
-    if (before.messageCount !== 0 || beforeDlq.messageCount !== 0) {
-      throw new Error(
-        `B1.1 requires empty benchmark queues; ready=${before.messageCount}, dlq=${beforeDlq.messageCount}. Do not purge automatically.`,
-      );
-    }
-
-    let resolveDone!: () => void;
-    let rejectDone!: (reason: unknown) => void;
-    const done = new Promise<void>((resolve, reject) => {
-      resolveDone = resolve;
-      rejectDone = reject;
-    });
-
-    const subscription = await consumer.consume(queue, (message) => {
-      if (!message) return;
-      void (async () => {
+    const worker = consumer;
+    const subscription = await worker.consume(topology.queue, msg => {
+      if (!msg) { fail(new Error('Consumer unexpectedly cancelled')); return; }
+      work = work.then(async () => {
+        if (fatal) return;
         deliveries++;
-        if (message.fields.redelivered) redeliveries++;
-        const envelope = JSON.parse(message.content.toString("utf8")) as Envelope;
-        if (envelope.schema_version !== 1 || envelope.payload?.benchmark !== marker) {
-          throw new Error("Unexpected/non-benchmark message. Stop without ACK.");
-        }
-        const sequence = envelope.payload.sequence;
-        if (!Number.isInteger(sequence) || sequence < 0 || sequence >= total ||
-            envelope.message_id !== `${runId}-${sequence}`) {
-          throw new Error("Invalid deterministic benchmark identity.");
-        }
-        const rowId = (base - BigInt(sequence)).toString();
-        const row: Record<string, unknown> = {
-          ...sample,
-          id: rowId,
-          source: marker,
-          recorded_at: envelope.recorded_at,
-          metadata: { ...(sample.metadata && typeof sample.metadata === "object" ? sample.metadata : {}), benchmark_message_id: envelope.message_id },
-        };
-        const values = insertColumns.map((column) => row[column]);
-        const placeholders = insertColumns.map((_, index) => `$${index + 1}`).join(",");
-        const result = await pool.query(
-          `INSERT INTO public.telemetry (${insertColumns.join(",")})
-           VALUES (${placeholders}) ON CONFLICT (id) DO NOTHING`,
-          values,
-        );
-        if (result.rowCount === 1) commits++;
-        else duplicates++;
-        // ACK only after PostgreSQL INSERT/commit returns successfully.
-        consumer!.ack(message);
-        acks++;
-        if (acks === total) resolveDone();
-      })().catch((error: unknown) => {
-        failure = error;
-        rejectDone(error);
-        // No ACK on failed persistence. Stop consuming; closing channel will requeue.
-      });
-    }, { noAck: false });
+        if (msg.fields.redelivered) throw new Error('Unexpected redelivery in B1.1');
+        const raw = msg.content.toString('utf8');
+        const event = JSON.parse(raw) as Envelope;
+        if (expected.get(event.message_id) !== raw || msg.properties.messageId !== event.message_id)
+          throw new Error('Unexpected message: preserved without ACK');
+        if (seen.has(event.message_id)) throw new Error('Unexpected duplicate delivery in B1.1');
+        const inserted = await persistThenAck(db, runId, event, () => {
+          if (fatal) throw fatal;
+          worker.ack(msg);
+          acks++;
+        });
+        if (!inserted) throw new Error('Unexpected pre-existing identity');
+        committed++;
+        seen.add(event.message_id);
+      }).catch(fail);
+    }, { noAck: false, exclusive: true });
     consumerTag = subscription.consumerTag;
-
-    const start = Date.now();
-    for (let sequence = 0; sequence < total; sequence++) {
-      const now = new Date(Date.now() - sequence).toISOString();
-      const envelope: Envelope = {
-        message_id: `${runId}-${sequence}`,
-        schema_version: 1,
-        company_id: String(sample.company_id),
-        vehicle_id: Number(sample.vehicle_id),
-        device_id: sample.device_id == null ? null : String(sample.device_id),
-        recorded_at: now,
-        received_at: now,
-        source: "teltonika",
-        payload: { benchmark: marker, sequence },
-        attempt: 0,
-      };
-      producer.publish(exchange, topology.routingKey, Buffer.from(JSON.stringify(envelope)), {
-        persistent: true,
-        mandatory: true,
-        contentType: "application/json",
-        messageId: envelope.message_id,
-      });
+    for (const event of events) {
+      if (fatal) throw fatal;
+      publisher.publish(topology.exchange, topology.routingKey, Buffer.from(JSON.stringify(event)),
+        { persistent: true, mandatory: true, contentType: 'application/json', messageId: event.message_id });
       published++;
+      await publisher.waitForConfirms();
+      if (fatal) throw fatal;
+      confirmed++;
     }
-    await producer.waitForConfirms();
-    confirmed = published;
-    await Promise.race([
-      done,
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("B1.1 timed out waiting for ACKs")), timeoutMs)),
-    ]);
-    if (consumerTag) await consumer.cancel(consumerTag);
-    const remaining = await consumer.checkQueue(queue);
-    const dead = await consumer.checkQueue(dlq);
-    const countResult = await pool.query<{ count: string }>(
-      "SELECT count(*)::text AS count FROM public.telemetry WHERE source = $1",
-      [marker],
-    );
-    const logicalCommits = Number(countResult.rows[0]?.count ?? 0);
-    const passed = published === total && confirmed === total &&
-      logicalCommits === total && commits === total && duplicates === 0 &&
-      acks === total && remaining.messageCount === 0 && dead.messageCount === 0;
-    console.log(JSON.stringify({
-      event: "step10e-rabbitmq-b1-normal",
-      passed, published, confirmed, deliveries, redeliveries,
-      uniqueLogicalCommits: logicalCommits, duplicateDeliveriesDetected: duplicates,
-      acks, readyDepth: remaining.messageCount, unackedDepth: 0,
-      dlqDepth: dead.messageCount, elapsedMs: Date.now() - start,
-      limitations: ["Single-node local RabbitMQ; not an HA test.", "Crash/replay scenarios B1.2–B1.6 not yet tested."],
-    }));
-    if (!passed) throw new Error("B1.1 assertions failed");
+    const deadline = Date.now() + 60000;
+    while (seen.size < total && !fatal && Date.now() < deadline) await sleep(25);
+    if (fatal) throw fatal;
+    if (seen.size !== total) throw new Error('Timed out waiting for committed events');
+    await worker.cancel(consumerTag);
+    consumerTag = undefined;
+    await work;
+    closing = true;
+    await worker.close();
+    consumer = undefined;
+    const queue = await publisher.checkQueue(topology.queue);
+    const dlq = await publisher.checkQueue(topology.dlq);
+    const rows = await db.query('SELECT message_id FROM b1.events WHERE run_id=$1::uuid', [runId]);
+    if (published !== total || confirmed !== total || deliveries !== total || committed !== total ||
+        acks !== total || rows.rows.length !== total ||
+        rows.rows.some(row => !expected.has(row.message_id)) ||
+        queue.messageCount || queue.consumerCount || dlq.messageCount)
+      throw new Error('B1.1 failed assertions; evidence retained');
+    await db.query('DELETE FROM b1.events WHERE run_id=$1::uuid', [runId]);
+    const remaining = await db.query('SELECT count(*)::int AS n FROM b1.events WHERE run_id=$1::uuid', [runId]);
+    if (remaining.rows[0].n !== 0) throw new Error('B1.1 cleanup incomplete');
+    completed = true;
+    console.log(JSON.stringify({ event: 'step10e-rabbitmq-b1-normal', result: 'PASS', runId,
+      published, confirmed, deliveries, uniqueLogicalCommits: rows.rows.length,
+      acks, readyDepth: queue.messageCount, dlqDepth: dlq.messageCount,
+      unackedDepth: null, consumerChannelClosed: true, remainingRows: remaining.rows[0].n,
+      note: 'Broker-wide unacked counter and crash/replay scenarios remain to be checked' }));
   } finally {
-    if (failure) console.error("Consumer failure:", failure instanceof Error ? failure.message : String(failure));
-    try { await consumer?.close(); } catch { /* channel may already be closed */ }
-    try { await producer?.close(); } catch { /* channel may already be closed */ }
-    try { await connection?.close(); } catch { /* connection may already be closed */ }
-    try {
-      await pool.query("DELETE FROM public.telemetry WHERE source = $1", [marker]);
-      const residue = await pool.query<{ count: string }>(
-        "SELECT count(*)::text AS count FROM public.telemetry WHERE source = $1", [marker],
-      );
-      console.log(JSON.stringify({ event: "step10e-rabbitmq-b1-cleanup", remainingRows: Number(residue.rows[0]?.count ?? 0) }));
-    } finally {
-      await pool.end();
-    }
+    closing = true;
+    fail(new Error('Stopping B1 run'));
+    if (consumer && consumerTag) await consumer.cancel(consumerTag).catch(() => undefined);
+    await work;
+    if (consumer) await consumer.close().catch(() => undefined);
+    if (publisher) await publisher.close().catch(() => undefined);
+    if (conn) await conn.close().catch(() => undefined);
+    await db.end().catch(() => undefined);
+    if (!completed) console.error(JSON.stringify({ event: 'step10e-rabbitmq-b1-incomplete', runId,
+      published, confirmed, committed, acks, cleanup: 'Evidence retained for inspection' }));
   }
 }
-
-main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : String(error));
+main().catch(error => {
+  const message = error instanceof Error ? error.message : 'Unknown B1 error';
+  console.error(message.replace(/(?:postgres(?:ql)?|amqps?):\/\/[^\s]+/g, '[connection URL withheld]'));
   process.exitCode = 1;
 });

@@ -1,0 +1,4 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "git": {"deploymentEnabled": {"feature/p1-step8-dashboard-real-data": false}}
+}
