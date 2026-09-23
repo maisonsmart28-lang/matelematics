@@ -45,6 +45,8 @@ queue decision, benchmark B2 throughput at the baseline and controlled burst;
 evaluate NATS JetStream on
 the same functional criteria; then assess HA, Infomaniak-compatible capacity,
 Morocco/CNDP constraints and MAD cost as required by `STEP10E_QUEUE_PHASE_B.md`.
+The first bounded local B2 control and baseline procedure is documented in
+`STEP10E_RABBITMQ_B2_PILOT.md`; no B2 throughput result has been measured yet.
 
 RabbitMQ topology preflight was observed PASS: both quorum queues empty, prefetch 100,
 delivery limit 3. B1.1 passed on the user's Windows PC on 2026-09-23:
