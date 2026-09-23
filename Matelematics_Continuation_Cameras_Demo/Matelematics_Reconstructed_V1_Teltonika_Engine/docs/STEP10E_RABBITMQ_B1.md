@@ -1,7 +1,10 @@
 # Step 10E-4F B1 - local functional validation
 
 RabbitMQ topology preflight was observed PASS: both quorum queues empty, prefetch 100,
-delivery limit 3. The real B1.1 database test remains pending on the user's Windows PC.
+delivery limit 3. B1.1 passed on the user's Windows PC on 2026-09-23:
+5 published/confirmed, 5 unique commits/ACKs, ready=0, DLQ=0, remainingRows=0.
+An independent `rabbitmqctl list_queues` check showed 0 ready, 0 unacked and
+0 consumers for both queues.
 
 This script uses a disposable, persistent local PostgreSQL 17 volume. It ignores
 DATABASE_URL and .env.local, and refuses remote or non-benchmark databases. It creates
@@ -28,7 +31,18 @@ docker exec matelematics-rabbitmq rabbitmqctl list_queues name messages_ready me
 ```
 
 The script's `unackedDepth: null` means it has not measured broker-wide unacked count.
-B1.2-B1.6 crash, outage, poison and broker restart scenarios remain pending. A
+B1.2 is ready for local execution after B1.1: it publishes one event, starts a
+separate worker process, exits that process after delivery but before any database
+write or ACK, then verifies requeue/redelivery and one commit after recovery.
+Run it only when both queues are empty and there are no other consumers:
+
+```powershell
+npx --no-install tsx scripts/benchmark/step10e-rabbitmq-b1-crash-before-commit.ts
+```
+
+The worker exits with code 42 intentionally. On failure, test messages and rows
+are retained for inspection; do not purge either queue or remove the Postgres volume.
+B1.3-B1.6 crash, outage, poison and broker restart scenarios remain pending. A
 single local broker is not an HA or production capacity validation.
 
 Vercel: the `git.deploymentEnabled` branch rule in vercel.json is intended to disable
