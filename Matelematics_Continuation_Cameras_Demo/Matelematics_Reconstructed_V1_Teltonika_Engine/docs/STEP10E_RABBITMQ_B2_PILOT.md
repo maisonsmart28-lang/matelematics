@@ -260,10 +260,10 @@ duplicates or redeliveries. Pending at halfway was 43, at producer end 37,
 peak 144; post-producer drain took 35 ms. Oldest pending was 65 ms and
 end-to-end p95 was 28.98 ms. Main ready=0, DLQ=1, remaining rows=0.
 Both 10-second local cells stayed above the 1,556/s numerical target with
-small pending work. A longer sustained run and failure/replay validation
+small pending work. A longer sustained run and broader failure validation
 remain before any capacity or production decision.
 
-## Batch replay after commit, before ACK — awaiting local result
+## Batch replay after commit, before ACK — local PASS
 
 The isolated 20-event test publishes with confirms, commits one batch in a
 separate worker, exits that worker before any ACK, then validates 20 broker
@@ -296,3 +296,14 @@ npx --no-install tsx scripts/benchmark/step10e-rabbitmq-b2-batch-replay-cleanup.
 Run cleanup only after verifying the queue and DB evidence above. A new
 replay test may be run only if cleanup reports PASS and the benchmark DB is
 empty. If any check differs, stop and preserve the evidence.
+
+The targeted cleanup of the first attempt passed: exactly 20 rows removed,
+none remaining, main queue ready=0 and DLQ=1. The corrected replay scenario
+then passed locally on 2026-09-23 (run
+`4c8333c8-2879-4e09-9c97-eed748058b3e`): 20 published/confirmed, 20
+original commits, 20 redeliveries detected as duplicate identities, 20
+replay ACKs, no additional logical commits, recovery in 166 ms, main
+ready=0, DLQ=1 and remaining rows=0. The initial assertion's exact failing
+field is unknown because it was not logged; its observed queues and DB
+were consistent with completion. The later PASS validates this specific
+local crash point, with no claim about wider outages or HA.
