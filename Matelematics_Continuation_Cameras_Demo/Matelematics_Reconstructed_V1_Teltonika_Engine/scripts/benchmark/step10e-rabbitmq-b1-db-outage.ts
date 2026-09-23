@@ -83,6 +83,65 @@ async function cleanupFailedRun(runId: string) {
   }
 }
 
+async function recoverFailedRun(runId: string) {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(runId))
+    throw new Error('Invalid benchmark run ID');
+  await verifyContainer();
+  const db = client();
+  let connection: Awaited<ReturnType<typeof amqp.connect>> | undefined;
+  let channel: Awaited<ReturnType<NonNullable<typeof connection>['createChannel']>> | undefined;
+  let commits = 0, acks = 0;
+  try {
+    await db.connect();
+    await assertIdentity(db);
+    const lock = await db.query('SELECT pg_try_advisory_lock(1046, 11) AS locked');
+    if (!lock.rows[0]?.locked) throw new Error('Another B1 run is in progress');
+    const existing = await db.query('SELECT count(*)::int AS n FROM b1.events');
+    if (existing.rows[0].n !== 0) throw new Error('Database has prior B1 events; refusing recovery');
+    connection = await amqp.connect(localRabbitUrl(), { timeout: 10000 });
+    channel = await connection.createChannel();
+    const main = await channel.checkQueue(topology.queue);
+    const dead = await channel.checkQueue(topology.dlq);
+    if (main.messageCount !== count || main.consumerCount || dead.messageCount || dead.consumerCount)
+      throw new Error('Unexpected backlog or consumers; refusing recovery');
+    for (let sequence = 0; sequence < count; sequence++) {
+      const msg = await channel.get(topology.queue, { noAck: false });
+      if (!msg) throw new Error('Backlog changed during recovery');
+      let event: Envelope;
+      try { event = JSON.parse(msg.content.toString('utf8')) as Envelope; }
+      catch { throw new Error('Invalid message JSON; preserved without ACK'); }
+      if (event.message_id !== `${runId}:${sequence}` ||
+          msg.properties.messageId !== event.message_id ||
+          event.payload?.benchmark !== 'step10e4f_b1' || event.payload.sequence !== sequence ||
+          event.schema_version !== 1 || msg.properties.deliveryMode !== 2)
+        throw new Error('Message does not match this failed run; preserved without ACK');
+      if (!await persistThenAck(db, runId, event, () => { channel!.ack(msg); acks++; }))
+        throw new Error('Unexpected duplicate logical event');
+      commits++;
+    }
+    await channel.close();
+    channel = undefined;
+    const after = await connection.createChannel();
+    try {
+      const queue = await after.checkQueue(topology.queue);
+      const dlq = await after.checkQueue(topology.dlq);
+      const rows = await db.query('SELECT message_id FROM b1.events WHERE run_id=$1::uuid ORDER BY message_id', [runId]);
+      if (commits !== count || acks !== count || queue.messageCount || queue.consumerCount ||
+          dlq.messageCount || rows.rows.length !== count ||
+          rows.rows.some((row, sequence) => row.message_id !== `${runId}:${sequence}`))
+        throw new Error('Recovery assertion failed; evidence retained');
+      await db.query('DELETE FROM b1.events WHERE run_id=$1::uuid', [runId]);
+      console.log(JSON.stringify({ event: 'step10e-rabbitmq-b1-db-outage-recovery',
+        result: 'PASS', runId, commits, acks, readyDepth: queue.messageCount,
+        dlqDepth: dlq.messageCount, removedRows: rows.rows.length }));
+    } finally { await after.close().catch(() => undefined); }
+  } finally {
+    if (channel) await channel.close().catch(() => undefined);
+    if (connection) await connection.close().catch(() => undefined);
+    await db.end().catch(() => undefined);
+  }
+}
+
 async function main() {
   const runId = randomUUID();
   const events: Envelope[] = Array.from({ length: count }, (_, sequence) => ({
@@ -151,10 +210,19 @@ async function main() {
     // Closing the channel requeues its unacked delivery; no ACK occurred while DB was down.
     await worker.close();
     worker = undefined;
-    const backlog = await publisher.checkQueue(topology.queue);
+    let backlog = await publisher.checkQueue(topology.queue);
+    const backlogDeadline = Date.now() + 10000;
+    while ((backlog.messageCount !== count || backlog.consumerCount !== 0) &&
+           Date.now() < backlogDeadline) {
+      await sleep(50);
+      backlog = await publisher.checkQueue(topology.queue);
+    }
     peakBacklog = backlog.messageCount;
-    if (peakBacklog !== count || backlog.consumerCount !== 0 || acks !== 0)
+    if (peakBacklog !== count || backlog.consumerCount !== 0 || acks !== 0) {
+      console.error(JSON.stringify({ event: 'step10e-rabbitmq-b1-outage-backlog', runId,
+        readyDepth: backlog.messageCount, consumers: backlog.consumerCount, acks }));
       throw new Error('Outage backlog or ACK assertion failed; evidence retained');
+    }
     const recoveryStarted = Date.now();
     await restoreDatabase();
     stopped = false;
@@ -218,7 +286,8 @@ async function main() {
       published, confirmed, failedDbAttempts, commits, acks, cleanup: 'Evidence retained for inspection' }));
   }
 }
-(process.argv[2] === '--cleanup-failed-run' ? cleanupFailedRun(process.argv[3] ?? '') : main()).catch(error => {
+(process.argv[2] === '--cleanup-failed-run' ? cleanupFailedRun(process.argv[3] ?? '') :
+  process.argv[2] === '--recover-failed-run' ? recoverFailedRun(process.argv[3] ?? '') : main()).catch(error => {
   console.error((error instanceof Error ? error.message : 'Unknown error')
     .replace(/(?:postgres(?:ql)?|amqps?):\/\/[^\s]+/g, '[connection URL withheld]'));
   process.exitCode = 1;

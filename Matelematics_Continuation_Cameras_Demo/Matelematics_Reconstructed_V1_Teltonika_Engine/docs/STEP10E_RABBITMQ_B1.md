@@ -91,6 +91,26 @@ npx --no-install tsx scripts/benchmark/step10e-rabbitmq-b1-db-outage.ts --cleanu
 Only after cleanup reports `PASS` should the B1.4 script be rerun to identify
 whether a counter or a transient queue state caused the assertion failure.
 
+The second run (`2b73b7f6-e59b-4d7c-8e16-a7fda9a111c4`) confirmed three
+publications and a failed DB connection, then stopped at the immediate backlog
+assertion before any commit or ACK. RabbitMQ subsequently showed all three
+messages ready, with zero unacked/consumers; the benchmark DB was healthy.
+This is consistent with an asynchronous broker requeue, but the immediate
+queue count was not printed. The revised script waits up to ten seconds and
+prints backlog counters if the assertion still fails. Recover ONLY this retained
+run, without republishing, after confirming three ready messages and no other
+consumers:
+
+```powershell
+npx --no-install tsx scripts/benchmark/step10e-rabbitmq-b1-db-outage.ts --recover-failed-run 2b73b7f6-e59b-4d7c-8e16-a7fda9a111c4
+```
+
+The recovery command verifies message IDs, persistence, benchmark DB identity,
+empty prior rows and exact queue depth before consuming. It deletes only its
+three rows after successful commits/ACKs and empty queue checks. A successful
+recovery is evidence for draining this backlog; the full B1.4 run must still
+pass independently.
+
 Vercel: the `git.deploymentEnabled` branch rule in vercel.json is intended to disable
 automatic deploys for this development branch in both linked projects. Check the
 projects after publication; do not launch a manual deployment.
