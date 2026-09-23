@@ -312,7 +312,7 @@ local load and test interference before attributing the entire difference
 to NATS. The runs were sequential, so it does not prove which resource
 caused the slowdown. Recheck under controlled container and host load.
 
-## Local broker isolation control — ready for validation
+## Local broker isolation controls — ongoing
 
 The next diagnostic verifies the exact dedicated NATS Compose container,
 its named JetStream volume, an empty primary stream, the one retained
@@ -330,7 +330,31 @@ Wait for both the RabbitMQ pilot output and `NATS_RESTORED`. If the
 process is interrupted externally, inspect the NATS container before
 another run; its named volume and quarantine must remain intact. This
 control measures an isolated local setup, not an intrinsic broker limit.
-Local result pending.
+
+Observed local result with NATS stopped (RabbitMQ run
+`95f6e04b-ca1f-4660-b828-25c4d5ba55f5`): all 20,000 messages were
+confirmed, uniquely committed and ACKed; producer 1,999.85/s, reported
+DB drain 1,998.99/s, backlog at producer end 32, and drain afterward
+13 ms. The rate target passed and `NATS_RESTORED` verified its empty
+primary stream and exact retained quarantine ID. However peak pending
+reached 5,405 and end to end p95 was 2,946.16 ms, with DB p95
+977.99 ms. These transient spikes matter despite a near 2,000/s average
+and an empty queue at the end. They prevent treating this run as proof of
+uniform low latency or a specific NATS interference mechanism.
+
+The reverse isolation control verifies RabbitMQ's empty main queue,
+one retained poison message and the isolated DB, then stops only the
+dedicated `matelematics-rabbitmq` container while running the existing
+NATS 20,000-event / 2,000/s pilot. It restarts RabbitMQ in a `finally`
+block and verifies the original DLQ message was preserved:
+
+```powershell
+node scripts/benchmark/step10e-nats-b2-isolate-rabbitmq.mjs
+```
+
+Wait for both the NATS pilot output and `RABBITMQ_RESTORED`. If externally
+interrupted, inspect and restart the dedicated RabbitMQ container before
+further tests. The reverse isolation result remains pending.
 
 These are single node diagnostics, not production capacity claims. If the
 script reports `incomplete`, inspect its run ID, both streams and the
