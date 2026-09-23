@@ -312,6 +312,26 @@ local load and test interference before attributing the entire difference
 to NATS. The runs were sequential, so it does not prove which resource
 caused the slowdown. Recheck under controlled container and host load.
 
+## Local broker isolation control — ready for validation
+
+The next diagnostic verifies the exact dedicated NATS Compose container,
+its named JetStream volume, an empty primary stream, the one retained
+quarantine message and an empty local benchmark database. It temporarily
+stops only `matelematics-nats`, runs the existing RabbitMQ 20,000-event
+pilot at 2,000/s, and restarts NATS in a `finally` block. It then confirms
+the original NATS stream is empty and the quarantine message survived.
+The RabbitMQ pilot still validates its own queue, DLQ, commits and ACKs:
+
+```powershell
+node scripts/benchmark/step10e-rabbitmq-b2-isolate-nats.mjs
+```
+
+Wait for both the RabbitMQ pilot output and `NATS_RESTORED`. If the
+process is interrupted externally, inspect the NATS container before
+another run; its named volume and quarantine must remain intact. This
+control measures an isolated local setup, not an intrinsic broker limit.
+Local result pending.
+
 These are single node diagnostics, not production capacity claims. If the
 script reports `incomplete`, inspect its run ID, both streams and the
 benchmark rows before another test; do not purge retained messages.
