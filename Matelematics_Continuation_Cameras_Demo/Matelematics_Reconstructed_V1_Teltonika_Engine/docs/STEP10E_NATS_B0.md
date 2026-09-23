@@ -74,7 +74,7 @@ Observed local B1 normal result on 2026-09-23 (run
 five deliveries, five unique commits and server-confirmed ACKs. Primary
 pending=0, ACK pending=0, quarantine=0 and benchmark rows=0 after cleanup.
 
-## Crash before DB commit — awaiting local result
+## Crash before DB commit — PASS
 
 The next isolated control publishes one synthetic message with a JetStream
 confirmation. A separate worker receives it, then exits before any DB
@@ -88,6 +88,29 @@ node scripts/benchmark/step10e-nats-b1-crash-before-commit.mjs
 This test can wait about 30 seconds for redelivery. If it reports
 `incomplete`, stop and inspect the stream, consumer state and rows for its
 run ID. The message remains in JetStream; do not purge or repeat blindly.
+
+Observed local result on 2026-09-23 (run
+`b000a267-5e96-4be5-8da2-e2988e7c03ef`): one publication/confirmation,
+two deliveries including one redelivery, one unique commit and one
+confirmed ACK after recovery in 30,057 ms. Primary pending=0, ACK
+pending=0, quarantine=0 and benchmark rows=0 after cleanup. The Node
+module-type warning in the output did not affect this result.
+
+## Crash after DB commit, before ACK — awaiting local result
+
+The complementary control commits one message inside a separate worker,
+then exits before JetStream receives an ACK. The parent checks that the row
+already exists, waits for the durable consumer's redelivery and verifies
+that the replay detects the existing row and ACKs it without a second
+logical commit:
+
+```powershell
+node scripts/benchmark/step10e-nats-b1-crash-after-commit.mjs
+```
+
+The ACK wait again makes this test take about 30 seconds. If it reports
+`incomplete`, inspect the stream, consumer and local DB before any repeat;
+do not purge the message or remove the database volume.
 
 ## Contract for B1 and B2 implementation
 
