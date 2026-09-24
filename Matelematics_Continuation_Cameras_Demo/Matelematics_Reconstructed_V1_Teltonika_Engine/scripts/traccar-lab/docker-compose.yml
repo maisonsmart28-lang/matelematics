@@ -1,0 +1,52 @@
+name: matelematics-traccar-lab
+
+services:
+  database:
+    image: postgres:17-alpine
+    container_name: matelematics-traccar-lab-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: traccar
+      POSTGRES_USER: traccar
+      POSTGRES_PASSWORD: local-only-matelematics
+    volumes:
+      - traccar_lab_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U traccar -d traccar"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - traccar_lab
+
+  traccar:
+    image: traccar/traccar:6.15.3
+    container_name: matelematics-traccar-lab
+    restart: unless-stopped
+    depends_on:
+      database:
+        condition: service_healthy
+    environment:
+      CONFIG_USE_ENVIRONMENT_VARIABLES: "true"
+      DATABASE_DRIVER: org.postgresql.Driver
+      DATABASE_URL: jdbc:postgresql://database:5432/traccar
+      DATABASE_USER: traccar
+      DATABASE_PASSWORD: local-only-matelematics
+    volumes:
+      - ./traccar.xml:/opt/traccar/conf/traccar.xml:ro
+      - traccar_lab_logs:/opt/traccar/logs
+    ports:
+      - "127.0.0.1:8082:8082/tcp"
+      - "127.0.0.1:5027:5027/tcp"
+      - "127.0.0.1:5023:5023/tcp"
+      - "127.0.0.1:5055:5055/tcp"
+    networks:
+      - traccar_lab
+
+networks:
+  traccar_lab:
+    name: matelematics-traccar-lab
+
+volumes:
+  traccar_lab_db:
+  traccar_lab_logs:
