@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE properties SYSTEM "http://java.sun.com/dtd/properties.dtd">
+<properties>
+    <!-- Local compatibility lab only. Add protocols and publish their individual ports as needed. -->
+    <entry key="protocols.enable">teltonika,gt06,osmand</entry>
+</properties>
