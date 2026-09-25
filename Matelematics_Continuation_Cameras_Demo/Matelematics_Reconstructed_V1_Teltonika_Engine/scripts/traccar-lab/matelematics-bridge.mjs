@@ -184,7 +184,8 @@ async function historyReport(cfg, traccarDevices) {
   for (const imei of cfg.imeis) {
     const tracker = traccarDevices.get(imei);
     const ids = new Set();
-    let count = 0, valid = 0, last = null;
+    let count = 0, valid = 0, lastValid = null;
+    const rejectedReasons = {};
     for (let from = start; from < end; from += 6 * 3_600_000) {
       const to = Math.min(from + 6 * 3_600_000, end);
       const positions = await traccarGet(cfg, "positions", { deviceId: tracker.id, from: new Date(from).toISOString(), to: new Date(to).toISOString() });
@@ -197,11 +198,16 @@ async function historyReport(cfg, traccarDevices) {
         if (ids.has(key)) continue;
         ids.add(key);
         count++;
-        if (normalizePosition(position).ok) valid++;
-        if (!last || ms > last.ms) last = { ms, position };
+        const normalized = normalizePosition(position);
+        if (normalized.ok) {
+          valid++;
+          if (!lastValid || ms > lastValid.ms) lastValid = { ms, position };
+        } else {
+          rejectedReasons[normalized.reason] = (rejectedReasons[normalized.reason] ?? 0) + 1;
+        }
       }
     }
-    console.log(JSON.stringify({ event: "traccar-bridge-history-device", device: mask(imei), positions: count, validPositions: valid, lastFixUTC: last ? new Date(last.ms).toISOString() : null, lastLatitude: last ? last.position.latitude : null, lastLongitude: last ? last.position.longitude : null }));
+    console.log(JSON.stringify({ event: "traccar-bridge-history-device", device: mask(imei), positions: count, validPositions: valid, rejectedReasons, lastValidFixUTC: lastValid ? new Date(lastValid.ms).toISOString() : null, lastValidLatitude: lastValid ? lastValid.position.latitude : null, lastValidLongitude: lastValid ? lastValid.position.longitude : null }));
   }
 }
 
