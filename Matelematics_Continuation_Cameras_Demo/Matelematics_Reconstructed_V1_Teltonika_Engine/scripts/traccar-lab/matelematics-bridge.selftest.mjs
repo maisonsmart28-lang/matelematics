@@ -45,6 +45,12 @@ const server = createServer(async (request, response) => {
   if (url.pathname === "/api/positions") {
     const id = Number(url.searchParams.get("deviceId"));
     response.writeHead(200, { "content-type": "application/json" });
+    const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+    if (url.searchParams.get("from")?.startsWith(yesterday)) {
+      const point = { ...validPosition, fixTime: `${yesterday}T12:00:00.000Z`, id: id * 100, deviceId: id };
+      response.end(JSON.stringify([point, { ...point, id: id * 100 + 1, valid: false }]));
+      return;
+    }
     response.end(JSON.stringify([{ ...validPosition, id: id * 100, deviceId: id, latitude: id === 11 ? 33.57 : 33.58 }]));
     return;
   }
@@ -118,6 +124,9 @@ try {
   await run([`--history=${yesterday}`]);
   assert.equal(requests.slice(beforeHistory).filter((item) => item.path === "/api/positions").length, 8, "history should query four six-hour windows for each allowed device");
   assert.equal(requests.some((item) => item.path.startsWith("/rest/v1/")), false, "history must not contact Supabase");
+  const reports = output.filter((line) => line.includes('"event":"traccar-bridge-history-device"')).map(JSON.parse);
+  assert.equal(reports.length, 2);
+  assert(reports.every((report) => report.positions === 2 && report.validPositions === 1 && report.rejectedReasons.invalid_fix === 1));
   await assert.rejects(run([`--history=${yesterday}`, "--write"]), /lecture seule/);
 
   await assert.rejects(run(["--write", "--once"]), /TRACCAR_BRIDGE_ALLOW_WRITES/);
