@@ -62,6 +62,15 @@ export function normalizePosition(position) {
 }
 
 function configFrom(args) {
+  const historyArgs = args.filter((arg) => arg.startsWith("--history="));
+  if (historyArgs.length > 1) throw new Error("Une seule date --history=AAAA-MM-JJ est autorisée.");
+  const history = historyArgs.length ? historyArgs[0].slice("--history=".length) : null;
+  if (history) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(history) || new Date(`${history}T00:00:00.000Z`).toISOString().slice(0, 10) !== history) throw new Error("Date --history invalide : utiliser AAAA-MM-JJ.");
+    const age = Date.now() - Date.parse(`${history}T00:00:00.000Z`);
+    if (age < 0 || age > 31 * 86_400_000) throw new Error("--history accepte seulement les 30 derniers jours (jour UTC).");
+    if (args.includes("--write") || args.includes("--watch")) throw new Error("--history est en lecture seule et ne peut pas être combiné avec --write ou --watch.");
+  }
   const base = new URL(required("TRACCAR_BASE_URL"));
   if (!/^https?:$/.test(base.protocol) || base.username || base.password || base.search || base.hash) throw new Error("TRACCAR_BASE_URL doit être une URL HTTP(S) sans identifiants ni paramètres.");
   if (base.protocol === "http:" && !["127.0.0.1", "localhost", "::1", "[::1]"].includes(base.hostname)) throw new Error("Pour un serveur Traccar distant, HTTPS est obligatoire.");
@@ -82,6 +91,7 @@ function configFrom(args) {
     once: args.includes("--once") || !watch,
     pollMs,
     lookback,
+    history,
   };
   if (write) {
     if (process.env.TRACCAR_BRIDGE_ALLOW_WRITES !== "I_ACCEPT_TEST_ONLY_WRITES") throw new Error("Écriture refusée. Après vérification du tenant de test, définir TRACCAR_BRIDGE_ALLOW_WRITES=I_ACCEPT_TEST_ONLY_WRITES.");
@@ -167,6 +177,34 @@ async function loadDevices(cfg) {
 
 function mask(imei) { return `…${imei.slice(-4)}`; }
 
+async function historyReport(cfg, traccarDevices) {
+  const start = Date.parse(`${cfg.history}T00:00:00.000Z`);
+  const end = Math.min(start + 86_400_000, Date.now());
+  console.log(JSON.stringify({ event: "traccar-bridge-history-start", dayUTC: cfg.history, mode: "read-only", devices: cfg.imeis.map(mask) }));
+  for (const imei of cfg.imeis) {
+    const tracker = traccarDevices.get(imei);
+    const ids = new Set();
+    let count = 0, valid = 0, last = null;
+    for (let from = start; from < end; from += 6 * 3_600_000) {
+      const to = Math.min(from + 6 * 3_600_000, end);
+      const positions = await traccarGet(cfg, "positions", { deviceId: tracker.id, from: new Date(from).toISOString(), to: new Date(to).toISOString() });
+      if (!Array.isArray(positions)) throw new Error("Traccar : réponse historique invalide.");
+      for (const position of positions) {
+        if (position.deviceId !== tracker.id) continue;
+        const ms = Date.parse(position.fixTime ?? position.deviceTime ?? position.serverTime ?? "");
+        if (!Number.isFinite(ms) || ms < start || ms >= end) continue;
+        const key = position.id ?? `${ms}:${position.latitude}:${position.longitude}`;
+        if (ids.has(key)) continue;
+        ids.add(key);
+        count++;
+        if (normalizePosition(position).ok) valid++;
+        if (!last || ms > last.ms) last = { ms, position };
+      }
+    }
+    console.log(JSON.stringify({ event: "traccar-bridge-history-device", device: mask(imei), positions: count, validPositions: valid, lastFixUTC: last ? new Date(last.ms).toISOString() : null, lastLatitude: last ? last.position.latitude : null, lastLongitude: last ? last.position.longitude : null }));
+  }
+}
+
 async function writePosition(cfg, device, row) {
   const existing = await supabase(cfg, "positions", {
     select: "id",
@@ -233,6 +271,7 @@ export async function run(args = process.argv.slice(2)) {
   const visible = await traccarGet(cfg, "devices");
   const traccarDevices = new Map((visible ?? []).filter((device) => cfg.imeis.includes(String(device.uniqueId))).map((device) => [String(device.uniqueId), device]));
   if (cfg.imeis.some((imei) => !traccarDevices.has(imei))) throw new Error("Un des deux IMEI autorisés n’est pas visible dans le compte Traccar.");
+  if (cfg.history) return historyReport(cfg, traccarDevices);
   const dbDevices = cfg.write ? await loadDevices(cfg) : new Map();
   console.log(JSON.stringify({ event: "traccar-bridge-start", mode: cfg.write ? "test-write" : "dry-run", devices: cfg.imeis.map(mask), traccarHost: cfg.base.origin, pollMs: cfg.pollMs }));
   const cursors = new Map();
