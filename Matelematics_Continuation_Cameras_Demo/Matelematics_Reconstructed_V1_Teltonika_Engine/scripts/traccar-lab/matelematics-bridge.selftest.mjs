@@ -47,7 +47,7 @@ const server = createServer(async (request, response) => {
     response.writeHead(200, { "content-type": "application/json" });
     const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
     if (url.searchParams.get("from")?.startsWith(yesterday)) {
-      const point = { ...validPosition, fixTime: `${yesterday}T12:00:00.000Z`, id: id * 100, deviceId: id };
+      const point = { ...validPosition, fixTime: `${yesterday}T12:00:00.000Z`, id: id * 100, deviceId: id, attributes: { ignition: true, power: 12.1 } };
       response.end(JSON.stringify([point, { ...point, id: id * 100 + 1, valid: false }]));
       return;
     }
@@ -127,6 +127,13 @@ try {
   const reports = output.filter((line) => line.includes('"event":"traccar-bridge-history-device"')).map(JSON.parse);
   assert.equal(reports.length, 2);
   assert(reports.every((report) => report.positions === 2 && report.validPositions === 1 && report.rejectedReasons.invalid_fix === 1));
+  const beforeInventory = output.length;
+  await run([`--history=${yesterday}`, "--history-telemetry"]);
+  const inventories = output.slice(beforeInventory).filter((line) => line.includes('"event":"traccar-bridge-telemetry-inventory"')).map(JSON.parse);
+  assert.equal(inventories.length, 2);
+  assert(inventories.every((item) => item.positions === 2 && item.attributeKeys.find((entry) => entry.name === "ignition")?.points === 2));
+  assert(output.slice(beforeInventory).every((line) => !line.includes("33.5731") && !line.includes(imeis[0]) && !line.includes('"latitude"')));
+  assert.equal(requests.some((item) => item.path.startsWith("/rest/v1/")), false);
   await assert.rejects(run([`--history=${yesterday}`, "--write"]), /lecture seule/);
 
   await assert.rejects(run(["--write", "--once"]), /TRACCAR_BRIDGE_ALLOW_WRITES/);
