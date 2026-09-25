@@ -26,6 +26,8 @@ Le premier test utilise des serveurs HTTP simulés sur loopback. Le second lit l
 
 Pour inventorier les attributs télématiques d'une journée UTC (y compris ceux des relevés dont le GPS est invalide), lancer `npm run traccar:bridge -- --history=2026-09-24 --history-telemetry`. Cette commande lit les deux appareils autorisés et compte les champs, leurs types, leurs valeurs nulles ou zéro et leur variation, sans afficher leurs valeurs, coordonnées ni trajets. Elle affiche en priorité les champs lisibles avant les identifiants `io*` et limite la sortie à 80 noms. La présence ou la variation d'un champ Traccar ne prouve pas à elle seule une mesure CAN réelle ni sa bonne unité : valider chaque conversion avant d'écrire dans `telemetry`.
 
+Pour simuler la séparation GPS / télématique sans écrire en base, lancer `npm run traccar:bridge -- --history=2026-09-24 --history-plan`. Les candidats télématiques doivent contenir un contact booléen ou un nombre entier de satellites plausible. `telemetryWithoutGps` compte les points qui possèdent l'un de ces attributs mais dont le GPS est invalide. Ce plan n'insère rien, ne vérifie pas encore les unités des autres champs et ne prouve pas que le récepteur de production soit prêt.
+
 Pour suivre les positions durant un essai routier, utiliser `npm run traccar:bridge -- --watch` et arrêter avec `Ctrl+C`. Cette version interroge l’API REST toutes les 5 secondes, ce qui suffit pour deux appareils de test. Avant une flotte de production, remplacer le polling par le WebSocket Traccar et ajouter un curseur de reprise durable.
 
 ## Écriture optionnelle — tenant de test uniquement
