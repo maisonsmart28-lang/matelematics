@@ -26,6 +26,7 @@ const company = "00000000-0000-4000-8000-000000000001";
 const inserted = [];
 const patches = [];
 const requests = [];
+let transientFailures = 0;
 const now = new Date().toISOString();
 const server = createServer(async (request, response) => {
   const url = new URL(request.url, "http://127.0.0.1");
@@ -43,6 +44,12 @@ const server = createServer(async (request, response) => {
     return;
   }
   if (url.pathname === "/api/positions") {
+    if (transientFailures > 0) {
+      transientFailures--;
+      response.writeHead(503);
+      response.end();
+      return;
+    }
     const id = Number(url.searchParams.get("deviceId"));
     response.writeHead(200, { "content-type": "application/json" });
     const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
@@ -121,8 +128,9 @@ try {
 
   const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
   const beforeHistory = requests.length;
+  transientFailures = 1;
   await run([`--history=${yesterday}`]);
-  assert.equal(requests.slice(beforeHistory).filter((item) => item.path === "/api/positions").length, 8, "history should query four six-hour windows for each allowed device");
+  assert.equal(requests.slice(beforeHistory).filter((item) => item.path === "/api/positions").length, 9, "read-only history should retry one transient failure and query eight windows");
   assert.equal(requests.some((item) => item.path.startsWith("/rest/v1/")), false, "history must not contact Supabase");
   const reports = output.filter((line) => line.includes('"event":"traccar-bridge-history-device"')).map(JSON.parse);
   assert.equal(reports.length, 2);
