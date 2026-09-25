@@ -113,6 +113,13 @@ try {
   assert.equal(requests.some((item) => item.path.startsWith("/rest/v1/")), false, "dry-run must not call Supabase");
   assert.equal(output.some((line) => line.includes("33.57") || line.includes(imeis[0])), false, "logs must not reveal positions or complete IMEI");
 
+  const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+  const beforeHistory = requests.length;
+  await run([`--history=${yesterday}`]);
+  assert.equal(requests.slice(beforeHistory).filter((item) => item.path === "/api/positions").length, 8, "history should query four six-hour windows for each allowed device");
+  assert.equal(requests.some((item) => item.path.startsWith("/rest/v1/")), false, "history must not contact Supabase");
+  await assert.rejects(run([`--history=${yesterday}`, "--write"]), /lecture seule/);
+
   await assert.rejects(run(["--write", "--once"]), /TRACCAR_BRIDGE_ALLOW_WRITES/);
   assert.equal(requests.some((item) => item.path.startsWith("/rest/v1/")), false, "write guard must be checked before any database call");
 
