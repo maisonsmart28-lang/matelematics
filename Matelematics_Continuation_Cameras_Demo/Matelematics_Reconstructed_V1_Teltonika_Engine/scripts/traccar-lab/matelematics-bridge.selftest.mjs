@@ -132,6 +132,8 @@ try {
   const inventories = output.slice(beforeInventory).filter((line) => line.includes('"event":"traccar-bridge-telemetry-inventory"')).map(JSON.parse);
   assert.equal(inventories.length, 2);
   assert(inventories.every((item) => item.positions === 2 && item.attributeKeys.find((entry) => entry.name === "ignition")?.points === 2));
+  assert(inventories.every((item) => item.attributeKeys.find((entry) => entry.name === "power")?.nonZeroValues === 2));
+  assert(inventories.every((item) => item.attributeKeys.find((entry) => entry.name === "ignition")?.distinctValuesAtLeast === 1));
   assert(output.slice(beforeInventory).every((line) => !line.includes("33.5731") && !line.includes(imeis[0]) && !line.includes('"latitude"')));
   assert.equal(requests.some((item) => item.path.startsWith("/rest/v1/")), false);
   await assert.rejects(run([`--history=${yesterday}`, "--write"]), /lecture seule/);
