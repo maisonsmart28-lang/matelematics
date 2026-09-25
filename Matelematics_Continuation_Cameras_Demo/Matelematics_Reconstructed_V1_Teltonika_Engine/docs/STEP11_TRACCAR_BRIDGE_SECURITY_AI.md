@@ -24,7 +24,7 @@ npm run traccar:bridge -- --once
 
 Le premier test utilise des serveurs HTTP simulés sur loopback. Le second lit les appareils et positions de Traccar, sans appeler Supabase. Les journaux ne montrent ni coordonnées ni IMEI complet.
 
-Pour inventorier les attributs télématiques d'une journée UTC (y compris ceux des relevés dont le GPS est invalide), lancer `npm run traccar:bridge -- --history=2026-09-24 --history-telemetry`. Cette commande lit les deux appareils autorisés, compte les champs et leurs types sans afficher leurs valeurs, coordonnées ni trajets. Les noms de champs Traccar ne prouvent pas à eux seuls la présence d'une mesure CAN ou sa bonne unité : valider chaque conversion avant d'écrire dans `telemetry`.
+Pour inventorier les attributs télématiques d'une journée UTC (y compris ceux des relevés dont le GPS est invalide), lancer `npm run traccar:bridge -- --history=2026-09-24 --history-telemetry`. Cette commande lit les deux appareils autorisés et compte les champs, leurs types, leurs valeurs nulles ou zéro et leur variation, sans afficher leurs valeurs, coordonnées ni trajets. Elle affiche en priorité les champs lisibles avant les identifiants `io*` et limite la sortie à 80 noms. La présence ou la variation d'un champ Traccar ne prouve pas à elle seule une mesure CAN réelle ni sa bonne unité : valider chaque conversion avant d'écrire dans `telemetry`.
 
 Pour suivre les positions durant un essai routier, utiliser `npm run traccar:bridge -- --watch` et arrêter avec `Ctrl+C`. Cette version interroge l’API REST toutes les 5 secondes, ce qui suffit pour deux appareils de test. Avant une flotte de production, remplacer le polling par le WebSocket Traccar et ajouter un curseur de reprise durable.
 
