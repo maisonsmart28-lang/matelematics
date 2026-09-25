@@ -66,7 +66,9 @@ function configFrom(args) {
   if (historyArgs.length > 1) throw new Error("Une seule date --history=AAAA-MM-JJ est autorisée.");
   const history = historyArgs.length ? historyArgs[0].slice("--history=".length) : null;
   const historyTelemetry = args.includes("--history-telemetry");
+  const historyPlan = args.includes("--history-plan");
   if (historyTelemetry && !history) throw new Error("--history-telemetry exige --history=AAAA-MM-JJ.");
+  if (historyPlan && (!history || historyTelemetry)) throw new Error("--history-plan exige --history=AAAA-MM-JJ et ne se combine pas avec --history-telemetry.");
   if (history) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(history) || new Date(`${history}T00:00:00.000Z`).toISOString().slice(0, 10) !== history) throw new Error("Date --history invalide : utiliser AAAA-MM-JJ.");
     const age = Date.now() - Date.parse(`${history}T00:00:00.000Z`);
@@ -95,6 +97,7 @@ function configFrom(args) {
     lookback,
     history,
     historyTelemetry,
+    historyPlan,
   };
   if (write) {
     if (process.env.TRACCAR_BRIDGE_ALLOW_WRITES !== "I_ACCEPT_TEST_ONLY_WRITES") throw new Error("Écriture refusée. Après vérification du tenant de test, définir TRACCAR_BRIDGE_ALLOW_WRITES=I_ACCEPT_TEST_ONLY_WRITES.");
@@ -191,10 +194,18 @@ async function loadDevices(cfg) {
 
 function mask(imei) { return `…${imei.slice(-4)}`; }
 
+// Candidate only: units and proprietary CAN fields have not been verified for this vehicle.
+export function planTelemetryPoint(position) {
+  const attrs = position?.attributes;
+  const hasIgnition = attrs && typeof attrs === "object" && !Array.isArray(attrs) && typeof attrs.ignition === "boolean";
+  const hasSatellites = attrs && typeof attrs === "object" && !Array.isArray(attrs) && Number.isInteger(attrs.sat) && attrs.sat >= 0 && attrs.sat <= 100;
+  return { telemetryCandidate: Boolean(hasIgnition || hasSatellites), gpsCandidate: normalizePosition(position).ok };
+}
+
 async function historyReport(cfg, traccarDevices) {
   const start = Date.parse(`${cfg.history}T00:00:00.000Z`);
   const end = Math.min(start + 86_400_000, Date.now());
-  console.log(JSON.stringify({ event: "traccar-bridge-history-start", dayUTC: cfg.history, mode: "read-only", telemetryInventory: cfg.historyTelemetry, devices: cfg.imeis.map(mask) }));
+  console.log(JSON.stringify({ event: "traccar-bridge-history-start", dayUTC: cfg.history, mode: "read-only", telemetryInventory: cfg.historyTelemetry, telemetryPlan: cfg.historyPlan, devices: cfg.imeis.map(mask) }));
   for (const imei of cfg.imeis) {
     const tracker = traccarDevices.get(imei);
     const ids = new Set();
@@ -202,6 +213,7 @@ async function historyReport(cfg, traccarDevices) {
     const rejectedReasons = {};
     const attributeKeys = new Map();
     let omittedAttributeKeys = 0;
+    let telemetryCandidates = 0, positionCandidates = 0, telemetryWithoutGps = 0, noSelectedTelemetry = 0;
     for (let from = start; from < end; from += 6 * 3_600_000) {
       const to = Math.min(from + 6 * 3_600_000, end);
       const positions = await traccarGet(cfg, "positions", { deviceId: tracker.id, from: new Date(from).toISOString(), to: new Date(to).toISOString() });
@@ -215,6 +227,13 @@ async function historyReport(cfg, traccarDevices) {
         ids.add(key);
         count++;
         const normalized = normalizePosition(position);
+        if (cfg.historyPlan) {
+          const candidate = planTelemetryPoint(position);
+          if (candidate.telemetryCandidate) telemetryCandidates++;
+          else noSelectedTelemetry++;
+          if (candidate.gpsCandidate) positionCandidates++;
+          if (candidate.telemetryCandidate && !candidate.gpsCandidate) telemetryWithoutGps++;
+        }
         if (cfg.historyTelemetry && position.attributes && typeof position.attributes === "object" && !Array.isArray(position.attributes)) {
           for (const [name, value] of Object.entries(position.attributes)) {
             if (!/^[A-Za-z][A-Za-z0-9_]{0,39}$/.test(name)) { omittedAttributeKeys++; continue; }
@@ -243,7 +262,9 @@ async function historyReport(cfg, traccarDevices) {
         }
       }
     }
-    if (cfg.historyTelemetry) {
+    if (cfg.historyPlan) {
+      console.log(JSON.stringify({ event: "traccar-bridge-telemetry-plan", device: mask(imei), records: count, telemetryCandidates, positionCandidates, telemetryWithoutGps, noSelectedTelemetry, writes: 0, note: "Simulation uniquement. Contact et satellites servent de critère de présence ; aucune unité CAN ou valeur brute n'est importée." }));
+    } else if (cfg.historyTelemetry) {
       const keys = [...attributeKeys.values()].sort((a, b) => {
         const priority = (item) => /^(?:io\d+|in\d+|axis[XYZ]|bleTemp\d+)$/i.test(item.name) ? 1 : 0;
         return priority(a) - priority(b) || b.points - a.points || a.name.localeCompare(b.name);
