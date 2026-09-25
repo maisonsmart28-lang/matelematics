@@ -65,6 +65,8 @@ function configFrom(args) {
   const historyArgs = args.filter((arg) => arg.startsWith("--history="));
   if (historyArgs.length > 1) throw new Error("Une seule date --history=AAAA-MM-JJ est autorisée.");
   const history = historyArgs.length ? historyArgs[0].slice("--history=".length) : null;
+  const historyTelemetry = args.includes("--history-telemetry");
+  if (historyTelemetry && !history) throw new Error("--history-telemetry exige --history=AAAA-MM-JJ.");
   if (history) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(history) || new Date(`${history}T00:00:00.000Z`).toISOString().slice(0, 10) !== history) throw new Error("Date --history invalide : utiliser AAAA-MM-JJ.");
     const age = Date.now() - Date.parse(`${history}T00:00:00.000Z`);
@@ -92,6 +94,7 @@ function configFrom(args) {
     pollMs,
     lookback,
     history,
+    historyTelemetry,
   };
   if (write) {
     if (process.env.TRACCAR_BRIDGE_ALLOW_WRITES !== "I_ACCEPT_TEST_ONLY_WRITES") throw new Error("Écriture refusée. Après vérification du tenant de test, définir TRACCAR_BRIDGE_ALLOW_WRITES=I_ACCEPT_TEST_ONLY_WRITES.");
@@ -180,12 +183,14 @@ function mask(imei) { return `…${imei.slice(-4)}`; }
 async function historyReport(cfg, traccarDevices) {
   const start = Date.parse(`${cfg.history}T00:00:00.000Z`);
   const end = Math.min(start + 86_400_000, Date.now());
-  console.log(JSON.stringify({ event: "traccar-bridge-history-start", dayUTC: cfg.history, mode: "read-only", devices: cfg.imeis.map(mask) }));
+  console.log(JSON.stringify({ event: "traccar-bridge-history-start", dayUTC: cfg.history, mode: "read-only", telemetryInventory: cfg.historyTelemetry, devices: cfg.imeis.map(mask) }));
   for (const imei of cfg.imeis) {
     const tracker = traccarDevices.get(imei);
     const ids = new Set();
     let count = 0, valid = 0, lastValid = null;
     const rejectedReasons = {};
+    const attributeKeys = new Map();
+    let omittedAttributeKeys = 0;
     for (let from = start; from < end; from += 6 * 3_600_000) {
       const to = Math.min(from + 6 * 3_600_000, end);
       const positions = await traccarGet(cfg, "positions", { deviceId: tracker.id, from: new Date(from).toISOString(), to: new Date(to).toISOString() });
@@ -199,6 +204,17 @@ async function historyReport(cfg, traccarDevices) {
         ids.add(key);
         count++;
         const normalized = normalizePosition(position);
+        if (cfg.historyTelemetry && position.attributes && typeof position.attributes === "object" && !Array.isArray(position.attributes)) {
+          for (const [name, value] of Object.entries(position.attributes)) {
+            if (!/^[A-Za-z][A-Za-z0-9_]{0,39}$/.test(name)) { omittedAttributeKeys++; continue; }
+            const entry = attributeKeys.get(name) ?? { name, points: 0, validGpsPoints: 0, types: {} };
+            entry.points++;
+            if (normalized.ok) entry.validGpsPoints++;
+            const type = value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
+            entry.types[type] = (entry.types[type] ?? 0) + 1;
+            attributeKeys.set(name, entry);
+          }
+        }
         if (normalized.ok) {
           valid++;
           if (!lastValid || ms > lastValid.ms) lastValid = { ms, position };
@@ -207,7 +223,12 @@ async function historyReport(cfg, traccarDevices) {
         }
       }
     }
-    console.log(JSON.stringify({ event: "traccar-bridge-history-device", device: mask(imei), positions: count, validPositions: valid, rejectedReasons, lastValidFixUTC: lastValid ? new Date(lastValid.ms).toISOString() : null, lastValidLatitude: lastValid ? lastValid.position.latitude : null, lastValidLongitude: lastValid ? lastValid.position.longitude : null }));
+    if (cfg.historyTelemetry) {
+      const keys = [...attributeKeys.values()].sort((a, b) => b.points - a.points || a.name.localeCompare(b.name));
+      console.log(JSON.stringify({ event: "traccar-bridge-telemetry-inventory", device: mask(imei), positions: count, validGpsPositions: valid, invalidGpsPositions: count - valid, attributeKeyCount: keys.length, omittedAttributeKeys, attributeKeys: keys.slice(0, 80), truncatedKeys: Math.max(0, keys.length - 80), note: "Noms et fréquences seulement : aucun relevé télématique brut ou coordonnée." }));
+    } else {
+      console.log(JSON.stringify({ event: "traccar-bridge-history-device", device: mask(imei), positions: count, validPositions: valid, rejectedReasons, lastValidFixUTC: lastValid ? new Date(lastValid.ms).toISOString() : null, lastValidLatitude: lastValid ? lastValid.position.latitude : null, lastValidLongitude: lastValid ? lastValid.position.longitude : null }));
+    }
   }
 }
 
