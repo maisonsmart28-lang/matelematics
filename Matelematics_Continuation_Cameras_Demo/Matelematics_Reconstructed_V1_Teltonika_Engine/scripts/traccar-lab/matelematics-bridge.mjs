@@ -112,6 +112,14 @@ async function getJson(url, headers) {
     const response = await fetch(url, { headers, signal: controller.signal, cache: "no-store", redirect: "error" });
     if (!response.ok) throw new Error(`HTTP ${response.status} sur ${new URL(url).pathname}`);
     return response.json();
+  } catch (error) {
+    if (error?.name === "AbortError") throw new Error("Traccar : délai de connexion dépassé (15 secondes).");
+    if (error instanceof TypeError) {
+      const code = error.cause?.code;
+      const known = new Set(["ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "EHOSTUNREACH", "CERT_HAS_EXPIRED", "UNABLE_TO_VERIFY_LEAF_SIGNATURE"]);
+      throw new Error(`Traccar : échec réseau (${known.has(code) ? code : "cause_non_identifiée"}). Vérifier connexion, DNS, proxy et certificat TLS.`);
+    }
+    throw error;
   } finally { clearTimeout(timeout); }
 }
 
