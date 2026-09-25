@@ -137,7 +137,18 @@ async function getJson(url, headers) {
 }
 
 async function traccarGet(cfg, endpoint, params = {}) {
-  return getJson(urlFor(cfg.base, endpoint, params), { Authorization: traccarAuth(cfg), Accept: "application/json" });
+  const url = urlFor(cfg.base, endpoint, params);
+  const headers = { Authorization: traccarAuth(cfg), Accept: "application/json" };
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      return await getJson(url, headers);
+    } catch (error) {
+      const retryable = /^Traccar : (?:échec réseau|délai de connexion)/.test(error.message) || /^HTTP (?:429|502|503|504) sur /.test(error.message);
+      if (!retryable) throw error;
+      if (attempt === 3) throw new Error(`${error.message} (3 tentatives de lecture)`);
+      await new Promise((resolve) => setTimeout(resolve, 400 * attempt));
+    }
+  }
 }
 
 async function supabase(cfg, table, params, method = "GET", body) {
