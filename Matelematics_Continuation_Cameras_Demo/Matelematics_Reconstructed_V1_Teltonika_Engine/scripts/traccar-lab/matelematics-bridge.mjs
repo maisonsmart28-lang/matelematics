@@ -207,11 +207,20 @@ async function historyReport(cfg, traccarDevices) {
         if (cfg.historyTelemetry && position.attributes && typeof position.attributes === "object" && !Array.isArray(position.attributes)) {
           for (const [name, value] of Object.entries(position.attributes)) {
             if (!/^[A-Za-z][A-Za-z0-9_]{0,39}$/.test(name)) { omittedAttributeKeys++; continue; }
-            const entry = attributeKeys.get(name) ?? { name, points: 0, validGpsPoints: 0, types: {} };
+            const entry = attributeKeys.get(name) ?? { name, points: 0, validGpsPoints: 0, types: {}, zeroValues: 0, nonZeroValues: 0, nullValues: 0, falseValues: 0, distinct: new Set() };
             entry.points++;
             if (normalized.ok) entry.validGpsPoints++;
             const type = value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
             entry.types[type] = (entry.types[type] ?? 0) + 1;
+            if (value === null) entry.nullValues++;
+            if (value === false) entry.falseValues++;
+            if (typeof value === "number" && Number.isFinite(value)) {
+              if (value === 0) entry.zeroValues++;
+              else entry.nonZeroValues++;
+            }
+            if ((type === "number" && Number.isFinite(value)) || type === "boolean" || (type === "string" && value.length <= 256)) {
+              if (entry.distinct.size < 17) entry.distinct.add(`${type}:${String(value)}`);
+            }
             attributeKeys.set(name, entry);
           }
         }
@@ -224,8 +233,12 @@ async function historyReport(cfg, traccarDevices) {
       }
     }
     if (cfg.historyTelemetry) {
-      const keys = [...attributeKeys.values()].sort((a, b) => b.points - a.points || a.name.localeCompare(b.name));
-      console.log(JSON.stringify({ event: "traccar-bridge-telemetry-inventory", device: mask(imei), positions: count, validGpsPositions: valid, invalidGpsPositions: count - valid, attributeKeyCount: keys.length, omittedAttributeKeys, attributeKeys: keys.slice(0, 80), truncatedKeys: Math.max(0, keys.length - 80), note: "Noms et fréquences seulement : aucun relevé télématique brut ou coordonnée." }));
+      const keys = [...attributeKeys.values()].sort((a, b) => {
+        const priority = (item) => /^(?:io\d+|in\d+|axis[XYZ]|bleTemp\d+)$/i.test(item.name) ? 1 : 0;
+        return priority(a) - priority(b) || b.points - a.points || a.name.localeCompare(b.name);
+      });
+      const summary = keys.slice(0, 80).map(({ distinct, ...entry }) => ({ ...entry, distinctValuesAtLeast: distinct.size, moreThan16Distinct: distinct.size > 16 }));
+      console.log(JSON.stringify({ event: "traccar-bridge-telemetry-inventory", device: mask(imei), positions: count, validGpsPositions: valid, invalidGpsPositions: count - valid, attributeKeyCount: keys.length, omittedAttributeKeys, attributeKeys: summary, truncatedKeys: Math.max(0, keys.length - summary.length), note: "Statistiques sans valeurs brutes ; champ présent ou variable ne prouve ni capteur réel ni unité valide." }));
     } else {
       console.log(JSON.stringify({ event: "traccar-bridge-history-device", device: mask(imei), positions: count, validPositions: valid, rejectedReasons, lastValidFixUTC: lastValid ? new Date(lastValid.ms).toISOString() : null, lastValidLatitude: lastValid ? lastValid.position.latitude : null, lastValidLongitude: lastValid ? lastValid.position.longitude : null }));
     }
