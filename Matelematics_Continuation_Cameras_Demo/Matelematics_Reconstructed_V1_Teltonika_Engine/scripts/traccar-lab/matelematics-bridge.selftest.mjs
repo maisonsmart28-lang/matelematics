@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { normalizePosition, parseImeis, run } from "./matelematics-bridge.mjs";
+import { normalizePosition, parseImeis, planTelemetryPoint, run } from "./matelematics-bridge.mjs";
 
 const imeis = ["356307042441234", "864180070000001"];
 assert.deepEqual(parseImeis(imeis.join(",")), imeis);
@@ -21,6 +21,8 @@ assert.equal(converted.ok, true);
 assert.equal(converted.row.speed, 18.52, "Traccar speed in knots converts to km/h");
 assert.equal(normalizePosition({ ...validPosition, valid: false }).reason, "invalid_fix");
 assert.equal(normalizePosition({ ...validPosition, latitude: 91 }).reason, "invalid_coordinates");
+assert.deepEqual(planTelemetryPoint({ ...validPosition, valid: false, attributes: { ignition: false, sat: 0 } }), { telemetryCandidate: true, gpsCandidate: false });
+assert.deepEqual(planTelemetryPoint({ ...validPosition, valid: false, attributes: { RPM: 0 } }), { telemetryCandidate: false, gpsCandidate: false });
 
 const company = "00000000-0000-4000-8000-000000000001";
 const inserted = [];
@@ -144,6 +146,13 @@ try {
   assert(inventories.every((item) => item.attributeKeys.find((entry) => entry.name === "ignition")?.distinctValuesAtLeast === 1));
   assert(output.slice(beforeInventory).every((line) => !line.includes("33.5731") && !line.includes(imeis[0]) && !line.includes('"latitude"')));
   assert.equal(requests.some((item) => item.path.startsWith("/rest/v1/")), false);
+  const beforePlan = output.length;
+  await run([`--history=${yesterday}`, "--history-plan"]);
+  const plans = output.slice(beforePlan).filter((line) => line.includes('"event":"traccar-bridge-telemetry-plan"')).map(JSON.parse);
+  assert.equal(plans.length, 2);
+  assert(plans.every((plan) => plan.records === 2 && plan.telemetryCandidates === 2 && plan.positionCandidates === 1 && plan.telemetryWithoutGps === 1 && plan.writes === 0));
+  assert.equal(requests.some((item) => item.path.startsWith("/rest/v1/")), false);
+  await assert.rejects(run([`--history=${yesterday}`, "--history-plan", "--write"]), /lecture seule/);
   await assert.rejects(run([`--history=${yesterday}`, "--write"]), /lecture seule/);
 
   await assert.rejects(run(["--write", "--once"]), /TRACCAR_BRIDGE_ALLOW_WRITES/);
