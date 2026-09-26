@@ -2,8 +2,11 @@
 
 import Link from "next/link";
 import { Camera, VideoOff } from "lucide-react";
+import { useFleetHardware } from "./useFleetHardware";
 
 export default function CameraOverview() {
+  const { features } = useFleetHardware();
+  if (!features.has("camera")) return null;
   return (
     <section className="rounded-2xl border border-zinc-800 bg-zinc-950 p-5">
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
