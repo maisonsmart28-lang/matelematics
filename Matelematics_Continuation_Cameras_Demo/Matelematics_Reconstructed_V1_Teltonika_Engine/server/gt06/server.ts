@@ -22,8 +22,12 @@ function loadLocalEnv() {
 
 loadLocalEnv();
 
-const host = process.env.GT06_HOST ?? "0.0.0.0";
-const port = Number(process.env.GT06_PORT ?? 5023);
+const host = process.env.GT06_HOST ?? "127.0.0.1";
+const allowedImei = process.env.GT06_TEST_IMEI ?? "864180070000001";
+const writeEnabled = process.env.GT06_ENABLE_TEST_WRITES === "I_ACCEPT_TEST_ONLY_WRITES";
+if (!/^\d{15,16}$/.test(allowedImei)) throw new Error("GT06_TEST_IMEI must be a synthetic 15-16 digit identifier");
+if (writeEnabled && !["127.0.0.1", "localhost", "::1"].includes(host)) throw new Error("GT06 test writes require loopback binding");
+const port = Number(process.env.GT06_PORT ?? 5024);
 if (!Number.isInteger(port) || port < 1 || port > 65535) {
   throw new Error("GT06_PORT must be a valid TCP port");
 }
@@ -31,17 +35,22 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
 const server = net.createServer((socket) => {
   socket.setKeepAlive(true, 30_000);
   socket.setNoDelay(true);
-  console.log(`[GT06] TCP connection from ${socket.remoteAddress}:${socket.remotePort}`);
+  console.log("[GT06] TCP connection");
 
   attachGt06Protocol(socket, {
-    onLogin: (imei) => console.log(`[GT06] login imei=${imei}`),
-    onHeartbeat: (imei) => console.log(`[GT06] heartbeat imei=${imei}`),
-    onUnknown: (protocol, rawHex) => console.warn(`[GT06] unknown protocol=0x${protocol.toString(16)} raw=${rawHex}`),
+    onLogin: (imei) => {
+      if (imei !== allowedImei) { socket.destroy(); return; }
+      console.log("[GT06] synthetic device login");
+    },
+    onHeartbeat: (imei) => { if (imei === allowedImei) console.log("[GT06] synthetic heartbeat"); },
+    onUnknown: (protocol) => console.warn(`[GT06] unknown protocol=0x${protocol.toString(16)}`),
     onPosition: async (position) => {
-      console.log(`[GT06] ${position.imei} ${position.timestamp} ${position.latitude.toFixed(6)},${position.longitude.toFixed(6)} ${position.speedKph} km/h`);
+      if (position.imei !== allowedImei || !position.gpsValid) return;
+      console.log(`[GT06] valid synthetic GPS timestamp=${position.timestamp} mode=${writeEnabled ? "test-write" : "dry-run"}`);
+      if (!writeEnabled) return;
       try {
         const saved = await persistGt06Position(position);
-        console.log(`[GT06] persisted device=${saved.deviceId} vehicle=${saved.vehicleId}`);
+        console.log(`[GT06] persisted test device=${saved.deviceId} vehicle=${saved.vehicleId}`);
       } catch (error) {
         console.error("[GT06] persistence error:", error instanceof Error ? error.message : error);
       }
@@ -53,5 +62,5 @@ const server = net.createServer((socket) => {
 });
 
 server.listen(port, host, () => {
-  console.log(`[GT06] Matelematics ingestion engine listening on ${host}:${port}`);
+  console.log(`[GT06] Matelematics ingestion engine listening on ${host}:${port} (${writeEnabled ? "test-write" : "dry-run"}; one synthetic IMEI)`);
 });
