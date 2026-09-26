@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useFleetHardware } from "../useFleetHardware";
 
 import {
   Activity,
@@ -414,6 +415,7 @@ function capabilityMessage(
 
 
 export default function DiagnosticsPage() {
+  const { loading: checkingHardware, features } = useFleetHardware();
   const [
     payload,
     setPayload,
@@ -1071,6 +1073,9 @@ export default function DiagnosticsPage() {
       }
     };
 
+
+  if (checkingHardware) return <div className="p-6 text-slate-400">Vérification du matériel…</div>;
+  if (!features.has("diagnostics")) return <div className="p-6 text-slate-300"><h1 className="text-xl font-semibold">Diagnostic indisponible</h1><p className="mt-3">Aucun véhicule accessible ne fournit de diagnostic compatible.</p></div>;
 
   if (
     loading &&
