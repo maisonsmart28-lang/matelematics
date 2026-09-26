@@ -4,6 +4,8 @@ const host = process.env.GT06_SIM_HOST ?? "127.0.0.1";
 const port = Number(process.env.GT06_SIM_PORT ?? "5023");
 const imei = process.env.GT06_SIM_IMEI ?? "864180070000001";
 const intervalMs = Number(process.env.GT06_SIM_INTERVAL_MS ?? "5000");
+const countArg = process.argv.find((arg) => arg.startsWith("--count="));
+const count = countArg ? Number(countArg.slice(8)) : null;
 let serial = 1;
 let latitude = Number(process.env.GT06_SIM_LAT ?? "33.5731");
 let longitude = Number(process.env.GT06_SIM_LON ?? "-7.5898");
@@ -13,6 +15,7 @@ if (!/^\d{15,16}$/.test(imei)) throw new Error("GT06_SIM_IMEI must contain 15 or
 if (!Number.isInteger(intervalMs) || intervalMs < 1000 || intervalMs > 300000) {
   throw new Error("GT06_SIM_INTERVAL_MS must be from 1000 to 300000");
 }
+if (countArg && (!Number.isInteger(count) || count < 1 || count > 100)) throw new Error("--count must be from 1 to 100");
 
 function validateCoordinates() {
   if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) throw new Error("GT06_SIM_LAT must be between -90 and 90");
@@ -72,6 +75,19 @@ function heartbeatPacket() {
   return frame(0x13, Buffer.from([0x44, 0x04, 0x03, 0x00, 0x01]), serial++);
 }
 
+function hasLoginAck(data, expectedSerial) {
+  for (let i = 0; i + 10 <= data.length; i++) {
+    if (data[i] !== 0x78 || data[i + 1] !== 0x78) continue;
+    const total = data[i + 2] + 5;
+    if (total < 10 || i + total > data.length || data[i + total - 2] !== 0x0d || data[i + total - 1] !== 0x0a) continue;
+    const packet = data.subarray(i, i + total);
+    const checksumOffset = total - 4;
+    if (packet.readUInt16BE(checksumOffset) !== crc16X25(packet.subarray(2, checksumOffset))) continue;
+    if (packet[3] === 0x01 && packet.readUInt16BE(total - 6) === expectedSerial) return true;
+  }
+  return false;
+}
+
 if (process.argv.includes("--selftest")) {
   const packet = loginPacket();
   if (packet.readUInt16BE(0) !== 0x7878 || packet[3] !== 0x01 || packet.subarray(-2).toString("hex") !== "0d0a") {
@@ -91,13 +107,27 @@ if (process.argv.includes("--selftest")) {
   if (position.readUInt16BE(positionChecksumOffset) !== crc16X25(position.subarray(2, positionChecksumOffset))) {
     throw new Error("GT06 position CRC selftest failed");
   }
+  if (!hasLoginAck(frame(0x01, Buffer.alloc(0), 42), 42) || hasLoginAck(frame(0x01, Buffer.alloc(0), 42), 43)) {
+    throw new Error("GT06 login ACK validation selftest failed");
+  }
   console.log("GT06 login, position timestamp and CRC selftest PASS (Traccar interoperability still requires a server run)");
   process.exit(0);
 }
 
+let loginSerial = null;
+let response = Buffer.alloc(0);
+let acked = false;
+let sent = 0;
+let timer;
 const socket = net.createConnection({ host, port }, () => {
   console.log(`[GT06 simulator] connected to ${host}:${port}; synthetic IMEI=${imei}`);
-  socket.write(loginPacket());
+  const login = loginPacket();
+  loginSerial = login.readUInt16BE(login.length - 6);
+  socket.write(login);
+  if (count !== null) {
+    timer = setTimeout(() => { console.error("[GT06 simulator] login ACK timeout"); process.exitCode = 1; socket.destroy(); }, 10000);
+    return;
+  }
   setTimeout(() => socket.write(positionPacket()), 500);
   setInterval(() => {
     latitude += 0.0001;
@@ -107,9 +137,34 @@ const socket = net.createConnection({ host, port }, () => {
   setInterval(() => socket.write(heartbeatPacket()), 30000);
 });
 
-socket.on("data", (data) => console.log(`[GT06 simulator] server ACK/data=${data.toString("hex")}`));
+socket.on("data", (data) => {
+  if (count === null) { console.log(`[GT06 simulator] server ACK/data=${data.toString("hex")}`); return; }
+  response = Buffer.concat([response, data]).subarray(-1024);
+  if (acked || !hasLoginAck(response, loginSerial)) return;
+  acked = true;
+  clearTimeout(timer);
+  console.log("[GT06 simulator] login ACK valid (protocol, serial, CRC)");
+  const send = () => {
+    if (socket.destroyed) return;
+    socket.write(positionPacket());
+    sent++;
+    if (sent === count) {
+      console.log(`[GT06 simulator] sent ${sent} synthetic positions; verify decoding in Traccar`);
+      timer = setTimeout(() => socket.end(), 1000);
+    } else {
+      latitude += 0.0001;
+      longitude += 0.0001;
+      timer = setTimeout(send, intervalMs);
+    }
+  };
+  timer = setTimeout(send, 200);
+});
 socket.on("error", (error) => {
   console.error(`[GT06 simulator] ${error.message}`);
   process.exitCode = 1;
 });
-socket.on("close", () => console.log("[GT06 simulator] disconnected"));
+socket.on("close", () => {
+  clearTimeout(timer);
+  if (count !== null && !acked) process.exitCode = 1;
+  console.log("[GT06 simulator] disconnected");
+});
