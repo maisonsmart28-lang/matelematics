@@ -8,8 +8,8 @@ Ce test valide le flux Traccar → Matelematics, la carte et l’enregistrement 
 
 ## Préparation
 
-1. Utiliser une entreprise Matelematics de test avec deux véhicules et les deux IMEI enregistrés dans `devices`, chacun rattaché à son véhicule.
-2. Dans Traccar, créer un compte technique non administrateur, sans commandes et limité à ces deux appareils. Le `uniqueId` de Traccar doit être l’IMEI.
+1. Utiliser une entreprise Matelematics avec un ou deux véhicules et enregistrer uniquement les IMEI concernés dans `devices`, chacun rattaché à son véhicule. `TRACCAR_ALLOWED_IMEIS` accepte un ou deux IMEI : pour isoler un véhicule, renseigner uniquement son IMEI dans `.env.local` ou dans la session PowerShell. Cela n'efface ni les anciens enregistrements ni les autres véhicules.
+2. Dans Traccar, créer un compte technique non administrateur, sans commandes et limité aux appareils concernés. Le `uniqueId` de Traccar doit être l’IMEI.
 3. Le PC qui exécute le bridge doit pouvoir joindre Traccar. Pour le lab local, l’URL est `http://127.0.0.1:8082`. Ne pas exposer cette interface au public.
 4. Copier les variables Traccar de `.env.example` dans `.env.local` et remplacer les valeurs fictives. Ne jamais partager ni committer `.env.local`.
 
@@ -22,7 +22,7 @@ npm run traccar:bridge:selftest
 npm run traccar:bridge -- --once
 ```
 
-Le premier test utilise des serveurs HTTP simulés sur loopback. Le second lit les appareils et positions de Traccar, sans appeler Supabase. Les journaux ne montrent ni coordonnées ni IMEI complet.
+Le premier test utilise des serveurs HTTP simulés sur loopback. Le second lit seulement les appareils autorisés et leurs positions dans Traccar, sans appeler Supabase. Les journaux ne montrent ni coordonnées ni IMEI complet.
 
 Pour inventorier les attributs télématiques d'une journée UTC (y compris ceux des relevés dont le GPS est invalide), lancer `npm run traccar:bridge -- --history=2026-09-24 --history-telemetry`. Cette commande lit les deux appareils autorisés et compte les champs, leurs types, leurs valeurs nulles ou zéro et leur variation, sans afficher leurs valeurs, coordonnées ni trajets. Elle affiche en priorité les champs lisibles avant les identifiants `io*` et limite la sortie à 80 noms. La présence ou la variation d'un champ Traccar ne prouve pas à elle seule une mesure CAN réelle ni sa bonne unité : valider chaque conversion avant d'écrire dans `telemetry`.
 
@@ -75,7 +75,7 @@ Les agents ne fusionnent pas, ne déploient pas, ne lancent pas de migration de 
 
 ## Limites de cette étape
 
-- Le schéma Supabase et les rattachements des deux appareils ont été contrôlés ; aucun relevé réel n'a été importé. L'accès direct à Traccar reste disponible uniquement sur le PC de l'utilisateur.
+- Le schéma Supabase et les rattachements des appareils ont été contrôlés. Les imports réels et leur validation doivent être suivis séparément ; l'accès direct à Traccar reste disponible uniquement sur le PC de l'utilisateur.
 - Le test selftest valide les gardes et le mapping contre des serveurs simulés seulement.
 - L’écriture réelle nécessite un tenant de test et les valeurs locales que l’utilisateur ne doit pas transmettre dans le chat.
 - Les positions réelles peuvent révéler les déplacements de personnes ; limiter les personnes autorisées, informer les conducteurs et vérifier les formalités applicables.
