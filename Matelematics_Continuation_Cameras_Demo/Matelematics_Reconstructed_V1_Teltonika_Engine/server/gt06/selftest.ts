@@ -44,6 +44,33 @@ function heartbeatPacket(serial: number): Buffer {
   return frame(0x13, Buffer.from([0x44, 0x04, 0x03, 0x00, 0x01]), serial);
 }
 
+async function expectRejected(packet: Buffer, label: string): Promise<void> {
+  const listener = net.createServer((socket) => {
+    attachGt06Protocol(socket, { acceptLogin: (imei) => imei === "864180070000001" });
+  });
+  await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
+  const address = listener.address();
+  assert(address && typeof address === "object");
+  const peer = net.createConnection({ host: "127.0.0.1", port: address.port });
+  const replies: Buffer[] = [];
+  peer.on("data", (data) => replies.push(data));
+  try {
+    await new Promise<void>((resolve, reject) => {
+      peer.once("connect", resolve);
+      peer.once("error", reject);
+    });
+    peer.write(packet);
+    await Promise.race([
+      new Promise<void>((resolve) => peer.once("close", () => resolve())),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`${label}: connection not closed`)), 2000)),
+    ]);
+    assert.equal(Buffer.concat(replies).length, 0, `${label}: unauthorized ACK`);
+  } finally {
+    peer.destroy();
+    await new Promise<void>((resolve) => listener.close(() => resolve()));
+  }
+}
+
 async function main() {
   const imei = "864180070000001";
   const expectedLoginAck = buildAck(0x01, 1);
@@ -101,6 +128,10 @@ async function main() {
   assert(Math.abs(positionSeen.longitude - -7.5898) < 0.000001);
   assert(allReplies.includes(expectedLoginAck));
   assert(allReplies.includes(expectedHeartbeatAck));
+
+  await expectRejected(loginPacket("864180070000002", 7), "unknown IMEI");
+  await expectRejected(Buffer.alloc(5000, 0x78), "oversized stream");
+  await expectRejected(Buffer.from([0x78, 0x78, 0, 0x01, 0]), "short declared frame");
 
   client.destroy();
   await new Promise<void>((resolve) => server.close(() => resolve()));
