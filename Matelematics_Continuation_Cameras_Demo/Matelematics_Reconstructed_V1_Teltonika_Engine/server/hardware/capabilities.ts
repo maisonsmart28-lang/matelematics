@@ -171,10 +171,6 @@ export function resolveHardwareCapabilities(
 
   let capabilities = [...TELTONIKA_BASE];
 
-  if (family === "teltonika_fmc150") {
-    capabilities = unique(capabilities, FMC150_CAN);
-  }
-
   if (sourceProfile === "can-adapter") {
     capabilities = unique(capabilities, CAN_ADAPTER);
   }
@@ -183,15 +179,15 @@ export function resolveHardwareCapabilities(
     capabilities = unique(capabilities, LIGHT_VEHICLE_CAN);
   }
 
+  if (sourceProfile === "fmc150-can-chip" && family === "teltonika_fmc150") {
+    capabilities = unique(capabilities, FMC150_CAN);
+  }
+
   if (sourceProfile === "obd") {
     capabilities = unique(capabilities, ["can_rpm"]);
   }
 
   if (sourceProfile === "j1939-fms") {
-    capabilities = unique(capabilities, J1939_FMS);
-  }
-
-  if (family === "teltonika_fmc650") {
     capabilities = unique(capabilities, J1939_FMS);
   }
 
