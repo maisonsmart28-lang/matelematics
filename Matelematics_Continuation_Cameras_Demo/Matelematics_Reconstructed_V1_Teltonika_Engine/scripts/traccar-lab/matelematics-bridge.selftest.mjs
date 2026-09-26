@@ -4,8 +4,10 @@ import { normalizePosition, normalizeTelemetry, parseImeis, planTelemetryPoint, 
 
 const imeis = ["356307042441234", "864180070000001"];
 assert.deepEqual(parseImeis(imeis.join(",")), imeis);
-assert.throws(() => parseImeis(imeis[0]), /exactement deux IMEI/);
-assert.throws(() => parseImeis(`${imeis[0]},${imeis[0]}`), /exactement deux IMEI/);
+assert.deepEqual(parseImeis(imeis[0]), [imeis[0]]);
+assert.throws(() => parseImeis(""), /un ou deux IMEI/);
+assert.throws(() => parseImeis(`${imeis[0]},${imeis[0]}`), /un ou deux IMEI/);
+assert.throws(() => parseImeis(`${imeis.join(",")},123456789012345`), /un ou deux IMEI/);
 
 const validPosition = {
   valid: true,
@@ -205,7 +207,17 @@ try {
   await run(["--write", `--backfill=${yesterday}`]);
   assert.equal(telemetryInserted.length, 8, "repeated backfill must not duplicate telemetry");
   assert.equal(inserted.length, 4, "repeated backfill must not duplicate positions");
-  assert.equal(patches.length, 4, "only the two allowlisted device rows may be refreshed in two polls");
+  process.env.TRACCAR_ALLOWED_IMEIS = imeis[1];
+  const requestsBeforeSingle = requests.length;
+  const patchesBeforeSingle = patches.length;
+  const singleOutputBefore = output.length;
+  await run(["--write", "--once"]);
+  assert.equal(patches.length, patchesBeforeSingle + 1, "single device mode updates only one device");
+  assert.equal(telemetryInserted.length, 8, "single device replay does not duplicate telemetry");
+  assert.equal(inserted.length, 4, "single device replay does not duplicate positions");
+  assert(requests.slice(requestsBeforeSingle).filter((item) => item.path === "/api/positions").every((item) => new URLSearchParams(item.query).get("deviceId") === "12"));
+  assert.equal(JSON.parse(output.slice(singleOutputBefore).find((line) => line.includes('"event":"traccar-bridge-poll"'))).devices.length, 1);
+  assert.equal(patches.length, 5, "only allowlisted device rows may be refreshed");
   assert(inserted.every((row) => row.company_id === company));
   assert(inserted.every((row) => row.speed === 18.52));
   assert.equal(requests.some((item) => item.path === "/api/positions" && new URLSearchParams(item.query).get("deviceId") === "13"), false);
