@@ -167,27 +167,41 @@ async function traccarGet(cfg, endpoint, params = {}) {
 async function supabase(cfg, table, params, method = "GET", body) {
   const url = new URL(`rest/v1/${table}`, cfg.supabase);
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, String(value));
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15_000);
-  try {
-    const response = await fetch(url, {
-      method,
-      headers: {
-        apikey: cfg.secret,
-        Authorization: `Bearer ${cfg.secret}`,
-        "Content-Type": "application/json",
-        Prefer: "return=minimal",
-      },
-      body: body === undefined ? undefined : JSON.stringify(body),
-      signal: controller.signal,
-      cache: "no-store",
-      redirect: "error",
-    });
-    if (!response.ok) throw new Error(`Supabase HTTP ${response.status} sur ${table}`);
-    if (response.status === 204 || response.headers.get("content-length") === "0") return null;
-    const text = await response.text();
-    return text ? JSON.parse(text) : null;
-  } finally { clearTimeout(timeout); }
+  const maxAttempts = method === "GET" ? 3 : 1;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15_000);
+    try {
+      const response = await fetch(url, {
+        method,
+        headers: {
+          apikey: cfg.secret,
+          Authorization: `Bearer ${cfg.secret}`,
+          "Content-Type": "application/json",
+          Prefer: "return=minimal",
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: controller.signal,
+        cache: "no-store",
+        redirect: "error",
+      });
+      if (!response.ok) throw new Error(`Supabase HTTP ${response.status} sur ${table}`);
+      if (response.status === 204 || response.headers.get("content-length") === "0") return null;
+      const text = await response.text();
+      return text ? JSON.parse(text) : null;
+    } catch (error) {
+      const networkError = error?.name === "AbortError" || error instanceof TypeError;
+      if (!networkError) throw error;
+      if (attempt < maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, 400 * attempt));
+        continue;
+      }
+      const code = error?.name === "AbortError" ? "TIMEOUT" : error.cause?.code;
+      const known = new Set(["ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "EHOSTUNREACH", "CERT_HAS_EXPIRED", "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "UND_ERR_CONNECT_TIMEOUT"]);
+      const suffix = method === "GET" ? "3 tentatives de lecture" : "état de l'écriture à vérifier avant reprise";
+      throw new Error(`Supabase : échec réseau (${known.has(code) || code === "TIMEOUT" ? code : "cause_non_identifiée"}) sur ${table} [${method}], ${suffix}. Vérifier DNS, TLS et accès réseau sans afficher la clé.`);
+    } finally { clearTimeout(timeout); }
+  }
 }
 
 async function loadDevices(cfg) {
