@@ -20,6 +20,7 @@ import { useParams } from "next/navigation";
 
 import { supabase } from "../../../components/supabase";
 import VehicleAlertSettingsPanel from "./VehicleAlertSettingsPanel";
+import { isRecent } from "./recency";
 
 type JsonMap = Record<string, unknown>;
 
@@ -135,6 +136,7 @@ function formatDateTime(value: string | null | undefined) {
 
 function freshness(value: string | null | undefined) {
   if (!value) return "Jamais";
+  if (!Number.isFinite(Date.parse(value))) return "Date invalide";
   const seconds = Math.max(
     0,
     Math.round((Date.now() - new Date(value).getTime()) / 1000),
@@ -257,14 +259,16 @@ export default function VehiclePage() {
   if (!data) return null;
 
   const { vehicle, device, hardware, position, telemetry, stats } = data;
-  const online = device?.status === "online" && telemetry !== null;
+  const online = device?.status === "online" && isRecent(device.last_seen_at);
+  const gpsFresh = isRecent(position?.recorded_at);
+  const telemetryFresh = isRecent(telemetry?.recorded_at);
 
   const gpsCards = [
     has("gps_position") && position?.latitude != null && position?.longitude != null && (
       <InfoCard
         key="position"
         icon={<MapPin className="h-5 w-5 text-blue-400" />}
-        label={online ? "Coordonnées GPS" : "Dernières coordonnées GPS"}
+        label={gpsFresh ? "Coordonnées GPS récentes" : "Dernières coordonnées GPS"}
         value={
           position?.latitude != null && position?.longitude != null
             ? `${position.latitude.toFixed(6)}, ${position.longitude.toFixed(6)}`
@@ -276,7 +280,7 @@ export default function VehiclePage() {
       <InfoCard
         key="gps_speed"
         icon={<Gauge className="h-5 w-5 text-cyan-400" />}
-        label={online ? "Vitesse GPS" : "Dernière vitesse GPS"}
+        label={gpsFresh ? "Vitesse GPS récente" : "Dernière vitesse GPS"}
         value={position?.speed == null ? "—" : `${formatNumber(position.speed)} km/h`}
       />
     ),
@@ -284,7 +288,7 @@ export default function VehiclePage() {
       <InfoCard
         key="heading"
         icon={<Route className="h-5 w-5 text-purple-400" />}
-        label={online ? "Cap" : "Dernier cap"}
+        label={gpsFresh ? "Cap GPS récent" : "Dernier cap"}
         value={position?.heading == null ? "—" : `${formatNumber(position.heading)}°`}
       />
     ),
@@ -292,7 +296,7 @@ export default function VehiclePage() {
       <InfoCard
         key="satellites"
         icon={<Satellite className="h-5 w-5 text-emerald-400" />}
-        label={online ? "Satellites" : "Satellites (dernier relevé)"}
+        label={telemetryFresh ? "Satellites" : "Satellites (dernier relevé)"}
         value={satellites === null ? "—" : formatNumber(satellites)}
       />
     ),
@@ -346,7 +350,7 @@ export default function VehiclePage() {
       <InfoCard
         key="ignition"
         icon={<Power className="h-5 w-5 text-emerald-400" />}
-        label={online ? "Contact moteur" : "Contact (dernier relevé)"}
+        label={telemetryFresh ? "Contact moteur" : "Contact (dernier relevé)"}
         value={telemetry?.ignition == null ? "—" : telemetry.ignition ? "ON" : "OFF"}
       />
     ),
@@ -451,8 +455,8 @@ export default function VehiclePage() {
       {gpsCards.length > 0 && (
         <section>
           <SectionHeader
-            title={online ? "Position actuelle" : "Dernière position GPS connue"}
-            subtitle={online ? "Dernière position reçue du tracker selon ses capacités GPS" : "Véhicule hors ligne : les coordonnées et la vitesse affichées sont historiques"}
+            title={gpsFresh ? "Position GPS récente" : "Dernière position GPS connue"}
+            subtitle={gpsFresh ? "Position reçue il y a moins de deux minutes" : "Position historique : les coordonnées et la vitesse ne représentent pas la situation actuelle"}
           />
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
             {gpsCards}
