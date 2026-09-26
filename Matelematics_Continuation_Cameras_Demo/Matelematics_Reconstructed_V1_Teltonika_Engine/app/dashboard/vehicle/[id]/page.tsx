@@ -574,7 +574,7 @@ export default function VehiclePage() {
       </section>
 
       <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
-        <h2 className="font-semibold text-white">Tracker Teltonika</h2>
+        <h2 className="font-semibold text-white">Traceur GPS</h2>
         <div className="mt-4 grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
           <Detail label="IMEI" value={device?.imei ?? "—"} />
           <Detail label="Fabricant" value={device?.manufacturer ?? "—"} />
