@@ -16,7 +16,7 @@ export type Gt06Position = {
 };
 
 type Hooks = {
-  acceptLogin?: (imei: string) => boolean;
+  acceptLogin: (imei: string) => boolean;
   onLogin?: (imei: string) => void;
   onPosition?: (position: Gt06Position) => void | Promise<void>;
   onHeartbeat?: (imei: string) => void;
@@ -93,6 +93,8 @@ function parsePosition(packet: Buffer, imei: string): Gt06Position | null {
   if (date.getUTCFullYear() !== year || date.getUTCMonth() + 1 !== month ||
       date.getUTCDate() !== day || date.getUTCHours() !== hour ||
       date.getUTCMinutes() !== minute || date.getUTCSeconds() !== second) return null;
+  if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180 ||
+      angle > 360) return null;
   const serial = packet.readUInt16BE(packet.length - 6);
 
   return {
@@ -167,7 +169,7 @@ export function attachGt06Protocol(socket: net.Socket, hooks: Hooks): void {
 
       if (protocol === 0x01 && !long) {
         const claimedImei = decodeImei(packet.subarray(4, packet.length - 6));
-        if (!/^\d{15,16}$/.test(claimedImei) || hooks.acceptLogin?.(claimedImei) === false) {
+        if (!/^\d{15,16}$/.test(claimedImei) || !hooks.acceptLogin(claimedImei)) {
           socket.destroy();
           return;
         }
