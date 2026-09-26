@@ -2,9 +2,9 @@
 
 ## Résultat attendu
 
-Les deux FMC150 restent connectés à leur Traccar actuel. Le bridge lit les positions via l’API Traccar, puis peut écrire seulement les positions normalisées dans une entreprise de test Matelematics. Il n’envoie aucune commande aux boîtiers et ne modifie pas leur configuration.
+Les deux FMC150 restent connectés à leur Traccar actuel. Le bridge lit les positions et la télématique minimale via l’API Traccar, puis peut les écrire dans une entreprise Matelematics explicitement choisie. Il n’envoie aucune commande aux boîtiers et ne modifie pas leur configuration.
 
-Ce test valide le flux Traccar → Matelematics, la carte et l’enregistrement des positions. Il ne valide pas le décodeur Teltonika natif Matelematics, les champs CAN détaillés, la vidéo ni les commandes distantes. Le schéma `positions` ne portant pas encore une provenance Traccar dédiée, ces données doivent rester dans le tenant de test.
+Ce test valide le flux Traccar → Matelematics, la carte et l’enregistrement des positions et de la télématique minimale. Il ne valide pas le décodeur Teltonika natif Matelematics, les champs CAN détaillés, la vidéo ni les commandes distantes. Le schéma `positions` ne porte pas encore une provenance Traccar dédiée : tester l'import dans un périmètre isolé.
 
 ## Préparation
 
@@ -40,7 +40,9 @@ $env:TRACCAR_TEST_COMPANY_ID = "UUID_DE_L_ENTREPRISE_DE_TEST"
 npm run traccar:bridge -- --write --once
 ```
 
-Pour continuer l’essai, ajouter `--watch`. Le bridge exige les deux IMEI de la liste, leur présence dans Traccar et leur rattachement à l’entreprise de test dans Supabase. Il ignore les points invalides, convertit la vitesse de nœuds en km/h, vérifie les doublons (appareil, horodatage et coordonnées), et actualise l’état des appareils. Il ne supprime aucune donnée. Ne lancer qu’une instance à la fois.
+Pour continuer l’essai, ajouter `--watch`. Le bridge exige les deux IMEI de la liste, leur présence dans Traccar et leur rattachement à l’entreprise choisie dans Supabase. Il ignore les relevés GPS invalides dans `positions`, mais conserve dans `telemetry` les relevés ayant un ID Traccar, une heure plausible et un contact booléen ou un nombre de satellites plausible, même sans GPS valide. Seuls `ignition`, `metadata.satellites`, `metadata.gps_valid` et l'identifiant de provenance Traccar sont importés : les valeurs CAN et leurs unités restent à valider. La vitesse GPS est convertie des nœuds en km/h. Les doublons télématiques sont bloqués par l'index unique `telemetry_traccar_origin_unique` (entreprise, appareil, ID de position Traccar). Les positions utilisent encore une vérification préalable (appareil, heure et coordonnées) : ne lancer qu’une instance à la fois. Le bridge actualise l’état des appareils et ne supprime aucune donnée.
+
+Les historiques `--history=...` restent strictement en lecture seule : `--write --once` ne reprend que les dernières minutes, pas les relevés des 23 et 24 septembre. Prévoir une reprise historique contrôlée avant leur importation. L'entreprise « 1er client » contient des appareils réels : vérifier le périmètre des accès et la confidentialité avant les écritures.
 
 Le mode écriture utilise la clé Supabase secrète, qui contourne RLS. Elle reste dans `.env.local`, côté serveur, et le bridge impose des filtres explicites sur l’entreprise, les appareils et les véhicules. Ne pas utiliser l’entreprise de production pour cet essai.
 
@@ -73,7 +75,7 @@ Les agents ne fusionnent pas, ne déploient pas, ne lancent pas de migration de 
 
 ## Limites de cette étape
 
-- Aucun accès au Traccar de l’utilisateur ou à Supabase n’a été utilisé ici.
+- Le schéma Supabase et les rattachements des deux appareils ont été contrôlés ; aucun relevé réel n'a été importé. L'accès direct à Traccar reste disponible uniquement sur le PC de l'utilisateur.
 - Le test selftest valide les gardes et le mapping contre des serveurs simulés seulement.
 - L’écriture réelle nécessite un tenant de test et les valeurs locales que l’utilisateur ne doit pas transmettre dans le chat.
 - Les positions réelles peuvent révéler les déplacements de personnes ; limiter les personnes autorisées, informer les conducteurs et vérifier les formalités applicables.
