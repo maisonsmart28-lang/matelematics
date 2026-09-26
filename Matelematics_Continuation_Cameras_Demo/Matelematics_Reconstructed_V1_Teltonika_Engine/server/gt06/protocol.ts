@@ -22,10 +22,6 @@ type Hooks = {
   onUnknown?: (protocol: number, rawHex: string) => void;
 };
 
-function bcd(byte: number): number {
-  return ((byte >> 4) & 0x0f) * 10 + (byte & 0x0f);
-}
-
 function decodeImei(payload: Buffer): string {
   const hex = payload.subarray(0, 8).toString("hex");
   return hex.startsWith("0") ? hex.slice(1) : hex;
@@ -67,12 +63,13 @@ function parsePosition(packet: Buffer, imei: string): Gt06Position | null {
   const info = packet.subarray(4, packet.length - 6);
   if (info.length < 18) return null;
 
-  const year = 2000 + bcd(info[0]);
-  const month = bcd(info[1]);
-  const day = bcd(info[2]);
-  const hour = bcd(info[3]);
-  const minute = bcd(info[4]);
-  const second = bcd(info[5]);
+  // GT06 encodes date/time as numeric bytes, as in Traccar's GT06 decoder.
+  const year = 2000 + info[0];
+  const month = info[1];
+  const day = info[2];
+  const hour = info[3];
+  const minute = info[4];
+  const second = info[5];
   const satellites = info[6] & 0x0f;
   const latitudeRaw = info.readUInt32BE(7);
   const longitudeRaw = info.readUInt32BE(11);
@@ -89,6 +86,9 @@ function parsePosition(packet: Buffer, imei: string): Gt06Position | null {
   if (west) longitude = -longitude;
 
   const date = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() + 1 !== month ||
+      date.getUTCDate() !== day || date.getUTCHours() !== hour ||
+      date.getUTCMinutes() !== minute || date.getUTCSeconds() !== second) return null;
   const serial = packet.readUInt16BE(packet.length - 6);
 
   return {
