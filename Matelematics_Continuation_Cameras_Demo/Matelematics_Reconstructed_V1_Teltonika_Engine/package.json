@@ -17,6 +17,7 @@
     "traccar:bridge:selftest": "node scripts/traccar-lab/matelematics-bridge.selftest.mjs",
     "gt06:lab:selftest": "tsx server/gt06/selftest.ts",
     "gt06:lab:server": "tsx server/gt06/server-lab.ts",
+    "gt06:lab:write": "node --env-file=.env.local --import tsx server/gt06/server-lab.ts",
     "teltonika:step5a:catalog": "tsx server/teltonika/avl/catalog.selftest.ts",
     "teltonika:step5a:codec": "tsx server/teltonika/codec8.selftest.ts",
     "teltonika:step5a:can": "tsx server/teltonika/can/profiled-light-vehicle.selftest.ts",
