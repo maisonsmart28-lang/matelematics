@@ -101,7 +101,7 @@ type VehicleLive = {
 
 function numeric(object: JsonMap | null | undefined, key: string) {
   const value = object?.[key];
-  return typeof value === "number" ? value : null;
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function booleanValue(object: JsonMap | null | undefined, key: string) {
@@ -260,7 +260,7 @@ export default function VehiclePage() {
   const online = device?.status === "online" && telemetry !== null;
 
   const gpsCards = [
-    has("gps_position") && (
+    has("gps_position") && position?.latitude != null && position?.longitude != null && (
       <InfoCard
         key="position"
         icon={<MapPin className="h-5 w-5 text-blue-400" />}
@@ -272,7 +272,7 @@ export default function VehiclePage() {
         }
       />
     ),
-    has("gps_speed") && (
+    has("gps_speed") && position?.speed != null && (
       <InfoCard
         key="gps_speed"
         icon={<Gauge className="h-5 w-5 text-cyan-400" />}
@@ -280,7 +280,7 @@ export default function VehiclePage() {
         value={position?.speed == null ? "—" : `${formatNumber(position.speed)} km/h`}
       />
     ),
-    has("gps_heading") && (
+    has("gps_heading") && position?.heading != null && (
       <InfoCard
         key="heading"
         icon={<Route className="h-5 w-5 text-purple-400" />}
@@ -288,7 +288,7 @@ export default function VehiclePage() {
         value={position?.heading == null ? "—" : `${formatNumber(position.heading)}°`}
       />
     ),
-    has("gps_satellites") && (
+    has("gps_satellites") && satellites !== null && (
       <InfoCard
         key="satellites"
         icon={<Satellite className="h-5 w-5 text-emerald-400" />}
@@ -299,7 +299,7 @@ export default function VehiclePage() {
   ].filter(Boolean);
 
   const canCards = [
-    has("can_rpm") && (
+    has("can_rpm") && rpm !== null && (
       <InfoCard
         key="rpm"
         icon={<Activity className="h-5 w-5 text-blue-400" />}
@@ -307,7 +307,7 @@ export default function VehiclePage() {
         value={rpm === null ? "—" : `${formatNumber(rpm)} tr/min`}
       />
     ),
-    has("can_speed") && (
+    has("can_speed") && canSpeed !== null && (
       <InfoCard
         key="can_speed"
         icon={<Gauge className="h-5 w-5 text-cyan-400" />}
@@ -315,7 +315,7 @@ export default function VehiclePage() {
         value={canSpeed === null ? "—" : `${formatNumber(canSpeed)} km/h`}
       />
     ),
-    has("can_coolant") && (
+    has("can_coolant") && coolant !== null && (
       <InfoCard
         key="coolant"
         icon={<Activity className="h-5 w-5 text-orange-400" />}
@@ -323,7 +323,7 @@ export default function VehiclePage() {
         value={coolant === null ? "—" : `${formatNumber(coolant)} °C`}
       />
     ),
-    has("can_throttle") && (
+    has("can_throttle") && throttle !== null && (
       <InfoCard
         key="throttle"
         icon={<Zap className="h-5 w-5 text-yellow-400" />}
@@ -334,7 +334,7 @@ export default function VehiclePage() {
   ].filter(Boolean);
 
   const trackerCards = [
-    has("can_odometer") && (
+    has("can_odometer") && odometer !== null && (
       <InfoCard
         key="odometer"
         icon={<Route className="h-5 w-5 text-cyan-400" />}
@@ -342,7 +342,7 @@ export default function VehiclePage() {
         value={odometer === null ? "—" : `${formatNumber(odometer, 1)} km`}
       />
     ),
-    has("ignition") && (
+    has("ignition") && telemetry?.ignition != null && (
       <InfoCard
         key="ignition"
         icon={<Power className="h-5 w-5 text-emerald-400" />}
@@ -350,7 +350,7 @@ export default function VehiclePage() {
         value={telemetry?.ignition == null ? "—" : telemetry.ignition ? "ON" : "OFF"}
       />
     ),
-    has("movement") && (
+    has("movement") && movement !== null && (
       <InfoCard
         key="movement"
         icon={<Activity className="h-5 w-5 text-purple-400" />}
@@ -358,7 +358,7 @@ export default function VehiclePage() {
         value={movement === null ? "—" : movement ? "Oui" : "Non"}
       />
     ),
-    has("external_voltage") && (
+    has("external_voltage") && telemetry?.battery_voltage != null && (
       <InfoCard
         key="external_voltage"
         icon={<BatteryCharging className="h-5 w-5 text-blue-400" />}
@@ -370,7 +370,7 @@ export default function VehiclePage() {
         }
       />
     ),
-    has("internal_battery") && (
+    has("internal_battery") && internalBattery !== null && (
       <InfoCard
         key="internal_battery"
         icon={<BatteryCharging className="h-5 w-5 text-indigo-400" />}
@@ -378,7 +378,7 @@ export default function VehiclePage() {
         value={internalBattery === null ? "—" : `${formatNumber(internalBattery, 2)} V`}
       />
     ),
-    has("gsm_signal") && (
+    has("gsm_signal") && telemetry?.signal_strength != null && (
       <InfoCard
         key="gsm"
         icon={<Activity className="h-5 w-5 text-green-400" />}
@@ -456,7 +456,7 @@ export default function VehiclePage() {
           />
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
             {gpsCards}
-            {has("gps_position") && (
+            {has("gps_position") && position?.recorded_at && (
               <InfoCard
                 icon={<Clock className="h-5 w-5 text-slate-300" />}
                 label="Dernière position"
@@ -471,20 +471,20 @@ export default function VehiclePage() {
         <section>
           <SectionHeader
             title="Moteur / CAN"
-            subtitle="Uniquement les données supportées par le matériel et le profil installés"
+            subtitle="Dernières mesures CAN disponibles ; leur origine et leurs unités doivent être vérifiées sur le véhicule"
           />
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{canCards}</div>
         </section>
       )}
 
-      {(has("fuel_level") || has("fuel_used")) && (
+      {((has("fuel_level") && fuelLevel !== null) || (has("fuel_used") && fuelUsed !== null)) && (
         <section>
           <SectionHeader
             title="Carburant"
-            subtitle="Fonctions carburant disponibles pour ce véhicule"
+            subtitle="Dernières mesures carburant reçues ; vérifier les unités et le capteur avant utilisation"
           />
           <div className="grid gap-4 lg:grid-cols-2">
-            {has("fuel_level") && (
+            {has("fuel_level") && fuelLevel !== null && (
               <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
                 <div className="flex items-center gap-3">
                   <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-500/10">
@@ -510,7 +510,7 @@ export default function VehiclePage() {
                 </div>
               </div>
             )}
-            {has("fuel_used") && (
+            {has("fuel_used") && fuelUsed !== null && (
               <InfoCard
                 icon={<Fuel className="h-5 w-5 text-yellow-400" />}
                 label="Carburant consommé"
@@ -521,25 +521,25 @@ export default function VehiclePage() {
         </section>
       )}
 
-      <section>
+      {(trackerCards.length > 0 || telemetry?.codec || telemetry?.recorded_at) && <section>
         <SectionHeader
           title="Véhicule et tracker"
           subtitle="État opérationnel, alimentation et connectivité réellement supportés"
         />
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {trackerCards}
-          <InfoCard
+          {telemetry?.codec && <InfoCard
             icon={<Zap className="h-5 w-5 text-amber-400" />}
             label="Codec / protocole tracker"
-            value={telemetry?.codec ?? "—"}
-          />
-          <InfoCard
+            value={telemetry.codec}
+          />}
+          {telemetry?.recorded_at && <InfoCard
             icon={<Clock className="h-5 w-5 text-slate-300" />}
             label="Dernière télémétrie"
-            value={formatDateTime(telemetry?.recorded_at)}
-          />
+            value={formatDateTime(telemetry.recorded_at)}
+          />}
         </div>
-      </section>
+      </section>}
 
       <section>
         <SectionHeader
@@ -547,7 +547,7 @@ export default function VehiclePage() {
           subtitle="Calculée à partir des positions réellement enregistrées"
         />
         <div className="grid gap-4 sm:grid-cols-3">
-          <InfoCard
+          {stats.average_speed_24h !== null && <InfoCard
             icon={<Gauge className="h-5 w-5 text-blue-400" />}
             label="Vitesse moyenne"
             value={
@@ -555,8 +555,8 @@ export default function VehiclePage() {
                 ? "—"
                 : `${formatNumber(stats.average_speed_24h, 1)} km/h`
             }
-          />
-          <InfoCard
+          />}
+          {stats.max_speed_24h !== null && <InfoCard
             icon={<Gauge className="h-5 w-5 text-yellow-400" />}
             label="Vitesse maximale"
             value={
@@ -564,13 +564,14 @@ export default function VehiclePage() {
                 ? "—"
                 : `${formatNumber(stats.max_speed_24h)} km/h`
             }
-          />
+          />}
           <InfoCard
             icon={<MapPin className="h-5 w-5 text-cyan-400" />}
             label="Points GPS"
             value={stats.gps_points_24h.toLocaleString("fr-FR")}
           />
         </div>
+        {stats.gps_points_24h === 0 && <p className="mt-3 text-sm text-slate-400">Aucune position GPS enregistrée sur cette période.</p>}
       </section>
 
       <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
