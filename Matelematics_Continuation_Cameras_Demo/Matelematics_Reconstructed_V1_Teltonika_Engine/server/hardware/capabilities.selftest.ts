@@ -33,10 +33,17 @@ const fmc150 = resolveHardwareCapabilities({
 
 assert.equal(fmc150.family, "teltonika_fmc150");
 expect("FMC150 IO", hasHardwareCapability(fmc150, "io"));
-expect("FMC150 CAN RPM", hasHardwareCapability(fmc150, "can_rpm"));
-expect("FMC150 CAN speed", hasHardwareCapability(fmc150, "can_speed"));
-expect("FMC150 fuel level", hasHardwareCapability(fmc150, "fuel_level"));
+assert.equal(hasHardwareCapability(fmc150, "can_rpm"), false);
+assert.equal(hasHardwareCapability(fmc150, "fuel_level"), false);
 assert.equal(hasHardwareCapability(fmc150, "camera"), false);
+
+const fmc150WithCan = resolveHardwareCapabilities({
+  manufacturer: "Teltonika",
+  model: "FMC150",
+  sourceProfile: "fmc150_can_chip",
+});
+expect("FMC150 CAN RPM avec profil", hasHardwareCapability(fmc150WithCan, "can_rpm"));
+expect("FMC150 carburant avec profil", hasHardwareCapability(fmc150WithCan, "fuel_level"));
 
 const fmc125Camera = resolveHardwareCapabilities({
   manufacturer: "Teltonika",
