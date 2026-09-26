@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useFleetHardware } from "../useFleetHardware";
 import {
   AlertTriangle,
   CalendarDays,
@@ -166,6 +167,7 @@ function dayRange(fromInput: string, toInput: string) {
 }
 
 export default function CarburantPage() {
+  const { loading: checkingHardware, features } = useFleetHardware();
   const [rows, setRows] = useState<FuelRow[]>([]);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"Tous" | FuelStatus>("Tous");
@@ -351,6 +353,7 @@ export default function CarburantPage() {
   const filteredRows = useMemo(() => {
     const needle = search.trim().toLowerCase();
     return rows.filter((row) => {
+      if (!row.supportsFuel) return false;
       const matchesSearch =
         !needle ||
         row.vehicle.toLowerCase().includes(needle) ||
@@ -396,6 +399,9 @@ export default function CarburantPage() {
       setHistoryError(cause instanceof Error ? cause.message : "Période invalide.");
     }
   }
+
+  if (checkingHardware) return <div className="p-6 text-slate-400">Vérification du matériel…</div>;
+  if (!features.has("fuel")) return <div className="p-6 text-slate-300"><h1 className="text-xl font-semibold">Carburant indisponible</h1><p className="mt-3">Aucun véhicule accessible ne fournit de données carburant compatibles.</p></div>;
 
   return (
     <div className="space-y-6 pb-10">
