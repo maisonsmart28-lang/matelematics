@@ -35,11 +35,12 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
 const server = net.createServer((socket) => {
   socket.setKeepAlive(true, 30_000);
   socket.setNoDelay(true);
+  socket.setTimeout(120_000, () => socket.destroy());
   console.log("[GT06] TCP connection");
 
   attachGt06Protocol(socket, {
+    acceptLogin: (imei) => imei === allowedImei,
     onLogin: (imei) => {
-      if (imei !== allowedImei) { socket.destroy(); return; }
       console.log("[GT06] synthetic device login");
     },
     onHeartbeat: (imei) => { if (imei === allowedImei) console.log("[GT06] synthetic heartbeat"); },
