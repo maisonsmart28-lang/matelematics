@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "../app/components/supabase";
@@ -59,9 +59,13 @@ export default function DashboardShell({
   userRoleLabel = "Utilisateur",
 }: DashboardShellProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const { features } = useFleetHardware();
+  const selectedVehicle = basePath === "/dashboard"
+    ? /^\/dashboard\/vehicle\/([^/]+)/.exec(pathname ?? "")?.[1]
+    : undefined;
+  const { features } = useFleetHardware(selectedVehicle);
 
   const allMenuItems = useMemo(
     () => [
@@ -480,6 +484,5 @@ type InAppNotification = {
     </div>
   );
 }
-
 
 
