@@ -208,6 +208,16 @@ try {
   assert.equal(telemetryInserted.length, 8, "repeated backfill must not duplicate telemetry");
   assert.equal(inserted.length, 4, "repeated backfill must not duplicate positions");
   process.env.TRACCAR_ALLOWED_IMEIS = imeis[1];
+  const statusRequestsBefore = requests.length;
+  const statusOutputBefore = output.length;
+  await run(["--status"]);
+  const statusLines = output.slice(statusOutputBefore).map(JSON.parse);
+  assert.equal(statusLines.length, 1);
+  assert.equal(statusLines[0].device, `…${imeis[1].slice(-4)}`);
+  assert.equal(statusLines[0].status, "online");
+  assert.equal(statusLines[0].mode, "read-only");
+  assert.equal(requests.slice(statusRequestsBefore).filter((item) => item.path !== "/api/devices").length, 0, "status must read only Traccar devices");
+  await assert.rejects(run(["--status", "--write"]), /--status est en lecture seule/);
   const requestsBeforeSingle = requests.length;
   const patchesBeforeSingle = patches.length;
   const singleOutputBefore = output.length;
