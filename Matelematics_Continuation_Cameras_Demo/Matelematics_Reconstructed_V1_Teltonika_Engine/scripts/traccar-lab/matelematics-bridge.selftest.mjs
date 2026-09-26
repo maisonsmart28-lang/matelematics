@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { normalizePosition, parseImeis, planTelemetryPoint, run } from "./matelematics-bridge.mjs";
+import { normalizePosition, normalizeTelemetry, parseImeis, planTelemetryPoint, run } from "./matelematics-bridge.mjs";
 
 const imeis = ["356307042441234", "864180070000001"];
 assert.deepEqual(parseImeis(imeis.join(",")), imeis);
@@ -23,9 +23,16 @@ assert.equal(normalizePosition({ ...validPosition, valid: false }).reason, "inva
 assert.equal(normalizePosition({ ...validPosition, latitude: 91 }).reason, "invalid_coordinates");
 assert.deepEqual(planTelemetryPoint({ ...validPosition, valid: false, attributes: { ignition: false, sat: 0 } }), { telemetryCandidate: true, gpsCandidate: false });
 assert.deepEqual(planTelemetryPoint({ ...validPosition, valid: false, attributes: { RPM: 0 } }), { telemetryCandidate: false, gpsCandidate: false });
+assert.equal(normalizeTelemetry({ ...validPosition, id: 99, valid: false, attributes: { ignition: false, sat: 0, FUELLEVEL: 0 } }).metadata.gps_valid, false);
+assert.equal(normalizeTelemetry({ ...validPosition, id: 99, valid: false, attributes: { ignition: false, sat: 0 } }).ignition, false);
+assert.equal(normalizeTelemetry({ ...validPosition, id: 99, valid: false, attributes: { ignition: false, sat: 0 } }).metadata.satellites, 0);
+assert.equal(normalizeTelemetry({ ...validPosition, id: 99, valid: false, attributes: { ignition: false, sat: 0 } }).metadata.FUELLEVEL, undefined);
+assert.equal(normalizeTelemetry({ ...validPosition, id: 99, fixTime: "invalid", attributes: { ignition: true } }), null);
+assert.equal(normalizeTelemetry({ ...validPosition, attributes: { ignition: true } }), null);
 
 const company = "00000000-0000-4000-8000-000000000001";
 const inserted = [];
+const telemetryInserted = [];
 const patches = [];
 const requests = [];
 let transientFailures = 0;
@@ -60,7 +67,7 @@ const server = createServer(async (request, response) => {
       response.end(JSON.stringify([point, { ...point, id: id * 100 + 1, valid: false }]));
       return;
     }
-    response.end(JSON.stringify([{ ...validPosition, id: id * 100, deviceId: id, latitude: id === 11 ? 33.57 : 33.58 }]));
+    response.end(JSON.stringify([{ ...validPosition, id: id * 100, deviceId: id, latitude: id === 11 ? 33.57 : 33.58, attributes: { ignition: true, sat: 7 } }, { ...validPosition, id: id * 100 + 1, deviceId: id, valid: false, attributes: { ignition: false, sat: 0, RPM: 0 } }]));
     return;
   }
   if (url.pathname === "/rest/v1/devices" && request.method === "GET") {
@@ -82,6 +89,22 @@ const server = createServer(async (request, response) => {
     let body = "";
     for await (const chunk of request) body += chunk;
     inserted.push(...JSON.parse(body));
+    response.writeHead(201, { "content-length": "0" });
+    response.end();
+    return;
+  }
+  if (url.pathname === "/rest/v1/telemetry" && request.method === "GET") {
+    const key = JSON.parse(url.searchParams.get("metadata").slice(3)).traccar_position_id;
+    const deviceId = url.searchParams.get("device_id").slice(3);
+    const exists = telemetryInserted.some((row) => row.device_id === deviceId && row.metadata.traccar_position_id === key);
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify(exists ? [{ id: 1 }] : []));
+    return;
+  }
+  if (url.pathname === "/rest/v1/telemetry" && request.method === "POST") {
+    let body = "";
+    for await (const chunk of request) body += chunk;
+    telemetryInserted.push(...JSON.parse(body));
     response.writeHead(201, { "content-length": "0" });
     response.end();
     return;
@@ -161,7 +184,12 @@ try {
   process.env.TRACCAR_BRIDGE_ALLOW_WRITES = "I_ACCEPT_TEST_ONLY_WRITES";
   await run(["--write", "--once"]);
   assert.equal(inserted.length, 2, "write mode must insert only the two allowlisted positions");
-  assert.equal(patches.length, 2, "only the two allowlisted device rows may be refreshed");
+  assert.equal(telemetryInserted.length, 4, "telemetry must persist even for invalid GPS fixes");
+  assert(telemetryInserted.every((row) => row.company_id === company && row.source === "traccar" && !row.can_payload && !row.io_values));
+  assert.equal(telemetryInserted.filter((row) => row.metadata.gps_valid === false).length, 2);
+  await run(["--write", "--once"]);
+  assert.equal(telemetryInserted.length, 4, "second poll must not duplicate telemetry");
+  assert.equal(patches.length, 4, "only the two allowlisted device rows may be refreshed in two polls");
   assert(inserted.every((row) => row.company_id === company));
   assert(inserted.every((row) => row.speed === 18.52));
   assert.equal(requests.some((item) => item.path === "/api/positions" && new URLSearchParams(item.query).get("deviceId") === "13"), false);
