@@ -2,6 +2,7 @@
 
 import { Camera, CircleDot, Film, ShieldAlert, Video } from "lucide-react";
 import { demoCameras, demoCameraEvents } from "../../../lib/demo-cameras";
+import { useFleetHardware } from "../useFleetHardware";
 
 const severityClasses = {
   info: "border-blue-500/20 bg-blue-500/10 text-blue-300",
@@ -10,6 +11,9 @@ const severityClasses = {
 };
 
 export default function CamerasPage() {
+  const { loading, features } = useFleetHardware();
+  if (loading) return <main className="p-6 text-slate-400">Vérification des caméras…</main>;
+  if (!features.has("camera")) return <main className="p-6 text-slate-300"><h1 className="text-xl font-semibold">Caméras indisponibles</h1><p className="mt-3">Aucune caméra compatible n’est configurée sur les véhicules auxquels vous avez accès.</p></main>;
   const online = demoCameras.filter((camera) => camera.status === "En ligne").length;
 
   return (
