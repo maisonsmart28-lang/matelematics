@@ -199,7 +199,26 @@ export function planTelemetryPoint(position) {
   const attrs = position?.attributes;
   const hasIgnition = attrs && typeof attrs === "object" && !Array.isArray(attrs) && typeof attrs.ignition === "boolean";
   const hasSatellites = attrs && typeof attrs === "object" && !Array.isArray(attrs) && Number.isInteger(attrs.sat) && attrs.sat >= 0 && attrs.sat <= 100;
-  return { telemetryCandidate: Boolean(hasIgnition || hasSatellites), gpsCandidate: normalizePosition(position).ok };
+  const ms = Date.parse(position?.fixTime ?? position?.deviceTime ?? position?.serverTime ?? "");
+  const validTime = Number.isFinite(ms) && ms >= Date.UTC(2000, 0, 1) && ms <= Date.now() + 86_400_000;
+  return { telemetryCandidate: Boolean(validTime && (hasIgnition || hasSatellites)), gpsCandidate: normalizePosition(position).ok };
+}
+
+export function normalizeTelemetry(position) {
+  const candidate = planTelemetryPoint(position);
+  if (!candidate.telemetryCandidate || !Number.isSafeInteger(position.id) || position.id < 1) return null;
+  const attrs = position.attributes;
+  const ms = Date.parse(position.fixTime ?? position.deviceTime ?? position.serverTime);
+  return {
+    recorded_at: new Date(ms).toISOString(),
+    source: "traccar",
+    ignition: typeof attrs.ignition === "boolean" ? attrs.ignition : null,
+    metadata: {
+      traccar_position_id: String(position.id),
+      gps_valid: candidate.gpsCandidate,
+      ...(Number.isInteger(attrs.sat) && attrs.sat >= 0 && attrs.sat <= 100 ? { satellites: attrs.sat } : {}),
+    },
+  };
 }
 
 async function historyReport(cfg, traccarDevices) {
@@ -296,9 +315,30 @@ async function writePosition(cfg, device, row) {
   return true;
 }
 
+async function writeTelemetry(cfg, device, row) {
+  const existing = await supabase(cfg, "telemetry", {
+    select: "id", company_id: `eq.${cfg.company}`, device_id: `eq.${device.id}`,
+    source: "eq.traccar", metadata: `cs.${JSON.stringify({ traccar_position_id: row.metadata.traccar_position_id })}`, limit: "1",
+  });
+  if (existing?.length) return false;
+  try {
+    await supabase(cfg, "telemetry", {}, "POST", [{ company_id: device.company_id, vehicle_id: device.vehicle_id, device_id: device.id, ...row }]);
+    return true;
+  } catch (error) {
+    // A concurrent worker may have committed the same Traccar position first.
+    if (!/Supabase HTTP 409 sur telemetry/.test(error.message)) throw error;
+    const concurrent = await supabase(cfg, "telemetry", {
+      select: "id", company_id: `eq.${cfg.company}`, device_id: `eq.${device.id}`,
+      source: "eq.traccar", metadata: `cs.${JSON.stringify({ traccar_position_id: row.metadata.traccar_position_id })}`, limit: "1",
+    });
+    if (concurrent?.length) return false;
+    throw error;
+  }
+}
+
 async function poll(cfg, traccarDevices, dbDevices, cursors) {
   const now = Date.now();
-  let seen = 0, inserted = 0, duplicate = 0, skipped = 0;
+  let seen = 0, inserted = 0, duplicate = 0, skipped = 0, telemetryInserted = 0, telemetryDuplicate = 0;
   for (const imei of cfg.imeis) {
     const tracker = traccarDevices.get(imei);
     const fromMs = cursors.get(imei) ?? now - cfg.lookback * 60_000;
@@ -312,6 +352,13 @@ async function poll(cfg, traccarDevices, dbDevices, cursors) {
     positions.sort((a, b) => Date.parse(a.fixTime ?? a.deviceTime ?? a.serverTime) - Date.parse(b.fixTime ?? b.deviceTime ?? b.serverTime));
     for (const position of positions) {
       const normalized = normalizePosition(position);
+      if (cfg.write) {
+        const telemetry = normalizeTelemetry(position);
+        if (telemetry) {
+          if (await writeTelemetry(cfg, dbDevices.get(imei), telemetry)) telemetryInserted++;
+          else telemetryDuplicate++;
+        }
+      }
       if (!normalized.ok) { skipped += 1; if (Number.isFinite(normalized.ms)) newest = Math.max(newest, normalized.ms); continue; }
       newest = Math.max(newest, normalized.ms);
       if (cfg.write) {
@@ -332,7 +379,7 @@ async function poll(cfg, traccarDevices, dbDevices, cursors) {
       }
     }
   }
-  console.log(JSON.stringify({ event: "traccar-bridge-poll", mode: cfg.write ? "test-write" : "dry-run", devices: cfg.imeis.map(mask), positionsReturned: seen, inserted, duplicate, skipped }));
+  console.log(JSON.stringify({ event: "traccar-bridge-poll", mode: cfg.write ? "test-write" : "dry-run", devices: cfg.imeis.map(mask), positionsReturned: seen, inserted, duplicate, skipped, telemetryInserted, telemetryDuplicate }));
 }
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
