@@ -50,7 +50,7 @@ const server = net.createServer((socket) => {
       if (!writeEnabled) return;
       try {
         const saved = await persistGt06Position(position);
-        console.log(`[GT06] persisted test device=${saved.deviceId} vehicle=${saved.vehicleId}`);
+        console.log(`[GT06] atomic test persistence: ${saved.result}`);
       } catch (error) {
         console.error("[GT06] persistence error:", error instanceof Error ? error.message : error);
       }
