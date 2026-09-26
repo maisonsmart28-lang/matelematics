@@ -65,14 +65,20 @@ function configFrom(args) {
   const historyArgs = args.filter((arg) => arg.startsWith("--history="));
   if (historyArgs.length > 1) throw new Error("Une seule date --history=AAAA-MM-JJ est autorisée.");
   const history = historyArgs.length ? historyArgs[0].slice("--history=".length) : null;
+  const backfillArgs = args.filter((arg) => arg.startsWith("--backfill="));
+  if (backfillArgs.length > 1) throw new Error("Une seule date --backfill=AAAA-MM-JJ est autorisée.");
+  const backfill = backfillArgs.length ? backfillArgs[0].slice("--backfill=".length) : null;
+  if (backfill && (history || args.includes("--watch") || !args.includes("--write"))) throw new Error("--backfill exige --write et ne se combine ni avec --history ni avec --watch.");
   const historyTelemetry = args.includes("--history-telemetry");
   const historyPlan = args.includes("--history-plan");
   if (historyTelemetry && !history) throw new Error("--history-telemetry exige --history=AAAA-MM-JJ.");
   if (historyPlan && (!history || historyTelemetry)) throw new Error("--history-plan exige --history=AAAA-MM-JJ et ne se combine pas avec --history-telemetry.");
+  for (const day of [history, backfill].filter(Boolean)) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || new Date(`${day}T00:00:00.000Z`).toISOString().slice(0, 10) !== day) throw new Error("Date invalide : utiliser AAAA-MM-JJ.");
+    const age = Date.now() - Date.parse(`${day}T00:00:00.000Z`);
+    if (age < 0 || age > 31 * 86_400_000) throw new Error("--history et --backfill acceptent seulement les 30 derniers jours (jour UTC).");
+  }
   if (history) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(history) || new Date(`${history}T00:00:00.000Z`).toISOString().slice(0, 10) !== history) throw new Error("Date --history invalide : utiliser AAAA-MM-JJ.");
-    const age = Date.now() - Date.parse(`${history}T00:00:00.000Z`);
-    if (age < 0 || age > 31 * 86_400_000) throw new Error("--history accepte seulement les 30 derniers jours (jour UTC).");
     if (args.includes("--write") || args.includes("--watch")) throw new Error("--history est en lecture seule et ne peut pas être combiné avec --write ou --watch.");
   }
   const base = new URL(required("TRACCAR_BASE_URL"));
@@ -96,6 +102,7 @@ function configFrom(args) {
     pollMs,
     lookback,
     history,
+    backfill,
     historyTelemetry,
     historyPlan,
   };
@@ -336,6 +343,41 @@ async function writeTelemetry(cfg, device, row) {
   }
 }
 
+async function backfill(cfg, traccarDevices, dbDevices) {
+  const start = Date.parse(`${cfg.backfill}T00:00:00.000Z`);
+  const end = Math.min(start + 86_400_000, Date.now());
+  let returned = 0, telemetryInserted = 0, telemetryDuplicate = 0, positionInserted = 0, positionDuplicate = 0, invalidGps = 0, skipped = 0;
+  console.log(JSON.stringify({ event: "traccar-bridge-backfill-start", dayUTC: cfg.backfill, devices: cfg.imeis.map(mask), mode: "test-write" }));
+  for (const imei of cfg.imeis) {
+    const tracker = traccarDevices.get(imei);
+    const device = dbDevices.get(imei);
+    const seen = new Set();
+    for (let from = start; from < end; from += 6 * 3_600_000) {
+      const to = Math.min(from + 6 * 3_600_000, end);
+      const positions = await traccarGet(cfg, "positions", { deviceId: tracker.id, from: new Date(from).toISOString(), to: new Date(to).toISOString() });
+      if (!Array.isArray(positions)) throw new Error("Traccar : réponse historique invalide.");
+      for (const point of positions) {
+        if (point.deviceId !== tracker.id || !Number.isSafeInteger(point.id) || point.id < 1 || seen.has(point.id)) continue;
+        const ms = Date.parse(point.fixTime ?? point.deviceTime ?? point.serverTime ?? "");
+        if (!Number.isFinite(ms) || ms < start || ms >= end) { skipped++; continue; }
+        seen.add(point.id);
+        returned++;
+        const telemetry = normalizeTelemetry(point);
+        if (telemetry) {
+          if (await writeTelemetry(cfg, device, telemetry)) telemetryInserted++;
+          else telemetryDuplicate++;
+        }
+        const gps = normalizePosition(point);
+        if (gps.ok) {
+          if (await writePosition(cfg, device, gps.row)) positionInserted++;
+          else positionDuplicate++;
+        } else invalidGps++;
+      }
+    }
+  }
+  console.log(JSON.stringify({ event: "traccar-bridge-backfill", dayUTC: cfg.backfill, devices: cfg.imeis.map(mask), returned, telemetryInserted, telemetryDuplicate, positionInserted, positionDuplicate, invalidGps, skipped }));
+}
+
 async function poll(cfg, traccarDevices, dbDevices, cursors) {
   const now = Date.now();
   let seen = 0, inserted = 0, duplicate = 0, skipped = 0, telemetryInserted = 0, telemetryDuplicate = 0;
@@ -392,6 +434,7 @@ export async function run(args = process.argv.slice(2)) {
   if (cfg.imeis.some((imei) => !traccarDevices.has(imei))) throw new Error("Un des deux IMEI autorisés n’est pas visible dans le compte Traccar.");
   if (cfg.history) return historyReport(cfg, traccarDevices);
   const dbDevices = cfg.write ? await loadDevices(cfg) : new Map();
+  if (cfg.backfill) return backfill(cfg, traccarDevices, dbDevices);
   console.log(JSON.stringify({ event: "traccar-bridge-start", mode: cfg.write ? "test-write" : "dry-run", devices: cfg.imeis.map(mask), traccarHost: cfg.base.origin, pollMs: cfg.pollMs }));
   const cursors = new Map();
   let running = true;
