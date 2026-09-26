@@ -63,8 +63,8 @@ const server = createServer(async (request, response) => {
     response.writeHead(200, { "content-type": "application/json" });
     const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
     if (url.searchParams.get("from")?.startsWith(yesterday)) {
-      const point = { ...validPosition, fixTime: `${yesterday}T12:00:00.000Z`, id: id * 100, deviceId: id, attributes: { ignition: true, power: 12.1 } };
-      response.end(JSON.stringify([point, { ...point, id: id * 100 + 1, valid: false }]));
+      const point = { ...validPosition, fixTime: `${yesterday}T12:00:00.000Z`, id: id * 100 + 10000, deviceId: id, attributes: { ignition: true, power: 12.1 } };
+      response.end(JSON.stringify([point, { ...point, id: point.id + 1, valid: false }]));
       return;
     }
     response.end(JSON.stringify([{ ...validPosition, id: id * 100, deviceId: id, latitude: id === 11 ? 33.57 : 33.58, attributes: { ignition: true, sat: 7 } }, { ...validPosition, id: id * 100 + 1, deviceId: id, valid: false, attributes: { ignition: false, sat: 0, RPM: 0 } }]));
@@ -81,8 +81,12 @@ const server = createServer(async (request, response) => {
     return;
   }
   if (url.pathname === "/rest/v1/positions" && request.method === "GET") {
+    const exists = inserted.some((row) => row.device_id === url.searchParams.get("device_id")?.slice(3)
+      && row.recorded_at === url.searchParams.get("recorded_at")?.slice(3)
+      && String(row.latitude) === url.searchParams.get("latitude")?.slice(3)
+      && String(row.longitude) === url.searchParams.get("longitude")?.slice(3));
     response.writeHead(200, { "content-type": "application/json" });
-    response.end("[]");
+    response.end(JSON.stringify(exists ? [{ id: 1 }] : []));
     return;
   }
   if (url.pathname === "/rest/v1/positions" && request.method === "POST") {
@@ -177,6 +181,7 @@ try {
   assert.equal(requests.some((item) => item.path.startsWith("/rest/v1/")), false);
   await assert.rejects(run([`--history=${yesterday}`, "--history-plan", "--write"]), /lecture seule/);
   await assert.rejects(run([`--history=${yesterday}`, "--write"]), /lecture seule/);
+  await assert.rejects(run([`--backfill=${yesterday}`]), /--backfill exige --write/);
 
   await assert.rejects(run(["--write", "--once"]), /TRACCAR_BRIDGE_ALLOW_WRITES/);
   assert.equal(requests.some((item) => item.path.startsWith("/rest/v1/")), false, "write guard must be checked before any database call");
@@ -189,6 +194,17 @@ try {
   assert.equal(telemetryInserted.filter((row) => row.metadata.gps_valid === false).length, 2);
   await run(["--write", "--once"]);
   assert.equal(telemetryInserted.length, 4, "second poll must not duplicate telemetry");
+  const beforeBackfill = output.length;
+  await run(["--write", `--backfill=${yesterday}`]);
+  assert.equal(telemetryInserted.length, 8, "backfill stores historical telemetry, including invalid GPS");
+  assert.equal(inserted.length, 4, "backfill stores only valid historical GPS positions");
+  const firstBackfill = JSON.parse(output.slice(beforeBackfill).find((line) => line.includes('"event":"traccar-bridge-backfill"')));
+  assert.equal(firstBackfill.telemetryInserted, 4);
+  assert.equal(firstBackfill.positionInserted, 2);
+  assert.equal(firstBackfill.invalidGps, 2);
+  await run(["--write", `--backfill=${yesterday}`]);
+  assert.equal(telemetryInserted.length, 8, "repeated backfill must not duplicate telemetry");
+  assert.equal(inserted.length, 4, "repeated backfill must not duplicate positions");
   assert.equal(patches.length, 4, "only the two allowlisted device rows may be refreshed in two polls");
   assert(inserted.every((row) => row.company_id === company));
   assert(inserted.every((row) => row.speed === 18.52));
