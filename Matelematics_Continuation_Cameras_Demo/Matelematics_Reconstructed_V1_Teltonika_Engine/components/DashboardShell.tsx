@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "../app/components/supabase";
+import { useFleetHardware } from "../app/dashboard/useFleetHardware";
 import {
   Menu,
   LogOut,
@@ -60,6 +61,7 @@ export default function DashboardShell({
   const router = useRouter();
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const { features } = useFleetHardware();
 
   const allMenuItems = useMemo(
     () => [
@@ -94,14 +96,14 @@ export default function DashboardShell({
       userRole === "partner_admin" ||
       userRole === "client_admin";
 
-    if (canManage) {
-      return allMenuItems;
-    }
-
-    return allMenuItems.filter(
-      (item) => item.href !== buildHref(basePath, "/admin"),
-    );
-  }, [allMenuItems, basePath, userRole]);
+    return allMenuItems.filter((item) => {
+      if (!canManage && item.href === buildHref(basePath, "/admin")) return false;
+      if (item.href === buildHref(basePath, "/cameras")) return features.has("camera");
+      if (item.href === buildHref(basePath, "/carburant")) return features.has("fuel");
+      if (item.href === buildHref(basePath, "/diagnostics")) return features.has("diagnostics");
+      return true;
+    });
+  }, [allMenuItems, basePath, userRole, features]);
 type InAppNotification = {
     id: string;
     severity: "info" | "warning" | "critical";
@@ -478,7 +480,6 @@ type InAppNotification = {
     </div>
   );
 }
-
 
 
 
