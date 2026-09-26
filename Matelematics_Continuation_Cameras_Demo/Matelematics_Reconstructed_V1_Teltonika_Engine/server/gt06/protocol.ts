@@ -16,11 +16,15 @@ export type Gt06Position = {
 };
 
 type Hooks = {
+  acceptLogin?: (imei: string) => boolean;
   onLogin?: (imei: string) => void;
   onPosition?: (position: Gt06Position) => void | Promise<void>;
   onHeartbeat?: (imei: string) => void;
   onUnknown?: (protocol: number, rawHex: string) => void;
 };
+
+const MAX_BUFFER_BYTES = 4096;
+const MAX_PACKET_BYTES = 1024;
 
 function decodeImei(payload: Buffer): string {
   const hex = payload.subarray(0, 8).toString("hex");
@@ -111,6 +115,10 @@ export function attachGt06Protocol(socket: net.Socket, hooks: Hooks): void {
   let imei = "";
 
   socket.on("data", (chunk) => {
+    if (buffer.length + chunk.length > MAX_BUFFER_BYTES) {
+      socket.destroy();
+      return;
+    }
     buffer = Buffer.concat([buffer, chunk]);
 
     while (buffer.length >= 5) {
@@ -139,13 +147,17 @@ export function attachGt06Protocol(socket: net.Socket, hooks: Hooks): void {
 
       const length = long ? buffer.readUInt16BE(2) : buffer[2];
       const total = 2 + lengthBytes + length + 2;
+      if (length < 5 || total > MAX_PACKET_BYTES) {
+        socket.destroy();
+        return;
+      }
       if (buffer.length < total) return;
 
       const packet = buffer.subarray(0, total);
       buffer = buffer.subarray(total);
 
       if (!verifyPacket(packet)) {
-        console.warn(`[GT06] invalid CRC/frame ${packet.toString("hex")}`);
+        console.warn("[GT06] invalid CRC/frame");
         continue;
       }
 
@@ -154,7 +166,12 @@ export function attachGt06Protocol(socket: net.Socket, hooks: Hooks): void {
       const serial = packet.readUInt16BE(packet.length - 6);
 
       if (protocol === 0x01 && !long) {
-        imei = decodeImei(packet.subarray(4, packet.length - 6));
+        const claimedImei = decodeImei(packet.subarray(4, packet.length - 6));
+        if (!/^\d{15,16}$/.test(claimedImei) || hooks.acceptLogin?.(claimedImei) === false) {
+          socket.destroy();
+          return;
+        }
+        imei = claimedImei;
         socket.write(buildAck(protocol, serial));
         hooks.onLogin?.(imei);
         continue;
