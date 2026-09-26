@@ -189,6 +189,21 @@ try {
   assert.equal(requests.some((item) => item.path.startsWith("/rest/v1/")), false, "write guard must be checked before any database call");
 
   process.env.TRACCAR_BRIDGE_ALLOW_WRITES = "I_ACCEPT_TEST_ONLY_WRITES";
+  const originalFetch = globalThis.fetch;
+  let dbFailures = 0;
+  globalThis.fetch = (input, options) => {
+    if (new URL(input).pathname === "/rest/v1/devices") {
+      dbFailures++;
+      throw new TypeError("fetch failed", { cause: { code: "ENOTFOUND" } });
+    }
+    return originalFetch(input, options);
+  };
+  try {
+    await assert.rejects(run(["--write", `--backfill=${yesterday}`]), /Supabase : échec réseau \(ENOTFOUND\) sur devices \[GET\], 3 tentatives de lecture/);
+    assert.equal(dbFailures, 3);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
   await run(["--write", "--once"]);
   assert.equal(inserted.length, 2, "write mode must insert only the two allowlisted positions");
   assert.equal(telemetryInserted.length, 4, "telemetry must persist even for invalid GPS fixes");
