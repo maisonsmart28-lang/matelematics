@@ -68,6 +68,8 @@ function configFrom(args) {
   const backfillArgs = args.filter((arg) => arg.startsWith("--backfill="));
   if (backfillArgs.length > 1) throw new Error("Une seule date --backfill=AAAA-MM-JJ est autorisée.");
   const backfill = backfillArgs.length ? backfillArgs[0].slice("--backfill=".length) : null;
+  const status = args.includes("--status");
+  if (status && (history || backfill || args.includes("--write") || args.includes("--watch"))) throw new Error("--status est en lecture seule et ne se combine pas avec --history, --backfill, --write ou --watch.");
   if (backfill && (history || args.includes("--watch") || !args.includes("--write"))) throw new Error("--backfill exige --write et ne se combine ni avec --history ni avec --watch.");
   const historyTelemetry = args.includes("--history-telemetry");
   const historyPlan = args.includes("--history-plan");
@@ -103,6 +105,7 @@ function configFrom(args) {
     lookback,
     history,
     backfill,
+    status,
     historyTelemetry,
     historyPlan,
   };
@@ -432,6 +435,15 @@ export async function run(args = process.argv.slice(2)) {
   const visible = await traccarGet(cfg, "devices");
   const traccarDevices = new Map((visible ?? []).filter((device) => cfg.imeis.includes(String(device.uniqueId))).map((device) => [String(device.uniqueId), device]));
   if (cfg.imeis.some((imei) => !traccarDevices.has(imei))) throw new Error("Un IMEI autorisé n’est pas visible dans le compte Traccar.");
+  if (cfg.status) {
+    for (const imei of cfg.imeis) {
+      const device = traccarDevices.get(imei);
+      const lastMs = Date.parse(device.lastUpdate ?? "");
+      const validLast = Number.isFinite(lastMs) && lastMs > 0 && lastMs <= Date.now() + 86_400_000;
+      console.log(JSON.stringify({ event: "traccar-bridge-device-status", device: mask(imei), mode: "read-only", status: ["online", "offline", "unknown"].includes(device.status) ? device.status : "unknown", lastUpdateUTC: validLast ? new Date(lastMs).toISOString() : null, ageMinutes: validLast ? Math.max(0, Math.floor((Date.now() - lastMs) / 60_000)) : null }));
+    }
+    return;
+  }
   if (cfg.history) return historyReport(cfg, traccarDevices);
   const dbDevices = cfg.write ? await loadDevices(cfg) : new Map();
   if (cfg.backfill) return backfill(cfg, traccarDevices, dbDevices);
