@@ -63,6 +63,7 @@ const FMC150_CAN: readonly HardwareCapability[] = [
   "can_odometer",
   "fuel_level",
   "fuel_used",
+  "dtc",
 ];
 
 const CAN_ADAPTER: readonly HardwareCapability[] = [
@@ -170,6 +171,12 @@ export function resolveHardwareCapabilities(
   }
 
   let capabilities = [...TELTONIKA_BASE];
+
+  // CAN capable hardware exposes the section; individual measurements still
+  // require a decoded value from the connected vehicle.
+  if (family === "teltonika_fmc150") {
+    capabilities = unique(capabilities, FMC150_CAN);
+  }
 
   if (sourceProfile === "can-adapter") {
     capabilities = unique(capabilities, CAN_ADAPTER);
