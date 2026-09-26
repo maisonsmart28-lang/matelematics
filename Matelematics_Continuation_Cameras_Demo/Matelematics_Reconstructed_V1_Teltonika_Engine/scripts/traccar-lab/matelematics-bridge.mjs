@@ -29,8 +29,8 @@ function required(name) {
 
 export function parseImeis(value) {
   const list = (value ?? "").split(",").map((v) => v.trim()).filter(Boolean);
-  if (list.length !== 2 || new Set(list).size !== 2 || list.some((v) => !/^\d{10,20}$/.test(v))) {
-    throw new Error("TRACCAR_ALLOWED_IMEIS doit contenir exactement deux IMEI numériques distincts.");
+  if (list.length < 1 || list.length > 2 || new Set(list).size !== list.length || list.some((v) => !/^\d{10,20}$/.test(v))) {
+    throw new Error("TRACCAR_ALLOWED_IMEIS doit contenir un ou deux IMEI numériques distincts.");
   }
   return list;
 }
@@ -194,7 +194,7 @@ async function loadDevices(cfg) {
     imei: `in.(${cfg.imeis.join(",")})`,
   });
   const byImei = new Map((rows ?? []).map((row) => [row.imei, row]));
-  if (cfg.imeis.some((imei) => !byImei.has(imei))) throw new Error("Les deux IMEI doivent être inscrits dans l’entreprise de test et rattachés à un véhicule.");
+  if (cfg.imeis.some((imei) => !byImei.has(imei))) throw new Error("Chaque IMEI autorisé doit être inscrit dans l’entreprise choisie et rattaché à un véhicule.");
   if ([...byImei.values()].some((device) => device.company_id !== cfg.company || !device.vehicle_id)) throw new Error("Un appareil est hors du tenant de test ou sans véhicule.");
   return byImei;
 }
@@ -431,7 +431,7 @@ export async function run(args = process.argv.slice(2)) {
   const cfg = configFrom(args);
   const visible = await traccarGet(cfg, "devices");
   const traccarDevices = new Map((visible ?? []).filter((device) => cfg.imeis.includes(String(device.uniqueId))).map((device) => [String(device.uniqueId), device]));
-  if (cfg.imeis.some((imei) => !traccarDevices.has(imei))) throw new Error("Un des deux IMEI autorisés n’est pas visible dans le compte Traccar.");
+  if (cfg.imeis.some((imei) => !traccarDevices.has(imei))) throw new Error("Un IMEI autorisé n’est pas visible dans le compte Traccar.");
   if (cfg.history) return historyReport(cfg, traccarDevices);
   const dbDevices = cfg.write ? await loadDevices(cfg) : new Map();
   if (cfg.backfill) return backfill(cfg, traccarDevices, dbDevices);
