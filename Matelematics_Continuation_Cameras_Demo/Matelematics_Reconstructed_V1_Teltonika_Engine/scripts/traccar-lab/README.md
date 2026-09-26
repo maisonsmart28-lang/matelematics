@@ -45,6 +45,8 @@ node scripts/traccar-lab/simulator-gt06.mjs
 
 The simulator moves a small amount from its starting point near Casablanca every five seconds. Stop it with `Ctrl+C`. It is adapted from the repository's `feature/accurate-gt06` protocol simulator; Traccar interoperability must still be verified against the running local container and must not be inferred from its selftest.
 
+For a bounded synthetic check, after registering the test IMEI in Traccar run `node scripts/traccar-lab/simulator-gt06.mjs --count=3`. This mode requires a GT06 login ACK with matching serial and valid CRC, sends exactly three synthetic position frames, and exits. An ACK confirms the login response only: in Traccar check the test device and its newly saved GPS positions. If no ACK arrives within 10 seconds the command exits with an error. Never use a real vehicle IMEI for this synthetic test.
+
 Run the existing Teltonika simulator against Traccar on its Teltonika TCP port (separate PowerShell window):
 
 ```powershell
