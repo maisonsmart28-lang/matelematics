@@ -82,6 +82,7 @@ async function main() {
 
   const server = net.createServer((socket) => {
     attachGt06Protocol(socket, {
+      acceptLogin: (value) => value === imei,
       onLogin: (value) => {
         loginSeen = value;
       },
