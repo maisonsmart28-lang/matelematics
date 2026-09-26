@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { normalizePosition, normalizeTelemetry, parseImeis, planTelemetryPoint, run } from "./matelematics-bridge.mjs";
+import { candidateSummary, normalizePosition, normalizeTelemetry, parseImeis, planTelemetryPoint, run } from "./matelematics-bridge.mjs";
+
+const synthetic = candidateSummary([
+  { attributes: { ignition: true, RPM: 0, power: 12.1 } },
+  { attributes: { ignition: false, RPM: 0, power: 11.8 } },
+]);
+assert.deepEqual(synthetic.fields.find((field) => field.name === "RPM").byIgnition.on, { samples: 1, nonZero: 0 });
+assert.equal(synthetic.fields.find((field) => field.name === "power").varies, true);
 
 const imeis = ["356307042441234", "864180070000001"];
 assert.deepEqual(parseImeis(imeis.join(",")), imeis);
@@ -175,6 +182,14 @@ try {
   assert(inventories.every((item) => item.attributeKeys.find((entry) => entry.name === "ignition")?.distinctValuesAtLeast === 1));
   assert(output.slice(beforeInventory).every((line) => !line.includes("33.5731") && !line.includes(imeis[0]) && !line.includes('"latitude"')));
   assert.equal(requests.some((item) => item.path.startsWith("/rest/v1/")), false);
+  const beforeCandidates = output.length;
+  await run([`--history=${yesterday}`, "--history-candidates"]);
+  const candidates = output.slice(beforeCandidates).filter((line) => line.includes('"event":"traccar-bridge-candidates"')).map(JSON.parse);
+  assert.equal(candidates.length, 2);
+  assert(candidates.every((item) => item.records === 2 && item.fields.find((field) => field.name === "power")?.byIgnition.on.samples === 2));
+  assert(output.slice(beforeCandidates).every((line) => !line.includes(imeis[0]) && !line.includes('"latitude"')));
+  assert.equal(requests.some((item) => item.path.startsWith("/rest/v1/")), false);
+  await assert.rejects(run([`--history=${yesterday}`, "--history-candidates", "--write"]), /lecture seule/);
   const beforePlan = output.length;
   await run([`--history=${yesterday}`, "--history-plan"]);
   const plans = output.slice(beforePlan).filter((line) => line.includes('"event":"traccar-bridge-telemetry-plan"')).map(JSON.parse);
