@@ -20,22 +20,18 @@ function frame(protocol: number, info: Buffer, serial: number): Buffer {
   return packet;
 }
 
-function bcd(value: number): number {
-  return ((Math.floor(value / 10) & 0x0f) << 4) | (value % 10);
-}
-
 function loginPacket(imei: string, serial: number): Buffer {
   return frame(0x01, Buffer.from(imei.padStart(16, "0").slice(-16), "hex"), serial);
 }
 
 function positionPacket(serial: number): Buffer {
   const info = Buffer.alloc(18);
-  info[0] = bcd(26);
-  info[1] = bcd(9);
-  info[2] = bcd(11);
-  info[3] = bcd(12);
-  info[4] = bcd(34);
-  info[5] = bcd(56);
+  info[0] = 26;
+  info[1] = 9;
+  info[2] = 11;
+  info[3] = 12;
+  info[4] = 34;
+  info[5] = 56;
   info[6] = 0xc8;
   info.writeUInt32BE(Math.round(33.5731 * 1_800_000), 7);
   info.writeUInt32BE(Math.round(7.5898 * 1_800_000), 11);
@@ -97,6 +93,7 @@ async function main() {
   assert.equal(positionSeen.imei, imei);
   assert.equal(positionSeen.protocol, 0x12);
   assert.equal(positionSeen.serial, 2);
+  assert.equal(positionSeen.timestamp, "2026-09-11T12:34:56.000Z");
   assert.equal(positionSeen.speedKph, 45);
   assert.equal(positionSeen.satellites, 8);
   assert.equal(positionSeen.gpsValid, true);
