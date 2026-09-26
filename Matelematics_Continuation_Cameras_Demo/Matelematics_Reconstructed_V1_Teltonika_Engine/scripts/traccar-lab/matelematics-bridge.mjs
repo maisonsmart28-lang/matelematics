@@ -73,6 +73,8 @@ function configFrom(args) {
   if (backfill && (history || args.includes("--watch") || !args.includes("--write"))) throw new Error("--backfill exige --write et ne se combine ni avec --history ni avec --watch.");
   const historyTelemetry = args.includes("--history-telemetry");
   const historyPlan = args.includes("--history-plan");
+  const historyCandidates = args.includes("--history-candidates");
+  if (historyCandidates && (!history || historyTelemetry || historyPlan)) throw new Error("--history-candidates exige --history=AAAA-MM-JJ et ne se combine pas avec les autres rapports.");
   if (historyTelemetry && !history) throw new Error("--history-telemetry exige --history=AAAA-MM-JJ.");
   if (historyPlan && (!history || historyTelemetry)) throw new Error("--history-plan exige --history=AAAA-MM-JJ et ne se combine pas avec --history-telemetry.");
   for (const day of [history, backfill].filter(Boolean)) {
@@ -108,6 +110,7 @@ function configFrom(args) {
     status,
     historyTelemetry,
     historyPlan,
+    historyCandidates,
   };
   if (write) {
     if (process.env.TRACCAR_BRIDGE_ALLOW_WRITES !== "I_ACCEPT_TEST_ONLY_WRITES") throw new Error("Écriture refusée. Après vérification du tenant de test, définir TRACCAR_BRIDGE_ALLOW_WRITES=I_ACCEPT_TEST_ONLY_WRITES.");
@@ -218,6 +221,31 @@ async function loadDevices(cfg) {
 
 function mask(imei) { return `…${imei.slice(-4)}`; }
 
+const CANDIDATE_FIELDS = ["power", "battery", "BATTERYVOLTAGE", "RPM", "COOLANTTEMP", "ENGINETEMP", "FUELLEVEL", "FUELCONSUMPTION", "TOTALFUELUSED", "FUELTANKCAPACITY", "odometer", "totalDistance"];
+
+// Counts only; units, wiring and the meaning of zero remain unverified.
+export function candidateSummary(positions) {
+  const fields = CANDIDATE_FIELDS.map((name) => {
+    const groups = { on: { samples: 0, nonZero: 0 }, off: { samples: 0, nonZero: 0 }, unknown: { samples: 0, nonZero: 0 } };
+    let samples = 0, zero = 0, nonZero = 0, invalid = 0;
+    const distinct = new Set();
+    for (const point of positions) {
+      const attrs = point.attributes;
+      if (!attrs || typeof attrs !== "object" || Array.isArray(attrs) || !Object.hasOwn(attrs, name)) continue;
+      const value = attrs[name];
+      if (typeof value !== "number" || !Number.isFinite(value)) { invalid++; continue; }
+      const group = attrs.ignition === true ? groups.on : attrs.ignition === false ? groups.off : groups.unknown;
+      samples++;
+      group.samples++;
+      if (value === 0) zero++;
+      else { nonZero++; group.nonZero++; }
+      if (distinct.size < 3) distinct.add(value);
+    }
+    return { name, samples, zero, nonZero, invalid, distinctValuesAtLeast: distinct.size, varies: distinct.size > 1, byIgnition: groups };
+  });
+  return { records: positions.length, fields, note: "Comptages sans valeurs ni coordonnées. La variation et le contact ne prouvent pas la provenance CAN, l'unité ou la validité d'un capteur." };
+}
+
 // Candidate only: units and proprietary CAN fields have not been verified for this vehicle.
 export function planTelemetryPoint(position) {
   const attrs = position?.attributes;
@@ -248,7 +276,7 @@ export function normalizeTelemetry(position) {
 async function historyReport(cfg, traccarDevices) {
   const start = Date.parse(`${cfg.history}T00:00:00.000Z`);
   const end = Math.min(start + 86_400_000, Date.now());
-  console.log(JSON.stringify({ event: "traccar-bridge-history-start", dayUTC: cfg.history, mode: "read-only", telemetryInventory: cfg.historyTelemetry, telemetryPlan: cfg.historyPlan, devices: cfg.imeis.map(mask) }));
+  console.log(JSON.stringify({ event: "traccar-bridge-history-start", dayUTC: cfg.history, mode: "read-only", telemetryInventory: cfg.historyTelemetry, telemetryPlan: cfg.historyPlan, candidateReport: cfg.historyCandidates, devices: cfg.imeis.map(mask) }));
   for (const imei of cfg.imeis) {
     const tracker = traccarDevices.get(imei);
     const ids = new Set();
@@ -257,6 +285,7 @@ async function historyReport(cfg, traccarDevices) {
     const attributeKeys = new Map();
     let omittedAttributeKeys = 0;
     let telemetryCandidates = 0, positionCandidates = 0, telemetryWithoutGps = 0, noSelectedTelemetry = 0;
+    const candidatePoints = [];
     for (let from = start; from < end; from += 6 * 3_600_000) {
       const to = Math.min(from + 6 * 3_600_000, end);
       const positions = await traccarGet(cfg, "positions", { deviceId: tracker.id, from: new Date(from).toISOString(), to: new Date(to).toISOString() });
@@ -269,6 +298,7 @@ async function historyReport(cfg, traccarDevices) {
         if (ids.has(key)) continue;
         ids.add(key);
         count++;
+        if (cfg.historyCandidates) candidatePoints.push(position);
         const normalized = normalizePosition(position);
         if (cfg.historyPlan) {
           const candidate = planTelemetryPoint(position);
@@ -305,7 +335,9 @@ async function historyReport(cfg, traccarDevices) {
         }
       }
     }
-    if (cfg.historyPlan) {
+    if (cfg.historyCandidates) {
+      console.log(JSON.stringify({ event: "traccar-bridge-candidates", device: mask(imei), dayUTC: cfg.history, ...candidateSummary(candidatePoints) }));
+    } else if (cfg.historyPlan) {
       console.log(JSON.stringify({ event: "traccar-bridge-telemetry-plan", device: mask(imei), records: count, telemetryCandidates, positionCandidates, telemetryWithoutGps, noSelectedTelemetry, writes: 0, note: "Simulation uniquement. Contact et satellites servent de critère de présence ; aucune unité CAN ou valeur brute n'est importée." }));
     } else if (cfg.historyTelemetry) {
       const keys = [...attributeKeys.values()].sort((a, b) => {
