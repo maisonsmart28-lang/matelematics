@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert';
-import { persistBatchThenAck, type Envelope } from './step10e-rabbitmq-b1-store.ts';
+import { persistBatchThenAck, type Envelope } from './step10e-rabbitmq-b1-store';
 
 const runId = '00000000-0000-4000-8000-000000000001';
 const events: Envelope[] = [0, 1].map(sequence => ({
