@@ -85,9 +85,10 @@ async function expectRecoveryAfterCorruption(): Promise<void> {
   await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
   const address = listener.address();
   assert(address && typeof address === "object");
+  const port = address.port;
 
   async function connect(): Promise<net.Socket> {
-    const peer = net.createConnection({ host: "127.0.0.1", port: address.port });
+    const peer = net.createConnection({ host: "127.0.0.1", port });
     await new Promise<void>((resolve, reject) => {
       peer.once("connect", resolve);
       peer.once("error", reject);
