@@ -140,7 +140,7 @@ async function main() {
 
   let loginSeen = "";
   let heartbeatSeen = "";
-  let positionSeen: Gt06Position | null = null;
+  const positionsSeen: Gt06Position[] = [];
 
   const server = net.createServer((socket) => {
     attachGt06Protocol(socket, {
@@ -149,7 +149,7 @@ async function main() {
         loginSeen = value;
       },
       onPosition: (position) => {
-        positionSeen = position;
+        positionsSeen.push(position);
       },
       onHeartbeat: (value) => {
         heartbeatSeen = value;
@@ -179,6 +179,7 @@ async function main() {
   const allReplies = Buffer.concat(replies);
   assert.equal(loginSeen, imei);
   assert.equal(heartbeatSeen, imei);
+  const positionSeen = positionsSeen[0];
   assert(positionSeen);
   assert.equal(positionSeen.imei, imei);
   assert.equal(positionSeen.protocol, 0x12);
