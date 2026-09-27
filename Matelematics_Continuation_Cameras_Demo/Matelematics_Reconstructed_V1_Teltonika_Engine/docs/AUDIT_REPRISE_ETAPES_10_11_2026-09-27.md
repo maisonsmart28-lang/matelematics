@@ -23,3 +23,26 @@
 3. **Étape 10, infrastructure candidate** : seulement après autorisation d'un environnement représentatif, mesurer TLS, réseau distant, sauvegarde/restauration, HA et coûts réels en MAD/véhicule/mois. Les chiffres locaux ne sont pas une décision d'hébergement.
 
 Aucune purge de messages, changement de configuration de traceur ou écriture sur données de production ne fait partie de cette reprise.
+
+## Contrôle JWT en lecture seule préparé
+
+Les tables `partners`, `companies`, `vehicles`, `profiles`, `drivers`, `positions`, `telemetry` et `devices` ont RLS activée dans le projet Supabase. Un déclencheur `trg_profiles_protect_security_fields` protège la modification des rôles et des liens entreprise/partenaire. Ces constats de configuration ne prouvent pas les refus d'accès pour des JWT réels.
+
+Le script `scripts/security/rls-jwt-read-audit.mjs` se connecte avec **deux comptes de test distincts de rôle `user`**, chacun rattaché à une entreprise différente, au moyen de la clé publique Supabase. Il n'utilise aucune clé serveur, ne modifie aucune ligne et ne publie ni email, ni mot de passe, ni JWT. Il vérifie dans les deux sens la lecture du profil propre, de l'entreprise propre, le refus du profil et de l'entreprise opposés, l'absence d'accès aux partenaires et le périmètre des véhicules. Il échoue si les deux comptes ont la même entreprise. L'essai réel n'a pas encore été exécuté : leurs mots de passe ne sont pas disponibles dans l'environnement de l'agent.
+
+Depuis PowerShell dans le dossier du projet, utiliser uniquement deux **comptes de test** (ne pas transmettre ces identifiants dans le chat) :
+
+```powershell
+$credA = Get-Credential -Message "Compte utilisateur TEST A"
+$credB = Get-Credential -Message "Compte utilisateur TEST B dans une autre entreprise"
+$env:RLS_TEST_A_EMAIL = $credA.UserName
+$env:RLS_TEST_A_PASSWORD = $credA.GetNetworkCredential().Password
+$env:RLS_TEST_B_EMAIL = $credB.UserName
+$env:RLS_TEST_B_PASSWORD = $credB.GetNetworkCredential().Password
+node scripts/security/rls-jwt-read-audit.mjs
+Remove-Item Env:RLS_TEST_A_EMAIL,Env:RLS_TEST_A_PASSWORD,Env:RLS_TEST_B_EMAIL,Env:RLS_TEST_B_PASSWORD
+```
+
+Si une exception interrompt ces commandes, fermer la fenêtre PowerShell pour détruire les variables d'environnement de cette session. Le script lit uniquement `NEXT_PUBLIC_SUPABASE_URL` et `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` dans `.env.local` ; il ne charge pas les secrets serveur. La commande n'a pas besoin du serveur Next.js ou de Docker.
+
+**Limite actuelle :** il n'y a qu'un partenaire enregistré dans la base. Un refus entre deux partenaires ne peut pas être vérifié avec ces comptes. Les tentatives de modification `vehicles.name`, `profiles.role` et `profiles.company_id` sont une étape distincte avec données de test et remise en état ; ce script ne les exécute pas.
