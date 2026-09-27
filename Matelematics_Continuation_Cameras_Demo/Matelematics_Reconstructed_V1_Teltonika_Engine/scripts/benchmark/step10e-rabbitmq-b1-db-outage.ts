@@ -257,7 +257,8 @@ async function main() {
       published: published === count, confirmed: confirmed === count,
       failedDbAttempts: failedDbAttempts === 1,
       deliveries: deliveries === count + 1, redeliveries: redeliveries === 1,
-      commits: commits === count, acks: acks === count,
+      // ACKs increment inside the commit callback; widen TS's earlier zero narrowing.
+      commits: commits === count, acks: Number(acks) === count,
       rows: rows.rows.length === count && rows.rows.every(row => expected.has(row.message_id)),
       ready: after.messageCount === 0, consumers: after.consumerCount === 0,
       dlq: dlq.messageCount === 0,
