@@ -47,3 +47,12 @@ Le port 5024 est lié uniquement à `127.0.0.1` ; le port 5023 reste au Traccar 
 4. Valider un boîtier Accurate physique et son firmware exact. Le simulateur GT06 ne certifie aucun appareil réel ni CAN, carburant, DTC ou caméra.
 
 Résultats déjà observés avant cette intégration : l'utilisateur a vu trois positions GT06 synthétiques enregistrées dans Traccar local. La fiche GT06 affichée dans le SaaS concernait des données synthétiques historiques. Ces deux observations ne prouvent pas encore le trajet natif GT06 → base Matelematics.
+
+## Résultats vérifiés le 27 septembre 2026
+
+- Simulateur local : ACK GT06 valide, trois trames GPS décodées par Matelematics.
+- Persistance test : trois nouvelles positions, trois télémétries GT06 et trois reçus liés à `Renault Express Test` (`Test-001`, entreprise Matelematics), entre 2026-09-26 22:55:45 UTC et 22:55:55 UTC.
+- Relecture *exactement identique* d'une trame déjà stockée via la fonction atomique : `duplicate` ; les compteurs restent 3/3/3.
+- IMEI non autorisé (`864180070000002`) : refus `Invalid synthetic GT06 packet` ; compteurs toujours 3/3/3.
+- Serveur Next local Webpack : route véhicule et API `/live` HTTP 200 ; le code de l'API trie les positions par `recorded_at` décroissant. L'affichage visuel de la nouvelle position dans le navigateur reste à confirmer.
+- Ce résultat concerne uniquement l'IMEI de simulation. Pas de validation d'un boîtier Accurate physique ni de charge prolongée.
