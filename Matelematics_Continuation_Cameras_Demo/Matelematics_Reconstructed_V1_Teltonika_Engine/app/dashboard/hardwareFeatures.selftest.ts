@@ -3,7 +3,6 @@ import { availableHardwareFeatures } from "./hardwareFeatures";
 
 const gt06 = availableHardwareFeatures({
   hardware: { capabilities: ["gps_position", "gps_speed"] },
-  telemetry: { can_payload: null },
 });
 assert.deepEqual([...gt06], []);
 
