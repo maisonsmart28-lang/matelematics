@@ -171,11 +171,8 @@ export function resolveHardwareCapabilities(
 
   let capabilities = [...TELTONIKA_BASE];
 
-  // CAN capable hardware exposes the section; individual measurements still
-  // require a decoded value from the connected vehicle.
-  if (family === "teltonika_fmc150") {
-    capabilities = unique(capabilities, FMC150_CAN);
-  }
+  // The FMC150 supports CAN hardware, but the model name alone does not prove
+  // that a CAN connection or decoder is supplying data for this vehicle.
 
   if (sourceProfile === "can-adapter") {
     capabilities = unique(capabilities, CAN_ADAPTER);
