@@ -55,5 +55,16 @@ Résultats déjà observés avant cette intégration : l'utilisateur a vu trois 
 - Persistance test : trois nouvelles positions, trois télémétries GT06 et trois reçus liés à `Renault Express Test` (`Test-001`, entreprise Matelematics), entre 2026-09-26 22:55:45 UTC et 22:55:55 UTC.
 - Relecture *exactement identique* d'une trame déjà stockée via la fonction atomique : `duplicate` ; les compteurs restent 3/3/3.
 - IMEI non autorisé (`864180070000002`) : refus `Invalid synthetic GT06 packet` ; compteurs toujours 3/3/3.
-- Serveur Next local Webpack : route véhicule et API `/live` HTTP 200 ; le code de l'API trie les positions par `recorded_at` décroissant. L'affichage visuel de la nouvelle position dans le navigateur reste à confirmer.
+- Serveur Next local Webpack : route véhicule et API `/live` HTTP 200 ; le code de l'API trie les positions par `recorded_at` décroissant. Une capture de la fiche `Renault Express Test` confirme ensuite la dernière position synthétique, la dernière télémétrie, l'état hors ligne lié à l'ancienneté et l'absence de panneaux CAN/caméra.
 - Ce résultat concerne uniquement l'IMEI de simulation. Pas de validation d'un boîtier Accurate physique ni de charge prolongée.
+
+## PR #1 Accurate GT06 : décision de validation (27 septembre 2026)
+
+Comparaison GitHub entre `feature/accurate-gt06` et `feature/p1-step8-dashboard-real-data` : branches divergentes, 21 commits propres au PR et 504 commits de retard par rapport à la branche active à cette date. Le PR conserve notamment un ancien serveur TCP, une préparation du simulateur et un stockage qui se recoupent avec le laboratoire GT06 déjà validé sur la branche active. Une fusion globale n'est donc pas le moyen sûr de terminer la compatibilité.
+
+- **Validé sur la branche active :** autotest protocolaire, build Next/Webpack, login et trois positions du simulateur sur boucle locale, transaction atomique synthétique en base (dont doublon et refus IMEI différent), et affichage de la fiche avec capacités GPS seules.
+- **Bloquant pour un appareil réel :** référence exacte du boîtier Accurate, version de firmware, autorisation de rediriger un appareil de test, première trame de connexion et premières trames GPS capturées côté serveur. Ne pas inscrire les trames brutes ni un IMEI réel dans GitHub ; masquer les identifiants dans les comptes rendus.
+- **Critère de passage :** connexion autorisée du boîtier réel, décodage vérifié (heure, coordonnées, vitesse, sens, validité GPS), reconnexion et doublons contrôlés, puis affichage conforme aux seules données réellement disponibles. Les fonctions CAN, carburant, diagnostic et caméra exigent chacune une validation séparée.
+- **Avant toute fusion du PR historique :** comparer fichier par fichier les éléments encore utiles et les transférer de manière ciblée vers la branche active ; refaire autotests et build. Garder le PR en brouillon tant que l'appareil physique n'a pas passé ses contrôles.
+
+Aucun essai de ce guide ne requiert un déploiement Vercel.
