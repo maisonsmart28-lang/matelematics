@@ -34,8 +34,9 @@ async function acknowledgeInspectedDlq(messageId: string) {
     if (main.messageCount || main.consumerCount || dead.messageCount !== 1 || dead.consumerCount)
       throw new Error('Expected empty main queue and exactly one DLQ message without consumers');
     const msg = await channel.get(topology.dlq, { noAck: false });
-    const deaths = msg?.properties.headers?.['x-death'];
-    if (!msg || msg.properties.messageId !== messageId ||
+    if (!msg) throw new Error('DLQ message missing; evidence retained');
+    const deaths = msg.properties.headers?.['x-death'];
+    if (msg.properties.messageId !== messageId ||
         msg.content.toString('utf8') !== expectedRaw || msg.properties.deliveryMode !== 2 ||
         !Array.isArray(deaths) || !deaths.some((entry: { reason?: string }) =>
           entry.reason === 'delivery_limit'))
