@@ -77,7 +77,7 @@ Les agents ne fusionnent pas, ne déploient pas, ne lancent pas de migration de 
 
 ## Limites de cette étape
 
-- Le schéma Supabase et les rattachements des appareils ont été contrôlés. Les imports réels et leur validation doivent être suivis séparément ; l'accès direct à Traccar reste disponible uniquement sur le PC de l'utilisateur.
+- Le schéma Supabase et les rattachements des appareils ont été contrôlés. Le backfill demandé pour le FMC150 `…6283` a inséré 24 relevés de télémétrie le 23 septembre (GPS invalide) puis 123 télémétries et 78 positions le 24 septembre ; deux autres télémétries sans GPS valide ont été importées le 25 septembre. L'autre FMC150 `…6168` n'a fourni aucun relevé pour ces journées. Les valeurs CAN et les unités ne sont pas validées ; la dernière télémétrie des deux appareils n'a aucun profil CAN normalisé. L'accès direct à Traccar reste disponible uniquement sur le PC de l'utilisateur.
 - Le test selftest valide les gardes et le mapping contre des serveurs simulés seulement.
 - L’écriture réelle nécessite un tenant de test et les valeurs locales que l’utilisateur ne doit pas transmettre dans le chat.
 - Les positions réelles peuvent révéler les déplacements de personnes ; limiter les personnes autorisées, informer les conducteurs et vérifier les formalités applicables.
