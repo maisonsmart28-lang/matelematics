@@ -28,7 +28,7 @@ Aucune purge de messages, changement de configuration de traceur ou écriture su
 
 Les tables `partners`, `companies`, `vehicles`, `profiles`, `drivers`, `positions`, `telemetry` et `devices` ont RLS activée dans le projet Supabase. Un déclencheur `trg_profiles_protect_security_fields` protège la modification des rôles et des liens entreprise/partenaire. Ces constats de configuration ne prouvent pas les refus d'accès pour des JWT réels.
 
-Le script `scripts/security/rls-jwt-read-audit.mjs` se connecte avec **deux comptes de test distincts de rôle `user`**, chacun rattaché à une entreprise différente, au moyen de la clé publique Supabase. Il n'utilise aucune clé serveur, ne modifie aucune ligne et ne publie ni email, ni mot de passe, ni JWT. Il vérifie dans les deux sens la lecture du profil propre, de l'entreprise propre, le refus du profil et de l'entreprise opposés, l'absence d'accès aux partenaires et le périmètre des véhicules. Il échoue si les deux comptes ont la même entreprise. L'essai réel n'a pas encore été exécuté : leurs mots de passe ne sont pas disponibles dans l'environnement de l'agent.
+Le script `scripts/security/rls-jwt-read-audit.mjs` se connecte avec **deux comptes de test distincts de rôle `user`**, chacun rattaché à une entreprise différente, au moyen de la clé publique Supabase. Il n'utilise aucune clé serveur, ne modifie aucune ligne et ne publie ni email, ni mot de passe, ni JWT. Il vérifie dans les deux sens la lecture du profil propre, de l'entreprise propre, le refus du profil et de l'entreprise opposés, l'absence d'accès aux partenaires et le périmètre des véhicules. Il échoue si les deux comptes ont la même entreprise. L'essai réel a été exécuté par l'utilisateur avec les deux JWT : les deux comptes ne voient que leur entreprise (A : 3 véhicules ; B : 0). Le compte A ne peut pas modifier le nom d'un véhicule visible ; un test d'écriture sans changement de valeur a confirmé le refus. Aucun mot de passe n'a été partagé.
 
 Depuis PowerShell dans le dossier du projet, utiliser uniquement deux **comptes de test** (ne pas transmettre ces identifiants dans le chat) :
 
@@ -46,3 +46,12 @@ Remove-Item Env:RLS_TEST_A_EMAIL,Env:RLS_TEST_A_PASSWORD,Env:RLS_TEST_B_EMAIL,En
 Si une exception interrompt ces commandes, fermer la fenêtre PowerShell pour détruire les variables d'environnement de cette session. Le script lit uniquement `NEXT_PUBLIC_SUPABASE_URL` et `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` dans `.env.local` ; il ne charge pas les secrets serveur. La commande n'a pas besoin du serveur Next.js ou de Docker.
 
 **Limite actuelle :** il n'y a qu'un partenaire enregistré dans la base. Un refus entre deux partenaires ne peut pas être vérifié avec ces comptes. Les tentatives de modification `vehicles.name`, `profiles.role` et `profiles.company_id` sont une étape distincte avec données de test et remise en état ; ce script ne les exécute pas.
+
+## Résultats JWT complémentaires (27 septembre)
+
+- `rls-jwt-write-deny-audit.mjs` : **PASS** pour le refus d'UPDATE sur un véhicule visible du compte A ; la valeur initiale est intacte. Les droits d'UPDATE accordés aux administrateurs restent non testés.
+- `rls-jwt-telemetry-read-audit.mjs` : **PASS dans le sens B → A** pour un identifiant existant de chaque table `devices`, `drivers`, `positions` et `telemetry`. Dans le sens A → B : **NOT TESTED**, car B ne possède aucune ligne dans ces quatre tables. Ne pas interpréter une table vide comme une preuve d'isolation.
+- Une requête initiale filtrant les positions d'A sous le JWT de B a été annulée par délai d'exécution (code PostgreSQL `57014`). Le test corrigé cible une clé primaire ; il passe. Ce dépassement de délai est un signal de performance distinct, à diagnostiquer avant la production.
+- `profiles.role`, `profiles.company_id` et l'isolation entre deux partenaires sont **non testés avec JWT**. Le déclencheur SQL a été lu et interdit ces mutations pour le rôle `user`, mais sa définition ne remplace pas un essai contrôlé.
+
+Suite : créer des enregistrements de test dans la seconde entreprise et un second partenaire avec comptes dédiés, puis exécuter les essais dans les deux sens ; documenter identifiants, état initial et procédure de restauration avant toute mutation de profil. Aucun enregistrement de production ne doit être déplacé pour ce test.
