@@ -21,7 +21,10 @@ async function fetchPaged(table: string, columns: string, orderColumn: string): 
     const to = Math.min(from + PAGE - 1, MAX_ROWS - 1);
     const { data, error } = await supabase.from(table).select(columns).order(orderColumn,{ascending:true}).range(from,to);
     if (error) throw new Error(`${table}: ${error.message}`);
-    const rows=(data??[]) as Row[]; out.push(...rows);
+    if (data != null && (!Array.isArray(data) || data.some(row => row === null || typeof row !== 'object' || Array.isArray(row))))
+      throw new Error(`${table}: invalid benchmark row shape`);
+    // Dynamic column selection cannot be inferred by PostgREST's static query types.
+    const rows=(data??[]) as unknown as Row[]; out.push(...rows);
     if (rows.length < to-from+1) break;
   }
   return out;
