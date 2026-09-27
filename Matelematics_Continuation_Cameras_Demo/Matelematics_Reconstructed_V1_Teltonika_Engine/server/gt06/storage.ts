@@ -1,14 +1,41 @@
 import { createClient } from "@supabase/supabase-js";
 import type { Gt06Position } from "./protocol";
 
-let client: ReturnType<typeof createClient> | null = null;
+// Only this server-side test RPC is exposed to the GT06 storage module.
+type Gt06TestDatabase = {
+  public: {
+    Tables: {};
+    Views: {};
+    Functions: {
+      persist_gt06_test_packet: {
+        Args: {
+          p_imei: string;
+          p_raw_hex: string;
+          p_recorded_at: string;
+          p_latitude: number;
+          p_longitude: number;
+          p_speed_kph: number;
+          p_heading: number;
+          p_protocol: number;
+          p_serial: number;
+          p_satellites: number;
+        };
+        Returns: { result: "inserted" | "duplicate" | "legacy_duplicate" };
+      };
+    };
+    Enums: {};
+    CompositeTypes: {};
+  };
+};
+
+let client: ReturnType<typeof createClient<Gt06TestDatabase>> | null = null;
 
 function supabase() {
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SECRET_KEY;
   if (!url || !key) throw new Error("[GT06] Missing server-only Supabase settings");
   if (!client) {
-    client = createClient(url, key, {
+    client = createClient<Gt06TestDatabase>(url, key, {
       auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
     });
   }
