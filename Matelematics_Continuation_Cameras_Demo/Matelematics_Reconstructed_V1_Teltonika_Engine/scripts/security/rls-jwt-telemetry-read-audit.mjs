@@ -34,10 +34,10 @@ async function audit(label, own, other) {
   for (const table of ['devices', 'drivers', 'positions', 'telemetry']) {
     const ownRows = await own.client.from(table).select('company_id')
       .eq('company_id', own.company).limit(1);
-    if (ownRows.error) throw new Error(`${table}: own read failed`);
+    if (ownRows.error) throw new Error(`user ${label} ${table}: own read failed; code ${String(ownRows.error.code ?? 'unknown').replace(/[^A-Z0-9]/gi, '')}`);
     const otherRows = await own.client.from(table).select('company_id')
       .eq('company_id', other.company).limit(1);
-    if (otherRows.error) throw new Error(`${table}: foreign read failed`);
+    if (otherRows.error) throw new Error(`user ${label} ${table}: foreign read failed; code ${String(otherRows.error.code ?? 'unknown').replace(/[^A-Z0-9]/gi, '')}`);
     assert.equal(otherRows.data.length, 0, `${table}: foreign row visible`);
     console.log(`PASS: user ${label}, ${table}: foreign company hidden; own row ${ownRows.data.length ? 'visible' : 'absent'}`);
   }
@@ -50,7 +50,9 @@ try {
   await audit('A', a, b);
   await audit('B', b, a);
   console.log('RLS JWT telemetry isolation read-only PASS; only existing fixture rows tested');
-} catch {
-  console.error('RLS JWT telemetry audit FAIL; inspect accounts and policies locally; credentials not logged');
+} catch (error) {
+  // Only messages generated above or by assert: never echo raw SDK errors, credentials or row data.
+  const safe = String(error?.message ?? '').replace(/[^a-zA-Z0-9 :;-]/g, '').slice(0, 160);
+  console.error(`RLS JWT telemetry audit FAIL: ${safe || 'unknown error'}; credentials not logged`);
   process.exitCode = 1;
 }
