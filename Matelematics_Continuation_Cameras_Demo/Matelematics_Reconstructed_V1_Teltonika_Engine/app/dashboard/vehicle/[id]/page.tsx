@@ -210,6 +210,7 @@ export default function VehiclePage() {
   const internalBattery = numeric(ioNormalized, "internal_battery_voltage");
   const satellites = numeric(metadata, "satellites");
   const simulator = can?.simulator === true;
+  const gpsSimulator = metadata?.simulator === true;
 
   const capabilitySet = useMemo(
     () => new Set<HardwareCapability>(data?.hardware?.capabilities ?? []),
@@ -424,6 +425,11 @@ export default function VehiclePage() {
                   Simulation CAN
                 </span>
               )}
+              {gpsSimulator && (
+                <span className="rounded-full bg-purple-500/10 px-3 py-1 text-xs font-medium text-purple-300">
+                  Données GPS simulées
+                </span>
+              )}
             </div>
             <p className="mt-4 text-sm text-slate-500">
               {vehicle.company_name ?? "Entreprise non renseignée"} · Dernière télémétrie:{" "}
@@ -433,6 +439,11 @@ export default function VehiclePage() {
               Matériel: <span className="text-slate-300">{hardware.family}</span>
               {hardware.source_profile ? ` · Profil: ${hardware.source_profile}` : ""}
             </p>
+            {gpsSimulator && (
+              <p className="mt-2 text-xs text-purple-300">
+                La dernière télémétrie provient d’un simulateur ; elle ne prouve aucun trajet réel.
+              </p>
+            )}
           </div>
           <button
             type="button"
