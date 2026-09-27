@@ -26,6 +26,19 @@ assert.equal(hasHardwareCapability(gt06, "can_rpm"), false);
 assert.equal(hasHardwareCapability(gt06, "fuel_level"), false);
 assert.equal(hasHardwareCapability(gt06, "camera"), false);
 
+const gt06Simulator = resolveHardwareCapabilities({
+  manufacturer: "Accurate",
+  model: "GT06 Simulator",
+});
+assert.equal(gt06Simulator.family, "accurate_gt06");
+
+const unverifiedAccurate = resolveHardwareCapabilities({
+  manufacturer: "Accurate",
+  model: "Other Tracker",
+});
+assert.equal(unverifiedAccurate.family, "unknown");
+assert.deepEqual(unverifiedAccurate.capabilities, []);
+
 const fmc150 = resolveHardwareCapabilities({
   manufacturer: "Teltonika",
   model: "FMC150",
