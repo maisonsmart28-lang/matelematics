@@ -118,10 +118,9 @@ export function detectHardwareFamily(
   const model = canonical(input.model);
   const combined = `${manufacturer} ${model}`;
 
-  if (
-    combined.includes("GT06") ||
-    combined.includes("ACCURATE")
-  ) {
+  // Accurate is a manufacturer, not a protocol. Unknown Accurate models must
+  // remain unclassified until their actual firmware and features are verified.
+  if (combined.includes("GT06")) {
     return "accurate_gt06";
   }
 
