@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
 import amqp from 'amqplib';
-import type { ConsumeMessage } from 'amqplib';
+import type { GetMessage } from 'amqplib';
 import pg from 'pg';
 import { localRabbitUrl, topology } from './step10e-rabbitmq-b1-config';
 import { benchmarkDatabaseUrl, persistBatchThenAck, persistThenAck, type Envelope } from './step10e-rabbitmq-b1-store';
@@ -28,7 +28,7 @@ function eventFor(runId: string, sequence: number): Envelope {
     recorded_at: now, received_at: now, source: 'teltonika',
     payload: { benchmark: 'step10e4f_b1', sequence }, attempt: 0 };
 }
-function validate(msg: ConsumeMessage,
+function validate(msg: GetMessage,
   runId: string, expected: Map<string, string>): Envelope {
   const raw = msg.content.toString('utf8');
   const event = JSON.parse(raw) as Envelope;
