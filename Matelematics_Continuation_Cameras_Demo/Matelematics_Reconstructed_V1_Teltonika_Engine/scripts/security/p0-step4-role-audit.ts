@@ -115,15 +115,15 @@ function main() {
   requireRegex(
     driversPath,
     drivers,
-    /\{canCreate\s*&&\s*\([\s\S]*Ajouter un conducteur/,
-    "Add driver control is hidden from ordinary user",
+    /\{access\.canCreate\s*&&\s*canCreate\s*&&\s*<button[\s\S]*Ajouter un conducteur/,
+    "Add driver control requires role and API permission",
   );
 
   requireRegex(
     driversPath,
     drivers,
-    /showAddDriver\s*&&\s*canCreate/,
-    "Add driver modal is role-gated",
+    /\{open\s*&&\s*\(editing\s*\?\s*access\.canUpdate\s*&&\s*canUpdate\s*:\s*access\.canCreate\s*&&\s*canCreate\)/,
+    "Driver modal requires matching role and API permission",
   );
 
   const adminLayoutPath = "app/dashboard/admin/layout.tsx";
