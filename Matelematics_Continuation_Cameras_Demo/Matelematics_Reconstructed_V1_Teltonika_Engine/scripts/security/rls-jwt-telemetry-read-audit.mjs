@@ -30,16 +30,31 @@ async function login(label) {
   return { client, company: profile.data.company_id };
 }
 
-async function audit(label, own, other) {
+async function audit(a, b) {
   for (const table of ['devices', 'drivers', 'positions', 'telemetry']) {
-    const ownRows = await own.client.from(table).select('company_id')
-      .eq('company_id', own.company).limit(1);
-    if (ownRows.error) throw new Error(`user ${label} ${table}: own read failed; code ${String(ownRows.error.code ?? 'unknown').replace(/[^A-Z0-9]/gi, '')}`);
-    const otherRows = await own.client.from(table).select('company_id')
-      .eq('company_id', other.company).limit(1);
-    if (otherRows.error) throw new Error(`user ${label} ${table}: foreign read failed; code ${String(otherRows.error.code ?? 'unknown').replace(/[^A-Z0-9]/gi, '')}`);
-    assert.equal(otherRows.data.length, 0, `${table}: foreign row visible`);
-    console.log(`PASS: user ${label}, ${table}: foreign company hidden; own row ${ownRows.data.length ? 'visible' : 'absent'}`);
+    const ownA = await a.client.from(table).select('id,company_id')
+      .eq('company_id', a.company).limit(1);
+    if (ownA.error) throw new Error(`user A ${table}: own read failed; code ${ownA.error.code ?? 'unknown'}`);
+    const ownB = await b.client.from(table).select('id,company_id')
+      .eq('company_id', b.company).limit(1);
+    if (ownB.error) throw new Error(`user B ${table}: own read failed; code ${ownB.error.code ?? 'unknown'}`);
+    for (const [label, observer, foreign] of [
+      ['A', a, ownB.data[0]],
+      ['B', b, ownA.data[0]],
+    ]) {
+      if (!foreign) {
+        console.log(`NOT TESTED: user ${label}, ${table}: foreign company has no fixture row`);
+        continue;
+      }
+      // Primary-key lookup bounds the probe to one actual row, avoiding a large
+      // negative scan through the foreign company's telemetry history.
+      const result = await observer.client.from(table).select('id')
+        .eq('id', foreign.id).limit(1);
+      if (result.error) throw new Error(`user ${label} ${table}: foreign read failed; code ${result.error.code ?? 'unknown'}`);
+      assert.equal(result.data.length, 0, `user ${label} ${table}: foreign row visible`);
+      console.log(`PASS: user ${label}, ${table}: foreign row hidden`);
+    }
+    console.log(`INFO: ${table}: A own row ${ownA.data.length ? 'visible' : 'absent'}, B own row ${ownB.data.length ? 'visible' : 'absent'}`);
   }
 }
 
@@ -47,9 +62,8 @@ try {
   const a = await login('A');
   const b = await login('B');
   assert.notEqual(a.company, b.company, 'Distinct company accounts required');
-  await audit('A', a, b);
-  await audit('B', b, a);
-  console.log('RLS JWT telemetry isolation read-only PASS; only existing fixture rows tested');
+  await audit(a, b);
+  console.log('RLS JWT telemetry isolation read-only completed; NOT TESTED rows require fixtures');
 } catch (error) {
   // Only messages generated above or by assert: never echo raw SDK errors, credentials or row data.
   const safe = String(error?.message ?? '').replace(/[^a-zA-Z0-9 :;-]/g, '').slice(0, 160);
