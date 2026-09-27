@@ -71,6 +71,68 @@ async function expectRejected(packet: Buffer, label: string): Promise<void> {
   }
 }
 
+async function expectRecoveryAfterCorruption(): Promise<void> {
+  const imei = "864180070000001";
+  const positions: Gt06Position[] = [];
+  let logins = 0;
+  const listener = net.createServer((socket) => {
+    attachGt06Protocol(socket, {
+      acceptLogin: (value) => value === imei,
+      onLogin: () => { logins += 1; },
+      onPosition: (position) => { positions.push(position); },
+    });
+  });
+  await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
+  const address = listener.address();
+  assert(address && typeof address === "object");
+
+  async function connect(): Promise<net.Socket> {
+    const peer = net.createConnection({ host: "127.0.0.1", port: address.port });
+    await new Promise<void>((resolve, reject) => {
+      peer.once("connect", resolve);
+      peer.once("error", reject);
+    });
+    return peer;
+  }
+
+  async function waitForPositions(count: number): Promise<void> {
+    const deadline = Date.now() + 2_000;
+    while (positions.length < count && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(positions.length, count, "expected valid GT06 position did not arrive");
+  }
+
+  let first: net.Socket | undefined;
+  let second: net.Socket | undefined;
+  try {
+    first = await connect();
+    const login = loginPacket(imei, 10);
+    first.write(login.subarray(0, 2));
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    assert.equal(logins, 0, "partial login must not be accepted");
+    first.write(login.subarray(2));
+
+    const corrupt = Buffer.from(positionPacket(11));
+    corrupt[corrupt.length - 4] ^= 0x01;
+    first.write(Buffer.concat([corrupt, positionPacket(12)]));
+    await waitForPositions(1);
+    assert.equal(logins, 1);
+    assert.deepEqual(positions.map((position) => position.serial), [12], "bad CRC must not yield a position");
+
+    first.destroy();
+    second = await connect();
+    second.write(Buffer.concat([loginPacket(imei, 13), positionPacket(14)]));
+    await waitForPositions(2);
+    assert.equal(logins, 2, "reconnect must require a new login");
+    assert.deepEqual(positions.map((position) => position.serial), [12, 14]);
+  } finally {
+    first?.destroy();
+    second?.destroy();
+    await new Promise<void>((resolve) => listener.close(() => resolve()));
+  }
+}
+
 async function main() {
   const imei = "864180070000001";
   const expectedLoginAck = buildAck(0x01, 1);
@@ -133,6 +195,7 @@ async function main() {
   await expectRejected(loginPacket("864180070000002", 7), "unknown IMEI");
   await expectRejected(Buffer.alloc(5000, 0x78), "oversized stream");
   await expectRejected(Buffer.from([0x78, 0x78, 0, 0x01, 0]), "short declared frame");
+  await expectRecoveryAfterCorruption();
 
   client.destroy();
   await new Promise<void>((resolve) => server.close(() => resolve()));
