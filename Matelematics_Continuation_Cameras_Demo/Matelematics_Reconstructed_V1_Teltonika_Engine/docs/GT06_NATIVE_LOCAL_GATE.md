@@ -51,6 +51,7 @@ Résultats déjà observés avant cette intégration : l'utilisateur a vu trois 
 ## Résultats vérifiés le 27 septembre 2026
 
 - Simulateur local : ACK GT06 valide, trois trames GPS décodées par Matelematics.
+- Test TCP sur boucle locale : login fragmenté reconstitué, position à CRC erroné rejetée, position valide suivante acceptée, puis reconnexion avec un nouveau login et une nouvelle position ; `GT06 self-test PASS`.
 - Persistance test : trois nouvelles positions, trois télémétries GT06 et trois reçus liés à `Renault Express Test` (`Test-001`, entreprise Matelematics), entre 2026-09-26 22:55:45 UTC et 22:55:55 UTC.
 - Relecture *exactement identique* d'une trame déjà stockée via la fonction atomique : `duplicate` ; les compteurs restent 3/3/3.
 - IMEI non autorisé (`864180070000002`) : refus `Invalid synthetic GT06 packet` ; compteurs toujours 3/3/3.
