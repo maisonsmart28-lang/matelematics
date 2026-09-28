@@ -24,3 +24,26 @@ Selon la [documentation officielle Supabase sur les sauvegardes](https://supabas
 - Sauvegarde automatique quotidienne gérée sur ce projet Free : **ne pas supposer disponible**.
 
 Aucune commande de restauration sur la base active ne doit être utilisée pour cet essai. Ne pas lancer `supabase_restore_project` sur le projet actif.
+
+## Première étape exécutable : export métier local (partiel)
+
+La CLI `2.118.0`, Docker `29.8.0`, `supabase login` et `supabase link` sont validés sur le poste Windows. La commande ci-dessous n'utilise que le schéma `public` et les rôles ; **elle n'est pas une sauvegarde complète**. Les fichiers peuvent contenir des positions et autres données personnelles. Ils doivent rester sous le profil Windows local, hors OneDrive, hors Git, et être chiffrés avant copie externe. Aucun mot de passe ne doit figurer dans les arguments.
+
+```powershell
+$ErrorActionPreference = "Stop"
+$stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+$backupDir = Join-Path $env:LOCALAPPDATA "Matelematics\\Backups\\$stamp"
+New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
+npx --yes supabase db dump --linked --role-only --file (Join-Path $backupDir "roles.sql")
+if ($LASTEXITCODE -ne 0) { throw "Export des rôles échoué" }
+npx --yes supabase db dump --linked --schema public --file (Join-Path $backupDir "public-schema.sql")
+if ($LASTEXITCODE -ne 0) { throw "Export du schéma public échoué" }
+npx --yes supabase db dump --linked --schema public --data-only --use-copy --file (Join-Path $backupDir "public-data.sql")
+if ($LASTEXITCODE -ne 0) { throw "Export des données public échoué" }
+Get-ChildItem -LiteralPath $backupDir -File | ForEach-Object {
+    if ($_.Length -eq 0) { throw "Fichier vide: $($_.Name)" }
+    [pscustomobject]@{ Name = $_.Name; Bytes = $_.Length; SHA256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }
+}
+```
+
+Le chemin d'export est affiché par `$backupDir` dans la même session PowerShell. Ne pas copier le contenu de `public-data.sql` dans le chat. Prochaine porte : contrôler séparément Auth, métadonnées et fichier Storage ; tester la restauration isolée. Un hash atteste l'intégrité après copie mais ne prouve pas la restaurabilité.
