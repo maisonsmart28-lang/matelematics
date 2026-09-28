@@ -153,3 +153,7 @@ Deux nouveaux essais du script de création `client_admin` ont échoué à `acto
 ## Rejeu API après compensation : PASS
 
 Après correction des identifiants du compte de test, `admin-api-create-user-audit.mjs` a passé sur l'API locale après le refactoring de compensation : `client_admin` a créé un `user` dans l'entreprise A, le nouvel utilisateur a reçu 403 sur GET `/api/admin`, puis le script a supprimé le compte Auth. Pour l'UUID `5d6d346c-22b9-40d0-9104-98ca6b9a76d7`, un contrôle indépendant Supabase donne `auth.users = 0` et `public.profiles = 0`. Le blocage précédent `invalid_credentials` était lié à l'authentification du compte test ; le parcours API après changement est maintenant validé. Un échec réel de suppression compensatoire n'a pas été provoqué dans Supabase ; seul le self-test injecté couvre cette branche.
+
+## Porte de sauvegarde / restauration
+
+Inventaire lu le 28 septembre : projet actif `eu-west-3`, organisation Supabase **Free**, base ~140 Mo, 5 comptes Auth, un bucket Storage contenant un objet. Les sauvegardes quotidiennes gérées documentées concernent les offres Pro/Team/Enterprise ; sur Free, un export régulier et une copie hors site doivent être organisés. Le dump DB ne contient pas l'objet Storage lui-même. Voir [STEP11_BACKUP_RESTORE_GATE.md](STEP11_BACKUP_RESTORE_GATE.md) pour le plan d'essai isolé et les critères. **Aucun dump ni restauration réel validé à ce stade.**
