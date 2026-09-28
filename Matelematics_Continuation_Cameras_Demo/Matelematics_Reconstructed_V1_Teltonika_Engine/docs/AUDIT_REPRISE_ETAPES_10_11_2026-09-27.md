@@ -65,3 +65,9 @@ Suite : créer des enregistrements de test dans la seconde entreprise et un seco
 - Le linter performance signale quatre politiques avec évaluation répétée des fonctions Auth et 18 clés étrangères sans index de couverture, dont `positions_company_device_fkey`. Le `57014` observé motive un profilage séparé avant d'ajouter des index au hasard. [Documentation](https://supabase.com/docs/guides/database/database-linter?lint=0003_auth_rls_initplan).
 
 **Prochaine action locale** : retrouver ou réinitialiser le mot de passe du compte test A dans le tableau de bord Supabase ; ne pas transmettre le secret dans le chat. Confirmer un nouveau login JWT avant de recréer des fixtures ou de lancer des essais d'écriture.
+
+## Validation croisée JWT du 28 septembre (soir)
+
+Après rétablissement des connexions A et B, une fixture synthétique a été recréée pour B : un véhicule, un boîtier fictif, un conducteur, une position sans coordonnées et une télémétrie sans capteur. Sous les JWT des deux comptes `user`, les huit contrôles ciblés ont réussi : chaque compte voit une ligne de sa propre entreprise et aucune ligne de l'autre entreprise dans `devices`, `drivers`, `positions` et `telemetry`. Le script de lecture `companies`/`vehicles` a aussi réussi dans les deux sens (A : 3 véhicules ; B : 1 fixture).
+
+Les cinq lignes synthétiques de B ont ensuite été supprimées par marqueurs exacts et l'absence des cinq a été vérifiée. **Cette preuve de lecture en deux sens est acquise pour ces fixtures**, même si le résultat ne couvre pas les écritures sur `profiles.role` ou `profiles.company_id`, ni le cas interpartenaires. Le message final du script télématique a été corrigé pour annoncer `PASS in both directions` lorsque les huit directions disposent de fixtures et passent.
