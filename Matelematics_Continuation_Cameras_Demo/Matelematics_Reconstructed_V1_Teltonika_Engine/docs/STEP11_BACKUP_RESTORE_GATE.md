@@ -2,7 +2,7 @@
 
 ## Inventaire vérifié
 
-Le projet Supabase Matelematics `nhkwxcjncluvetrgxhwv` est actif, en région `eu-west-3`, PostgreSQL 17.6.1.165. Son organisation est sur le plan **Free**. La base occupe environ **140 Mo**, contient **5 comptes Auth**, un bucket Storage et **un objet Storage** (comptages, sans lecture de contenu).
+Le projet Supabase Matelematics `nhkwxcjncluvetrgxhwv` est actif, en région `eu-west-3`, PostgreSQL 17.6.1.165. Son organisation est sur le plan **Free**. La base occupe environ **140 Mo**, contient **5 comptes Auth**, un bucket Storage privé `compliance-documents` et **un objet Storage** (comptages, sans lecture de contenu). La taille enregistrée dans les métadonnées est nulle ; ne pas l'interpréter comme une taille réelle ni télécharger ce document dans l'espace de travail.
 
 Selon la [documentation officielle Supabase sur les sauvegardes](https://supabase.com/docs/guides/platform/backups), les sauvegardes quotidiennes gérées sont prévues pour Pro, Team et Enterprise ; Supabase recommande aux projets Free d'exporter régulièrement leurs données avec `supabase db dump` et de conserver une copie hors site. La sauvegarde de la base couvre les métadonnées Storage, **pas les fichiers stockés**. Aucun RPO/RTO, dump réel ni restauration n'a été vérifié dans cet audit.
 
