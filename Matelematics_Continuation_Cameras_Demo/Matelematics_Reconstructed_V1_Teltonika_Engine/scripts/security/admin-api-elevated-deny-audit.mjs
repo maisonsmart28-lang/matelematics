@@ -77,7 +77,9 @@ try {
   } else {
     console.log("PARTIAL PASS: partner_admin GET allowed; elevated role denied; foreign company test needs RLS_TEST_FOREIGN_COMPANY_ID");
   }
-  console.log("Admin API elevated denial checks complete; successful writes and two-partner isolation remain untested");
+  console.log(foreignCompany && foreignPartner
+    ? "Admin API elevated denial PASS including one-way partner isolation; successful writes and reverse partner direction remain untested"
+    : "Admin API elevated denial PARTIAL PASS; successful writes and two-partner isolation remain untested");
 } catch (error) {
   const status = error instanceof assert.AssertionError ? String(error.actual).replace(/[^0-9]/g, "") : "";
   console.error(`Admin API elevated audit FAIL at ${stage}${status ? ` (actual ${status})` : ""}; no credentials logged`);
