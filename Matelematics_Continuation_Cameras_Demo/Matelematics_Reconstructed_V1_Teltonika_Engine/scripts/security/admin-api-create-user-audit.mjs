@@ -38,24 +38,30 @@ let stage = "preflight";
 let cleanupPassed = false;
 
 try {
+  stage = "actor login";
   const signed = await actor.auth.signInWithPassword({ email: actorEmail, password: actorPassword });
   assert.ifError(signed.error);
   assert(signed.data.session && signed.data.user, "client_admin login failed");
+  stage = "actor profile read";
   const actorProfile = await actor.from("profiles").select("role,company_id,partner_id")
     .eq("id", signed.data.user.id).single();
   assert.ifError(actorProfile.error);
+  stage = "actor role";
   assert.equal(actorProfile.data.role, actorRole);
   const expectedCompanyId = actorRole === "client_admin"
     ? actorProfile.data.company_id : targetCompanyId;
+  stage = "target company";
   assert(expectedCompanyId, "target company missing");
   if (actorRole === "partner_admin") {
     assert(actorProfile.data.partner_id, "partner_admin has no partner");
+    stage = "partner company ownership";
     const company = await actor.from("companies").select("id,partner_id")
       .eq("id", expectedCompanyId).single();
     assert.ifError(company.error);
     assert.equal(company.data.partner_id, actorProfile.data.partner_id,
       "target company is outside actor's partner");
   } else if (targetCompanyId) {
+    stage = "client company mismatch";
     assert.equal(targetCompanyId, expectedCompanyId, "target company mismatch");
   }
 
