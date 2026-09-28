@@ -14,6 +14,7 @@ const url = publicSetting("NEXT_PUBLIC_SUPABASE_URL");
 const key = publicSetting("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY");
 const api = process.env.RLS_TEST_LOCAL_API_URL ?? "http://127.0.0.1:3000";
 const foreignCompany = process.env.RLS_TEST_FOREIGN_COMPANY_ID;
+const foreignPartner = process.env.RLS_TEST_FOREIGN_PARTNER_ID;
 if (!url || !key || key.startsWith("sb_secret_")) throw new Error("Public Supabase configuration required");
 if (!/^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(api)) throw new Error("Only a loopback API URL is allowed");
 
@@ -62,6 +63,12 @@ try {
   if (foreignCompany) {
     stage = "foreign company fixture";
     assert.match(foreignCompany, /^[0-9a-f-]{36}$/i);
+    if (foreignPartner) assert.match(foreignPartner, /^[0-9a-f-]{36}$/i);
+    const listing = await fetch(`${api}/api/admin`, { headers: { Authorization: `Bearer ${p.token}` }, redirect: "manual" });
+    assert.equal(listing.status, 200);
+    const payload = await listing.json();
+    assert.equal(payload.companies.some((company) => company.id === foreignCompany), false, "foreign company in admin GET");
+    if (foreignPartner) assert.equal(payload.partners.some((partner) => partner.id === foreignPartner), false, "foreign partner in admin GET");
     const visible = await p.client.from("companies").select("id").eq("id", foreignCompany).limit(1);
     assert.ifError(visible.error);
     assert.equal(visible.data.length, 0, "foreign company visible through JWT");
