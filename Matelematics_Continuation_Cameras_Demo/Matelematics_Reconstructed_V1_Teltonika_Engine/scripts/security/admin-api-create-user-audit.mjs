@@ -40,8 +40,11 @@ let cleanupPassed = false;
 try {
   stage = "actor login";
   const signed = await actor.auth.signInWithPassword({ email: actorEmail, password: actorPassword });
-  assert.ifError(signed.error);
-  assert(signed.data.session && signed.data.user, "client_admin login failed");
+  if (signed.error) {
+    const code = signed.error.code === "invalid_credentials" ? "invalid_credentials" : "auth_error";
+    throw new Error(`actor login failed: ${code}`);
+  }
+  assert(signed.data.session && signed.data.user, "actor login failed");
   stage = "actor profile read";
   const actorProfile = await actor.from("profiles").select("role,company_id,partner_id")
     .eq("id", signed.data.user.id).single();
@@ -108,7 +111,10 @@ try {
     userId: createdId, marker, actorRole, role: "user", companyId: expectedCompanyId,
     adminGetDenied: true }));
 } catch (error) {
-  console.error(`Admin API create-user audit FAIL at ${stage}: ${error instanceof assert.AssertionError ? "assertion failed" : "operation failed"}; no credentials logged`);
+  const cause = error instanceof assert.AssertionError ? "assertion failed"
+    : error instanceof Error && error.message.includes("invalid_credentials") ? "invalid_credentials"
+    : "operation failed";
+  console.error(`Admin API create-user audit FAIL at ${stage}: ${cause}; no credentials logged`);
   process.exitCode = 1;
 } finally {
   // A lost API response can still mean the user was created. Find only our random email.
