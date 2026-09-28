@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { createUserWithProfile } from "../../../server/admin/create-user-with-profile";
 
 type Role =
   | "matelematics_admin"
@@ -785,66 +786,43 @@ export async function POST(
         }
       }
 
-      const {
-        data: createdAuth,
-        error: createAuthError,
-      } =
-        await auth.admin.auth.admin.createUser({
-          email,
-          password,
-          email_confirm: true,
-
-          user_metadata: {
-            full_name:
-              fullName,
-          },
-        });
-
-      if (
-        createAuthError ||
-        !createdAuth.user
-      ) {
-        throw (
-          createAuthError ??
-          new Error(
-            "Utilisateur Auth non créé."
-          )
-        );
-      }
-
-      const {
-        error: profileError,
-      } =
-        await auth.admin
-          .from("profiles")
-          .insert({
-            id:
-              createdAuth.user.id,
-
-            full_name:
-              fullName,
-
+      const createdId = await createUserWithProfile({
+        createAuth: async () => {
+          const { data, error } =
+            await auth.admin.auth.admin.createUser({
+              email,
+              password,
+              email_confirm: true,
+              user_metadata: { full_name: fullName },
+            });
+          if (error || !data.user) {
+            throw error ?? new Error("Utilisateur Auth non créé.");
+          }
+          return data.user.id;
+        },
+        insertProfile: async (userId) => {
+          const { error } = await auth.admin.from("profiles").insert({
+            id: userId,
+            full_name: fullName,
             role,
-
-            company_id:
-              companyId,
-
-            partner_id:
-              partnerId,
+            company_id: companyId,
+            partner_id: partnerId,
           });
-
-      if (profileError) {
-        await auth.admin.auth.admin.deleteUser(
-          createdAuth.user.id
-        );
-
-        throw profileError;
-      }
+          if (error) throw error;
+        },
+        deleteAuth: async (userId) => {
+          const { error } = await auth.admin.auth.admin.deleteUser(userId);
+          if (error) throw error;
+        },
+        onRollbackFailure: (userId, error) => {
+          console.error("[Admin API POST] Auth cleanup failed", { userId, error });
+        },
+      });
 
       return NextResponse.json({
         user: {
           id:
-            createdAuth.user.id,
+            createdId,
           email,
           full_name:
             fullName,
