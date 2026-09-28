@@ -83,3 +83,9 @@ La route `/api/admin` utilise côté serveur `SUPABASE_SECRET_KEY`, vérifie le 
 Le script `scripts/security/admin-api-jwt-deny-audit.mjs` exécuté contre le serveur Next.js local a confirmé : GET anonyme → 401 ; GET et POST `create_company` sous chacun des deux JWT `user` A/B → 403. Aucun compte ni entreprise n'a été créé. Ce résultat vérifie le garde d'entrée de `/api/admin` pour le rôle `user`, et non les droits des rôles supérieurs.
 
 Les essais `client_admin` et `partner_admin` (créations permises/refusées, périmètre partenaire croisé) restent ouverts. Les exécuter avec des comptes de test distincts et nettoyage documenté, sans supposer que l'absence de GRANT SQL aux JWT couvre l'API qui détient une clé serveur.
+
+## Contrôle partenaire croisé (28 septembre, nuit)
+
+Deux lignes synthétiques (Partner TEST 2 et Client TEST C, avec UUID et marqueurs uniques) ont été créées pour le test local de `/api/admin`. Sous le JWT du `partner_admin` du partenaire 1 : GET admin a répondu 200 sans inclure le partenaire 2 ni son client ; la lecture directe du client par JWT est vide ; POST `create_user` ciblant Client TEST C a répondu 403. `client_admin` a aussi obtenu GET 200 et les refus 403 de `create_company` et d'attribution d'un rôle élevé. Les corps des POST de refus utilisaient un e-mail invalide et/ou un nom vide pour exclure une création involontaire.
+
+**Résultat : PASS dans le sens partenaire 1 → partenaire 2** pour la lecture et la tentative de création hors périmètre. Aucun compte `partner_admin` n'était rattaché au partenaire 2 ; le sens inverse et les créations autorisées restent non testés. Les deux lignes synthétiques ont été supprimées avec vérification finale à zéro. Aucun droit SQL ou déploiement Vercel modifié.
