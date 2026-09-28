@@ -31,6 +31,7 @@ async function login(label) {
 }
 
 async function audit(a, b) {
+  let untested = 0;
   for (const table of ['devices', 'drivers', 'positions', 'telemetry']) {
     const ownA = await a.client.from(table).select('id,company_id')
       .eq('company_id', a.company).limit(1);
@@ -44,6 +45,7 @@ async function audit(a, b) {
     ]) {
       if (!foreign) {
         console.log(`NOT TESTED: user ${label}, ${table}: foreign company has no fixture row`);
+        untested += 1;
         continue;
       }
       // Primary-key lookup bounds the probe to one actual row, avoiding a large
@@ -56,14 +58,17 @@ async function audit(a, b) {
     }
     console.log(`INFO: ${table}: A own row ${ownA.data.length ? 'visible' : 'absent'}, B own row ${ownB.data.length ? 'visible' : 'absent'}`);
   }
+  return untested;
 }
 
 try {
   const a = await login('A');
   const b = await login('B');
   assert.notEqual(a.company, b.company, 'Distinct company accounts required');
-  await audit(a, b);
-  console.log('RLS JWT telemetry isolation read-only completed; NOT TESTED rows require fixtures');
+  const untested = await audit(a, b);
+  console.log(untested === 0
+    ? 'RLS JWT telemetry isolation read-only PASS in both directions'
+    : `RLS JWT telemetry isolation read-only PARTIAL PASS; ${untested} direction(s) need fixtures`);
 } catch (error) {
   // Only messages generated above or by assert: never echo raw SDK errors, credentials or row data.
   const safe = String(error?.message ?? '').replace(/[^a-zA-Z0-9 :;-]/g, '').slice(0, 160);
