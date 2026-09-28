@@ -121,3 +121,9 @@ Restent à valider : création par `partner_admin` d'un utilisateur dans sa prop
 ## Préparation de l'essai `partner_admin` (non exécuté)
 
 Le script de création accepte désormais `RLS_TEST_ACTOR_ROLE=partner_admin` et `RLS_TEST_TARGET_COMPANY_ID`. Avant de créer le compte, il vérifie sous le JWT du partenaire que l'entreprise cible lui appartient. L'entreprise de test `20000000-0000-0000-0000-000000000001` est bien rattachée au partenaire `10000000-0000-0000-0000-000000000001` (lecture Supabase du 28 septembre). Le test vérifie ensuite la réponse API et l'accès du nouvel utilisateur, puis supprime Auth et profil comme précédemment. La syntaxe Node est valide ; **aucun PASS de cette variante tant qu'elle n'est pas exécutée localement**.
+
+## Création par `partner_admin` : PASS (28 septembre, nuit)
+
+La variante `partner_admin` a été exécutée sous le JWT du partenaire 1. Elle a créé un utilisateur `user` dans son entreprise cliente `20000000-0000-0000-0000-000000000001`, puis vérifié le rôle, le rattachement et le refus GET `/api/admin` (403) sous le JWT du nouvel utilisateur. Le nettoyage Auth/profil de l'UUID `54d32c4e-828c-4b22-b9b9-06721c7af5e3` a retourné **PASS** ; une lecture SQL indépendante a confirmé zéro ligne dans `auth.users` et `public.profiles` pour cet UUID. Les chemins de création autorisée `client_admin` et `partner_admin` sont maintenant validés sur l'entreprise de test A.
+
+Il reste le sens inverse entre deux partenaires avec un second compte `partner_admin`, ainsi que la fiabilité d'une restauration de sauvegarde et les conditions distantes représentatives. La création de ce second compte ne doit être entreprise qu'avec une fixture indépendante et un nettoyage Auth/profil contrôlé.
