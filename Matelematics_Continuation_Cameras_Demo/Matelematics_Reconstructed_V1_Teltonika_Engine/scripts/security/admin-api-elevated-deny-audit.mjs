@@ -54,6 +54,17 @@ try {
   assert.equal(clientGet, 200);
   assert.equal(await request(c.token, "POST", { action: "create_company", name: "" }, "client create_company"), 403);
   assert.equal(await request(c.token, "POST", noCreateBody("partner_admin", c.profile.company_id), "client elevate role"), 403);
+  stage = "client duplicate email error response";
+  const duplicateResponse = await fetch(`${api}/api/admin`, {
+    method: "POST", headers: { Authorization: `Bearer ${c.token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "create_user", role: "user", company_id: c.profile.company_id,
+      email: "user.test@matelematics.local", password: "audit-only-not-a-password", full_name: "MUST NOT CREATE" }),
+    redirect: "manual",
+  });
+  assert.equal(duplicateResponse.status, 500, "duplicate account should fail");
+  const duplicateBody = await duplicateResponse.json();
+  assert.equal(duplicateBody.error, "Erreur serveur.", "internal provider error exposed");
+  console.log("PASS: duplicate account error returns generic 500 without provider details");
   console.log("PASS: client_admin GET allowed; create_company and elevated role denied");
 
   const p = await login("PARTNER_ADMIN", "partner_admin");
