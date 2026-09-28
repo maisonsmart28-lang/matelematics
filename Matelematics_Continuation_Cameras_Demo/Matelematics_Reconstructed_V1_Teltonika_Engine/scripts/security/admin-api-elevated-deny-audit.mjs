@@ -44,14 +44,14 @@ async function request(token, method, body, label) {
 }
 function noCreateBody(role, companyId) {
   return { action: "create_user", role, company_id: companyId,
-    email: "rls-audit-must-not-create@example.invalid", password: "audit-only-not-a-password", full_name: "MUST NOT CREATE" };
+    email: "invalid-email", password: "audit-only-not-a-password", full_name: "MUST NOT CREATE" };
 }
 
 try {
   const c = await login("CLIENT_ADMIN", "client_admin");
   const clientGet = await request(c.token, "GET", null, "client GET");
   assert.equal(clientGet, 200);
-  assert.equal(await request(c.token, "POST", { action: "create_company", name: "MUST-NOT-CREATE" }, "client create_company"), 403);
+  assert.equal(await request(c.token, "POST", { action: "create_company", name: "" }, "client create_company"), 403);
   assert.equal(await request(c.token, "POST", noCreateBody("partner_admin", c.profile.company_id), "client elevate role"), 403);
   console.log("PASS: client_admin GET allowed; create_company and elevated role denied");
 
