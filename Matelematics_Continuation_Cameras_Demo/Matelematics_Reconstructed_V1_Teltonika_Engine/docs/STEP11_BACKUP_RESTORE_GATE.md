@@ -44,6 +44,7 @@ Get-ChildItem -LiteralPath $backupDir -File | ForEach-Object {
     if ($_.Length -eq 0) { throw "Fichier vide: $($_.Name)" }
     [pscustomobject]@{ Name = $_.Name; Bytes = $_.Length; SHA256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }
 }
+Write-Output "Dossier local: $backupDir"
 ```
 
 Le chemin d'export est affiché par `$backupDir` dans la même session PowerShell. Ne pas copier le contenu de `public-data.sql` dans le chat. Prochaine porte : contrôler séparément Auth, métadonnées et fichier Storage ; tester la restauration isolée. Un hash atteste l'intégrité après copie mais ne prouve pas la restaurabilité.
