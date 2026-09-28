@@ -442,9 +442,7 @@ export async function GET(
     return NextResponse.json(
       {
         error:
-          error instanceof Error
-            ? error.message
-            : "Erreur serveur.",
+          "Erreur serveur.",
       },
       {
         status: 500,
@@ -877,9 +875,7 @@ export async function POST(
     return NextResponse.json(
       {
         error:
-          error instanceof Error
-            ? error.message
-            : "Erreur serveur.",
+          "Erreur serveur.",
       },
       {
         status: 500,
