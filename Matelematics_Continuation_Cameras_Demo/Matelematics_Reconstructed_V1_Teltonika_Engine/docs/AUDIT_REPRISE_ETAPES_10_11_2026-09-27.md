@@ -89,3 +89,9 @@ Les essais `client_admin` et `partner_admin` (créations permises/refusées, pé
 Deux lignes synthétiques (Partner TEST 2 et Client TEST C, avec UUID et marqueurs uniques) ont été créées pour le test local de `/api/admin`. Sous le JWT du `partner_admin` du partenaire 1 : GET admin a répondu 200 sans inclure le partenaire 2 ni son client ; la lecture directe du client par JWT est vide ; POST `create_user` ciblant Client TEST C a répondu 403. `client_admin` a aussi obtenu GET 200 et les refus 403 de `create_company` et d'attribution d'un rôle élevé. Les corps des POST de refus utilisaient un e-mail invalide et/ou un nom vide pour exclure une création involontaire.
 
 **Résultat : PASS dans le sens partenaire 1 → partenaire 2** pour la lecture et la tentative de création hors périmètre. Aucun compte `partner_admin` n'était rattaché au partenaire 2 ; le sens inverse et les créations autorisées restent non testés. Les deux lignes synthétiques ont été supprimées avec vérification finale à zéro. Aucun droit SQL ou déploiement Vercel modifié.
+
+## Écriture autorisée par API admin (28 septembre, nuit)
+
+Avec le JWT du `partner_admin`, `POST /api/admin` action `create_company` a créé une entreprise synthétique avec marqueur unique. Le corps de requête contenait volontairement `partner_id=00000000-0000-0000-0000-000000000000` ; la route l'a remplacé par le partenaire réel de l'acteur (`10000000-0000-0000-0000-000000000001`). La réponse et une lecture sous le même JWT ont confirmé le nom et le rattachement. **PASS pour la création autorisée et la prévention de l'usurpation du partenaire.** La ligne, dépourvue de profils et de véhicules, a été supprimée par ID+nom exacts ; vérification finale : zéro.
+
+Les créations d'utilisateur autorisées et le sens inverse partenaire 2 → partenaire 1 restent non testés. Ne pas créer de compte Auth de test sans procédure de suppression vérifiée ; l'essai précédent ne concernait qu'une entreprise.
