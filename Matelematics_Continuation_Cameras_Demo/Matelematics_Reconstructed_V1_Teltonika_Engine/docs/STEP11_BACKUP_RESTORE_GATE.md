@@ -19,7 +19,7 @@ Selon la [documentation officielle Supabase sur les sauvegardes](https://supabas
 
 - Inventaire du projet : **PASS**.
 - Export PostgreSQL : **PARTIELLEMENT VALIDÉ** (fichiers SQL `public` et archive brute tous schémas). Objet Storage : **NON SAUVEGARDÉ**.
-- Restauration isolée : **ÉCHEC CONTRÔLÉ**, dépendances Supabase documentées ; contrôle fonctionnel **NON VALIDÉ**.
+- Restauration PostgreSQL isolée : **PASS** sur Supabase local 17.6.1.171 avec `supabase_admin`, `--clean --if-exists --single-transaction --no-owner --no-acl`. Comptages métier/Auth/RLS/métadonnées Storage égaux à la source ; restauration de fichiers Storage et tests fonctionnels d'accès **NON VALIDÉS**.
 - Gestion des secrets, chiffrement, périodicité et copie hors site : **À METTRE EN PLACE**.
 - Sauvegarde automatique quotidienne gérée sur ce projet Free : **ne pas supposer disponible**.
 
@@ -76,3 +76,26 @@ Essais de restauration, tous **locaux**, sans écriture sur le projet distant :
 **Conclusion technique :** l'archive brute est intègre à la lecture, mais aucune restauration complète ni reprise du SaaS n'est validée. Les objets Storage ne sont pas dans les dumps. La prochaine procédure doit préparer un environnement Supabase isolé compatible (schémas et extensions), établir un format d'export restaurable sans les conflits d'objets gérés, restaurer dans une transaction et comparer les comptes Auth, tables métier, télémétrie, RLS et objet Storage. Ne pas relancer `db dump --data-only` à l'identique ni répéter `pg_restore --clean` dans le `postgres` local déjà initialisé. Conserver le conteneur `supabase_db_20260929-142153` comme laboratoire jetable jusqu'à la fin de l'analyse.
 
 Les hashes sont des preuves d'intégrité des fichiers locaux à cette date, pas une certification de reprise. Avant copie hors site, chiffrer les archives ; planifier ensuite une fréquence, une rétention et un test périodique.
+
+
+## Reprise réussie en laboratoire — 29 septembre 2026
+
+Dans le conteneur Supabase local `supabase_db_20260929-142153` (healthy), le rôle `supabase_admin` est superutilisateur et propriétaire de `pgrst_drop_watch`. L'archive brute `database-tous-schemas.dump` a été restaurée dans sa base `postgres` avec `pg_restore --single-transaction --clean --if-exists --no-owner --no-acl -U supabase_admin` : **PASS**. Le test ne s'est connecté qu'au conteneur local, jamais à la source hébergée. Les deux essais précédents sous `postgres` et dans une base au nom différent restent documentés ci-dessus comme étapes de diagnostic.
+
+Comparaison des nombres, source Supabase relue après la restauration et copie locale :
+
+| Objet | Source | Laboratoire |
+| --- | ---: | ---: |
+| `auth.users` | 5 | 5 |
+| `public.companies` | 5 | 5 |
+| `public.vehicles` | 7 | 7 |
+| `public.positions` | 35928 | 35928 |
+| `public.telemetry` | 35990 | 35990 |
+| `public.vehicle_compliance_documents` | 0 | 0 |
+| `storage.objects` (métadonnées) | 1 | 1 |
+| politiques RLS `public` | 44 | 44 |
+| tables `public` avec RLS | 19 | 19 |
+
+Ces égalités prouvent la reprise des objets énumérés à l'instantané du dump ; elles ne prouvent pas encore les droits effectifs pour chaque rôle, les flux Auth/API ou le contenu du document Storage. `--no-acl` n'a pas restauré les GRANT/REVOKE de l'archive : avant de déclarer la reprise opérationnelle, comparer les privilèges effectifs de source et destination et rejouer les audits JWT sur le laboratoire. Une archive brute peut inclure des objets internes Supabase non portables vers une autre version ; ce PASS local 17.6.1.171 n'est pas une garantie de migration vers n'importe quelle cible. Voir le [guide officiel](https://supabase.com/docs/guides/self-hosting/restore-from-platform).
+
+**Porte suivante :** sauvegarder le contenu binaire de l'unique objet du bucket privé `compliance-documents` sans l'afficher ni le publier, calculer son SHA-256, vérifier son téléchargement puis tester une lecture via un environnement Storage isolé. Chiffrer les archives et définir la périodicité/rétention avant usage commercial.
