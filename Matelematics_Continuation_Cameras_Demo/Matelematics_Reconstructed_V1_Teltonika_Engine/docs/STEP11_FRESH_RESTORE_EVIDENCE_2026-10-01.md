@@ -93,7 +93,7 @@ psql -X --single-transaction -v ON_ERROR_STOP=1 -U supabase_admin -d postgres -f
 
 La reprise DB puis ACL/Auth et les scénarios véhicules/JWT/API testés sont validés sur une nouvelle instance. Le parcours reste spécifique à l'instantané, avec des corrections explicites ; le lanceur Node cible encore le premier laboratoire. Pas de mesure fiable de RTO à partir des échanges, aucun RPO garanti.
 
-Restent ouverts : seconde copie hors PC, nouveau paquet chiffré contenant la recette et les scripts versionnés, export automatique supervisé/fréquence/rétention, restauration d'un fichier binaire sauvegardé et restrictions d'écriture Storage, autres tables/RPC et flux applicatifs. Le test de lecture binaire et de refus Storage sur fixture est désormais PASS, voir ci-dessous. L'objet Storage sauvegardé est seulement un placeholder de 0 octet. Ne pas déclarer l'étape11 entière ni l'audit de sécurité clos.
+Restent ouverts : seconde copie hors PC, nouveau paquet chiffré contenant la recette et les scripts versionnés, export automatique supervisé/fréquence/rétention, reprise combinée DB et fichiers après perte du serveur, autres tables/RPC et flux applicatifs. Le test de lecture binaire et de refus Storage sur fixture est désormais PASS, voir ci-dessous. L'objet Storage sauvegardé est seulement un placeholder de 0 octet. Ne pas déclarer l'étape11 entière ni l'audit de sécurité clos.
 
 Les journaux locaux `restore-fresh.log`, `restore-fresh-retry.log`, `repair-fresh-check.log`, `repair-fresh-apply.log`, `start-minimal-api.log` constituent les traces sur le poste ; ils ne sont pas publiés dans Git. Mot de passe d'archive et secrets Auth/API non documentés.
 
@@ -134,7 +134,7 @@ La fixture est supprimée ; aucune modification de données métier ou de la pro
 
 ### Limites encore ouvertes
 
-Ce test crée un fichier après restauration : il valide le service et les accès, **pas** la sauvegarde puis restauration d'un fichier non vide. L'ancien instantané Storage contenait seulement un placeholder vide. Ces refus par utilisateur simple et les écritures autorisées par client_admin ont ensuite été validés, voir les preuves ci-dessous. Le cas d'un administrateur d'une autre entreprise reste ouvert. Les scripts de réparation Storage doivent encore être intégrés au parcours automatique ; actuellement les commandes sont documentées et ont été exécutées manuellement. Le paquet chiffré existant ne contient pas ces nouveaux scripts/documents.
+Ce test crée un fichier après restauration : il valide le service et les accès, **pas** la sauvegarde puis restauration d'un fichier non vide. L'ancien instantané Storage contenait seulement un placeholder vide. Ces refus par utilisateur simple et les écritures autorisées par client_admin ont ensuite été validés, voir les preuves ci-dessous. Le cas d'un administrateur d'une autre entreprise a ensuite été validé ci-dessous. Les scripts de réparation Storage doivent encore être intégrés au parcours automatique ; actuellement les commandes sont documentées et ont été exécutées manuellement. Le paquet chiffré existant ne contient pas ces nouveaux scripts/documents.
 
 ## Écritures Storage — preuves complémentaires du 1 octobre
 
@@ -161,7 +161,7 @@ Compte restauré identifié en SQL local : client_admin de l'entreprise A. Scrip
 
 La clé service_role locale n'a servi qu'au nettoyage final de secours pour ce parcours autorisé. Les trois opérations positives ont utilisé le JWT client_admin. Les fixtures sont synthétiques, uniques et supprimées.
 
-Ces résultats ferment les scénarios d'écriture énumérés, pas l'ensemble des contrôles Storage. Un administrateur d'une autre entreprise, les partenaires, les URL signées et la reprise d'un fichier non vide depuis sauvegarde ne sont pas encore couverts.
+Ces résultats ferment les scénarios d'écriture énumérés, pas l'ensemble des contrôles Storage. Les partenaires et URL signées restent ouverts ; l'administrateur étranger et la reprise binaire ont été testés ensuite, voir ci-dessous.
 
 ## Administrateur d'une autre entreprise — résultat 20:59
 
@@ -173,8 +173,8 @@ Aucun client_admin étranger existait dans l'instantané. Le script `storage-loc
 
 Le script prépare et observe les fixtures avec privilèges locaux ; les tentatives d'accès sont bien faites avec le JWT client_admin. Aucun utilisateur existant n'a été élevé. Les refus administrateur interentreprises listés sont désormais validés.
 
-## Reprise binaire — script préparé, pas encore validé
+## Reprise binaire — PASS, résultat opérateur 21:05
 
-`storage-local-binary-recovery-audit.ps1` sauvegarde une PNG téléchargée de Storage et son manifeste SHA256, supprime l'objet original (absence métadonnée et téléchargement vérifiés), puis recharge les octets sauvegardés via JWT client_admin et compare le téléchargement au manifeste. Nettoyage final prévu. Résultat opérateur EN ATTENTE.
+`storage-local-binary-recovery-audit.ps1` sauvegarde une PNG téléchargée de Storage et son manifeste SHA256, supprime l'objet original (absence métadonnée et téléchargement vérifiés), puis recharge les octets sauvegardés via JWT client_admin et compare le téléchargement au manifeste. Exécution opérateur PASS : manifeste du fichier téléchargé non vide, original supprimé et inaccessible, restauration avec SHA256 identique, suppression finale et absence vérifiée, déconnexion confirmée.
 
-Cet essai se fait sur le même laboratoire/API, pas sur une nouvelle instance ni après perte complète du volume. Une réussite démontrera un aller-retour sauvegarde/recréation d'un objet non vide ; elle ne prouvera pas une reprise simultanée PostgreSQL et de tous les objets Storage après panne. Le paquet chiffré initial reste inchangé.
+Cet essai se fait sur le même laboratoire/API, pas sur une nouvelle instance ni après perte complète du volume. Cette réussite démontre un aller-retour sauvegarde/recréation d'un objet non vide ; elle ne prouve pas une reprise simultanée PostgreSQL et de tous les objets Storage après panne. Le paquet chiffré initial reste inchangé.
