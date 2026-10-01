@@ -159,11 +159,24 @@ BEGIN
        EXCEPTION WHEN insufficient_privilege THEN
          v_updates:=v_updates+1;
        END;
+       BEGIN
+         EXECUTE format('INSERT INTO public.%I (id,company_id,vehicle_id,recorded_at) OVERRIDING SYSTEM VALUE VALUES ($1,$2,$3,now())',v_table)
+           USING v_ids[v_side]-100,v_companies[v_side],v_vehicles[v_side];
+         RAISE EXCEPTION 'Expected INSERT ACL denial for role=% table=%',v_roles[v_i],v_table;
+       EXCEPTION WHEN insufficient_privilege THEN
+         v_updates:=v_updates+1;
+       END;
+       BEGIN
+         EXECUTE format('DELETE FROM public.%I WHERE id=$1',v_table) USING v_ids[v_side];
+         RAISE EXCEPTION 'Expected DELETE ACL denial for role=% table=%',v_roles[v_i],v_table;
+       EXCEPTION WHEN insufficient_privilege THEN
+         v_updates:=v_updates+1;
+       END;
      END LOOP;
    END LOOP;
    EXECUTE 'RESET ROLE';
-   RAISE NOTICE 'PASS: role %, side %, actual SELECT scope and UPDATE ACL denial',v_roles[v_i],v_actor_side;
+   RAISE NOTICE 'PASS: role %, side %, actual SELECT scope and INSERT/UPDATE/DELETE ACL denials',v_roles[v_i],v_actor_side;
  END LOOP;
- RAISE NOTICE 'PASS: % SELECT checks, % UPDATE ACL denials, two partners both directions; SQL role emulation, not Auth API',v_reads,v_updates;
+ RAISE NOTICE 'PASS: % SELECT checks, % INSERT/UPDATE/DELETE ACL denials, two partners both directions; SQL role emulation, not Auth API',v_reads,v_updates;
 END $matrix$;
 ROLLBACK;
