@@ -374,6 +374,10 @@ export async function GET(
           "vehicle_id",
           vehicle.id,
         )
+        .eq(
+          "company_id",
+          vehicle.company_id,
+        )
         .order(
           "last_seen_at",
           {
@@ -408,6 +412,7 @@ export async function GET(
           "company_id",
           vehicle.company_id,
         )
+        
         .eq(
           "status",
           "active",
@@ -437,6 +442,10 @@ export async function GET(
         .eq(
           "vehicle_id",
           vehicle.id,
+        )
+        .eq(
+          "company_id",
+          vehicle.company_id,
         )
         .order(
           "recorded_at",
@@ -469,6 +478,10 @@ export async function GET(
         .eq(
           "vehicle_id",
           vehicle.id,
+        )
+        .eq(
+          "company_id",
+          vehicle.company_id,
         )
         .order(
           "recorded_at",
@@ -528,6 +541,10 @@ export async function GET(
         .eq(
           "vehicle_id",
           vehicle.id,
+        )
+        .eq(
+          "company_id",
+          vehicle.company_id,
         )
         .gte(
           "recorded_at",
@@ -682,7 +699,7 @@ export async function GET(
 
     return NextResponse.json(
       {
-        error: message,
+        error: "Erreur serveur.",
       },
       {
         status: 500,
