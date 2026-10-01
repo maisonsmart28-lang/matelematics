@@ -93,6 +93,45 @@ psql -X --single-transaction -v ON_ERROR_STOP=1 -U supabase_admin -d postgres -f
 
 La reprise DB puis ACL/Auth et les scénarios véhicules/JWT/API testés sont validés sur une nouvelle instance. Le parcours reste spécifique à l'instantané, avec des corrections explicites ; le lanceur Node cible encore le premier laboratoire. Pas de mesure fiable de RTO à partir des échanges, aucun RPO garanti.
 
-Restent ouverts : seconde copie hors PC, nouveau paquet chiffré contenant la recette et les scripts versionnés, export automatique supervisé/fréquence/rétention, tests Storage sur vrai fichier et politiques d'accès, autres tables/RPC et flux applicatifs. L'objet Storage sauvegardé est seulement un placeholder de 0 octet. Ne pas déclarer l'étape11 entière ni l'audit de sécurité clos.
+Restent ouverts : seconde copie hors PC, nouveau paquet chiffré contenant la recette et les scripts versionnés, export automatique supervisé/fréquence/rétention, restauration d'un fichier binaire sauvegardé et restrictions d'écriture Storage, autres tables/RPC et flux applicatifs. Le test de lecture binaire et de refus Storage sur fixture est désormais PASS, voir ci-dessous. L'objet Storage sauvegardé est seulement un placeholder de 0 octet. Ne pas déclarer l'étape11 entière ni l'audit de sécurité clos.
 
 Les journaux locaux `restore-fresh.log`, `restore-fresh-retry.log`, `repair-fresh-check.log`, `repair-fresh-apply.log`, `start-minimal-api.log` constituent les traces sur le poste ; ils ne sont pas publiés dans Git. Mot de passe d'archive et secrets Auth/API non documentés.
+
+## Storage — corrections et test du 1 octobre, 20:35
+
+Après activation du service Storage, celui-ci est healthy. Les droits provenant du restore sans ACL nécessitaient une réparation supplémentaire. La comparaison en lecture seule avec la source a confirmé :
+
+- Schéma storage propriétaire supabase_admin ; USAGE/CREATE à supabase_storage_admin.
+- Huit relations, dix-neuf routines et une enum de l'instantané propriétaires supabase_storage_admin.
+- API anon/authenticated/service_role : USAGE storage et SELECT/INSERT/UPDATE/DELETE sur storage.objects et storage.buckets. Ces GRANT permettent l'exécution SQL ; les politiques RLS décident de l'accès aux lignes. Ils ne rendent pas le bucket public.
+- EXECUTE autorisé dans la source sur storage.foldername(text), storage.filename(text), storage.extension(text), rétabli localement pour ces trois rôles.
+
+Réparation locale transactionnelle réalisée : propriétaires des relations (tables avant séquences), routines et enum réaffectés au rôle du service ; GRANT USAGE/CREATE ; vérification sous SET LOCAL ROLE supabase_storage_admin : schéma sélectionné storage, un objet. COMMIT PASS. Deuxième correction : guard RLS actif sur objects et buckets et bucket compliance-documents privé, GRANT schéma/table/fonctions ci-dessus, COMMIT. Les autres ACL Storage ne sont pas déclarées intégralement équivalentes à la source.
+
+Politiques storage.objects présentes :
+- SELECT authenticated : bucket compliance-documents, premier dossier UUID entreprise, can_access_company.
+- INSERT/DELETE/UPDATE authenticated : can_manage_company ; UPDATE contient USING et WITH CHECK.
+- RLS activé, FORCE RLS faux.
+
+### Test exécuté
+
+Script versionné : `scripts/security/storage-local-recovery-audit.ps1`. Cible fixe nouveau laboratoire, API http://127.0.0.1:55321. Clés locales obtenues par CLI, jamais affichées. La clé service_role locale sert exclusivement au chargement et au nettoyage d'une petite PNG synthétique dans un chemin unique sous l'entreprise A. Connexions A/B par JWT utilisateur pour les tests.
+
+| Contrôle | Preuve transmise |
+| --- | --- |
+| Chargement binaire API locale | PASS |
+| Téléchargement par A | PASS, SHA256 identique à la PNG source |
+| Téléchargement par B d'entreprise distincte | HTTP400, refus |
+| Téléchargement anonyme | HTTP400, refus |
+| URL publique du bucket privé | HTTP400, refus |
+| Nettoyage API Storage | PASS |
+| Absence métadonnée exacte fixture | DO assertion PASS |
+| Déconnexions A et B | PASS |
+
+Les refus HTTP400 sont ceux observés, pas des HTTP403 inventés. Ils indiquent ici l'absence d'accès sur les requêtes testées ; la lecture positive par A sur le même objet confirme que celui-ci existait pendant les essais. Les réponses d'erreur détaillées n'ont pas été enregistrées, donc ne pas prétendre à une cause interne plus précise.
+
+La fixture est supprimée ; aucune modification de données métier ou de la production. Une assertion SQL vérifie l'absence de sa métadonnée après suppression API, pas une inspection directe de tous les blocs du volume.
+
+### Limites encore ouvertes
+
+Ce test crée un fichier après restauration : il valide le service et les accès, **pas** la sauvegarde puis restauration d'un fichier non vide. L'ancien instantané Storage contenait seulement un placeholder vide. Restent à tester les refus INSERT/UPDATE/DELETE par utilisateur simple et entreprise étrangère, ainsi qu'une écriture autorisée par un administrateur approprié. Les scripts de réparation Storage doivent encore être intégrés au parcours automatique ; actuellement les commandes sont documentées et ont été exécutées manuellement. Le paquet chiffré existant ne contient pas ces nouveaux scripts/documents.
