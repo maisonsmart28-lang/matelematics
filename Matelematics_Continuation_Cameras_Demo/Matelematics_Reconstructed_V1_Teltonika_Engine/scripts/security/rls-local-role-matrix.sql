@@ -149,7 +149,7 @@ BEGIN
      FOR v_side IN 1..2 LOOP
        EXECUTE format('SELECT count(*) FROM public.%I WHERE id=$1',v_table)
          INTO v_count USING v_ids[v_side];
-       IF v_count <> CASE WHEN v_roles[v_i]='matelematics_admin' OR v_actor_side=v_side THEN 1 ELSE 0 END THEN
+       IF v_count <> (CASE WHEN v_roles[v_i]='matelematics_admin' OR v_actor_side=v_side THEN 1 ELSE 0 END) THEN
          RAISE EXCEPTION 'Read isolation failed role=% table=%',v_roles[v_i],v_table;
        END IF;
        v_reads:=v_reads+1;
