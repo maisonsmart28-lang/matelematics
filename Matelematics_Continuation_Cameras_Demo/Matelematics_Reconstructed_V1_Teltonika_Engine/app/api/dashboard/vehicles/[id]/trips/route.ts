@@ -138,7 +138,7 @@ function parsePositiveInteger(raw: string | null, fallback: number) {
 
   const value = Number(raw);
 
-  if (!Number.isInteger(value) || value < 1) {
+  if (!Number.isSafeInteger(value) || value < 1) {
     throw new Error("INVALID_PAGINATION");
   }
 
@@ -220,6 +220,9 @@ export async function GET(request: NextRequest) {
     );
     const pageSize = Math.min(requestedPageSize, MAX_PAGE_SIZE);
     const offset = (page - 1) * pageSize;
+    if (!Number.isSafeInteger(offset) || offset > 2_147_483_647) {
+      throw new Error("INVALID_PAGINATION");
+    }
 
     const { data: vehicle, error: vehicleError } = await admin
       .from("vehicles")
