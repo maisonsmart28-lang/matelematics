@@ -114,6 +114,14 @@ try {
         try {Invoke-RestMethod -Uri "$baseUrl/auth/v1/logout" -Method Post -Headers $userHeaders -TimeoutSec 20 | Out-Null;Write-Host "PASS: deconnexion locale"}
         catch {$cleanupFailed=$true;Write-Host "Deconnexion non confirmee"}
     }
+    # Resolve a possible creation whose HTTP response was interrupted.
+    if (-not $userId -and $config) {
+        try {
+            $found=Run-LocalSql "SELECT id FROM auth.users WHERE email='$email';"
+            $foundText=($found -join "").Trim()
+            if ($foundText) {$userId=([guid]$foundText).ToString()}
+        } catch {$cleanupFailed=$true;Write-Host "Verification compte fictif non confirmee : $email"}
+    }
     if ($userId) {
         try {
             Run-LocalSql "DELETE FROM public.profiles WHERE id='$userId'::uuid AND full_name='LOCAL STORAGE ADMIN AUDIT $marker';" | Out-Null
