@@ -91,7 +91,6 @@ try {
             $body=@{prefixes=@($objectPath)} | ConvertTo-Json -Compress
             Invoke-RestMethod -Uri "$baseUrl/storage/v1/object/$bucket" -Method Delete -Headers $serviceHeaders -ContentType "application/json" -Body $body -TimeoutSec 20 | Out-Null
             # Exact unique fixture, guard and assertion, read-only SQL.
-            $sql="DO \$check\$ BEGIN IF EXISTS (SELECT 1 FROM storage.objects WHERE bucket_id='compliance-documents' AND name='$objectPath') THEN RAISE EXCEPTION 'Fixture encore presente'; END IF; END \$check\$;"
             # Dollar quoting is built explicitly to avoid PowerShell interpolation.
             $sql='DO $check$ BEGIN IF EXISTS (SELECT 1 FROM storage.objects WHERE bucket_id=''compliance-documents'' AND name='''+$objectPath+''') THEN RAISE EXCEPTION ''Fixture encore presente''; END IF; END $check$;'
             $sql | docker exec -i $container psql -X -v ON_ERROR_STOP=1 -U supabase_admin -d postgres
