@@ -180,3 +180,12 @@ Les mentions PARTIAL/EN ATTENTE plus haut sont des états historiques ; le table
 Ordre de reprise : diagnostic performance RLS sur laboratoire (plans/index, sans mutation), correction mesurée si nécessaire, puis contrôles secrets/flux d'ingestion/limites réseau selon le code et les preuves disponibles. La validation physique FMC150 reste distincte, sans changer à distance la configuration des boîtiers dans ce parcours. Ni fermeture globale de l'étape11, ni capacité de production, ni conformité CNDP complète ne sont revendiquées.
 
 La procédure de restauration est documentée avec scripts versionnés et contrôles ; elle n'est pas encore un outil autonome de récupération de tous les composants. Avant usage commercial, versionner les corrections Storage dans le paquet, automatiser les sauvegardes et obtenir la seconde copie.
+
+
+### Requêtes véhicule — 2026-10-01
+
+Le diagnostic local utilise les index de clé primaire pour les refus ciblés : positions 3,627 ms, télémétrie 1,780 ms, aucune ligne étrangère retournée. Les requêtes par entreprise avec LIMIT 1 ont seulement été expliquées (Seq Scan), sans mesure de leur exécution complète.
+
+Les API live et historique filtrent désormais les données par véhicule ET entreprise du véhicule autorisé. Live : boîtier, dernière position, dernière télémétrie et positions récentes ; historique : positions de la période. Les contrôles de rôle restent avant ces lectures, les plafonds existants sont conservés. Les erreurs 500 renvoient un message générique. Les index entreprise/véhicule/date existent déjà ; aucun index ni politique RLS n'a été modifié.
+
+Validation restante : build et requêtes API après récupération de ces changements. Ces API utilisent une clé serveur après contrôle explicite du périmètre ; cette correction ne résout ni ne valide la performance des lectures JWT sous RLS. Les RPC carburant/trajets, les plans complets RLS et les limites de reprise externes restent ouverts.
