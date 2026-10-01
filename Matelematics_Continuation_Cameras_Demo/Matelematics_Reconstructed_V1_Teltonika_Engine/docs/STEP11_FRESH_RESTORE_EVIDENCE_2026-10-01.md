@@ -162,3 +162,19 @@ Compte restauré identifié en SQL local : client_admin de l'entreprise A. Scrip
 La clé service_role locale n'a servi qu'au nettoyage final de secours pour ce parcours autorisé. Les trois opérations positives ont utilisé le JWT client_admin. Les fixtures sont synthétiques, uniques et supprimées.
 
 Ces résultats ferment les scénarios d'écriture énumérés, pas l'ensemble des contrôles Storage. Un administrateur d'une autre entreprise, les partenaires, les URL signées et la reprise d'un fichier non vide depuis sauvegarde ne sont pas encore couverts.
+
+## Administrateur d'une autre entreprise — résultat 20:59
+
+Aucun client_admin étranger existait dans l'instantané. Le script `storage-local-cross-admin-audit.ps1` a créé un compte Auth et profil fictifs client_admin dans l'entreprise B du laboratoire, avec mot de passe généré en mémoire, puis a utilisé son JWT.
+- Création et lecture d'un fichier propre B : PASS.
+- SELECT, INSERT, UPDATE sur fichiers de A : refus HTTP400.
+- DELETE sur fichier A : HTTP200 sans effet ; fichier A inchangé et aucun nouvel objet étranger.
+- Nettoyage : fichiers supprimés, absence métadonnées vérifiée, déconnexion, compte Auth et profil fictifs supprimés : PASS.
+
+Le script prépare et observe les fixtures avec privilèges locaux ; les tentatives d'accès sont bien faites avec le JWT client_admin. Aucun utilisateur existant n'a été élevé. Les refus administrateur interentreprises listés sont désormais validés.
+
+## Reprise binaire — script préparé, pas encore validé
+
+`storage-local-binary-recovery-audit.ps1` sauvegarde une PNG téléchargée de Storage et son manifeste SHA256, supprime l'objet original (absence métadonnée et téléchargement vérifiés), puis recharge les octets sauvegardés via JWT client_admin et compare le téléchargement au manifeste. Nettoyage final prévu. Résultat opérateur EN ATTENTE.
+
+Cet essai se fait sur le même laboratoire/API, pas sur une nouvelle instance ni après perte complète du volume. Une réussite démontrera un aller-retour sauvegarde/recréation d'un objet non vide ; elle ne prouvera pas une reprise simultanée PostgreSQL et de tous les objets Storage après panne. Le paquet chiffré initial reste inchangé.
