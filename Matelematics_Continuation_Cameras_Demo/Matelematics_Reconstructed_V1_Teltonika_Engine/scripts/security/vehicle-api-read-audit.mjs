@@ -40,9 +40,15 @@ try {
     .eq("company_id", accounts.A.profile.company_id).limit(1).maybeSingle();
   assert.ok(!vehicle.error && vehicle.data?.id);
   const id = encodeURIComponent(vehicle.data.id);
+  const to = new Date(Date.now() - 60000).toISOString();
+  const from = new Date(Date.now() - 3600000).toISOString();
+  const range = new URLSearchParams({ from, to }).toString();
   for (const [kind, path] of [
     ["live", `/api/vehicles/${id}/live`],
     ["historique", `/api/dashboard/vehicles/${id}/history?hours=24`],
+    ["carburant", `/api/dashboard/vehicles/${id}/fuel-history?hours=1`],
+    ["trajets", `/api/dashboard/vehicles/${id}/trips?hours=1&pageSize=25`],
+    ["trace", `/api/dashboard/vehicles/${id}/trips/points?${range}`],
   ]) {
     stage = `${kind} anonyme`;
     assert.equal((await request(path)).status, 401);
@@ -58,6 +64,14 @@ try {
     if (kind === "live") {
       assert.equal(data.vehicle.company_id, accounts.A.profile.company_id);
       assert.ok(Object.hasOwn(data, "position") && Object.hasOwn(data, "telemetry"));
+    } else if (kind === "trajets") {
+      assert.ok(Array.isArray(data.trips) && data.trips.length <= 25);
+      assert.equal(data.pagination?.pageSize, 25);
+    } else if (kind === "carburant" || kind === "trace") {
+      assert.ok(Array.isArray(data.points));
+      // SQL sampling currently can include one extra endpoint; do not claim a strict cap.
+      assert.ok(data.points.length <= (kind === "carburant" ? 401 : 1001));
+      assert.ok(data.sampling && (kind !== "carburant" || data.summary));
     } else {
       assert.ok(Array.isArray(data.points));
       assert.equal(data.count, data.points.length);
@@ -65,7 +79,12 @@ try {
     }
     console.log(`PASS: ${kind}, compte A autorise (200), reponse verifiee`);
   }
-  console.log("API LIVE/HISTORIQUE : SIX CONTROLES LECTURE PASS; performance RLS et roles admin non testes");
+  for (const query of ["page=9007199254740992", "page=2147483648&pageSize=100", "page=0", "pageSize=1.5"]) {
+    stage = "pagination invalide";
+    assert.equal((await request(`/api/dashboard/vehicles/${id}/trips?hours=1&${query}`, accounts.A.token)).status, 400);
+  }
+  console.log("PASS: quatre paginations invalides refusees (400)");
+  console.log("API VEHICULE : QUINZE CONTROLES ACCES ET QUATRE PAGINATIONS PASS; performance RLS, donnees non vides et roles admin non testes");
 } catch {
   console.error(`API vehicle audit FAIL a l'etape : ${stage}; aucun identifiant, JWT ou releve brut affiche`);
   process.exitCode = 1;
