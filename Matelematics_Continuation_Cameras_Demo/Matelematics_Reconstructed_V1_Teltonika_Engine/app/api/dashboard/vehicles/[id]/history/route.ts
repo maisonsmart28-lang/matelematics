@@ -188,6 +188,7 @@ export async function GET(request: NextRequest) {
       .from("positions")
       .select("latitude,longitude,speed,heading,recorded_at")
       .eq("vehicle_id", vehicleId)
+      .eq("company_id", vehicle.company_id)
       .not("latitude", "is", null)
       .not("longitude", "is", null)
       .gte("recorded_at", from.toISOString())
@@ -262,6 +263,6 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: "Erreur serveur." }, { status: 500 });
   }
 }
