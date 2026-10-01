@@ -189,3 +189,12 @@ Le diagnostic local utilise les index de clé primaire pour les refus ciblés : 
 Les API live et historique filtrent désormais les données par véhicule ET entreprise du véhicule autorisé. Live : boîtier, dernière position, dernière télémétrie et positions récentes ; historique : positions de la période. Les contrôles de rôle restent avant ces lectures, les plafonds existants sont conservés. Les erreurs 500 renvoient un message générique. Les index entreprise/véhicule/date existent déjà ; aucun index ni politique RLS n'a été modifié.
 
 Validation restante : build et requêtes API après récupération de ces changements. Ces API utilisent une clé serveur après contrôle explicite du périmètre ; cette correction ne résout ni ne valide la performance des lectures JWT sous RLS. Les RPC carburant/trajets, les plans complets RLS et les limites de reprise externes restent ouverts.
+
+
+### Validation API et inspection RPC — 2026-10-01
+
+Retour opérateur : six contrôles live/historique PASS (A 200 avec réponse vérifiée, B étranger 403, anonyme 401). Build et audit statique 13 contrôles PASS. Ces résultats ne mesurent pas la performance RLS.
+
+Inspection en lecture seule des trois RPC déployées : SECURITY INVOKER, filtres vehicle_id et bornes temporelles ; pas de filtre company_id explicite. Les routes vérifient le périmètre avant l'appel serveur. Pagination trajets : entiers sûrs et offset limité au maximum int32 avant RPC ; aucun changement SQL distant.
+
+Limites ouvertes : échantillonnage carburant/tracé peut ajouter le dernier point au plafond (401/1001 pour plafonds 400/1000), à corriger et tester localement ; le plafond de réponse ne limite pas le nombre de lignes agrégées en SQL. Plans, temps sur fenêtres longues et validation sur données non vides restent nécessaires. Test API étendu : cinq routes, quinze accès et quatre paginations invalides ; syntaxe Node vérifiée, exécution opérateur encore attendue. Copie externe et limites de reprise restent ouvertes.
