@@ -134,4 +134,31 @@ La fixture est supprimée ; aucune modification de données métier ou de la pro
 
 ### Limites encore ouvertes
 
-Ce test crée un fichier après restauration : il valide le service et les accès, **pas** la sauvegarde puis restauration d'un fichier non vide. L'ancien instantané Storage contenait seulement un placeholder vide. Restent à tester les refus INSERT/UPDATE/DELETE par utilisateur simple et entreprise étrangère, ainsi qu'une écriture autorisée par un administrateur approprié. Les scripts de réparation Storage doivent encore être intégrés au parcours automatique ; actuellement les commandes sont documentées et ont été exécutées manuellement. Le paquet chiffré existant ne contient pas ces nouveaux scripts/documents.
+Ce test crée un fichier après restauration : il valide le service et les accès, **pas** la sauvegarde puis restauration d'un fichier non vide. L'ancien instantané Storage contenait seulement un placeholder vide. Ces refus par utilisateur simple et les écritures autorisées par client_admin ont ensuite été validés, voir les preuves ci-dessous. Le cas d'un administrateur d'une autre entreprise reste ouvert. Les scripts de réparation Storage doivent encore être intégrés au parcours automatique ; actuellement les commandes sont documentées et ont été exécutées manuellement. Le paquet chiffré existant ne contient pas ces nouveaux scripts/documents.
+
+## Écritures Storage — preuves complémentaires du 1 octobre
+
+### Utilisateurs simples A/B
+
+Script `storage-local-recovery-audit.ps1`, commit 8ab84ed, exécuté sur le nouveau laboratoire :
+- INSERT A dans son entreprise : HTTP400, aucun objet créé.
+- INSERT B dans l'entreprise A : HTTP400, aucun objet créé.
+- UPDATE A sur son fichier et B sur fichier étranger : HTTP400 ; fichier inchangé.
+- DELETE A et B : HTTP200 **sans suppression effective**. Téléchargement privilégié local et hash du fichier encore identique, métadonnée présente pendant les contrôles.
+- Après chaque tentative : SHA256 existant identique et aucun nouvel objet parmi les deux chemins uniques de test.
+- Nettoyage final via API locale privilégiée : absence des trois chemins vérifiée par assertion SQL ; deux déconnexions PASS.
+
+Le code HTTP200 de DELETE ne signifie donc pas autorisation de suppression. Les vérifications d'état sont la preuve du refus effectif. Les assertions utilisent la clé privilégiée locale pour observer l'état, pas pour prouver l'autorisation de l'utilisateur.
+
+### Administrateur de l'entreprise A
+
+Compte restauré identifié en SQL local : client_admin de l'entreprise A. Script `storage-local-admin-audit.ps1`, commit 7e7f850, exécuté :
+- Profil/Auth vérifiés : PASS.
+- INSERT par JWT client_admin : PASS, téléchargement avec SHA256 source identique.
+- UPDATE par JWT client_admin avec des octets différents : PASS, téléchargement avec SHA256 de remplacement identique.
+- DELETE par JWT client_admin : PASS, métadonnée absente et téléchargement impossible.
+- Nettoyage final de secours vérifié et déconnexion : PASS.
+
+La clé service_role locale n'a servi qu'au nettoyage final de secours pour ce parcours autorisé. Les trois opérations positives ont utilisé le JWT client_admin. Les fixtures sont synthétiques, uniques et supprimées.
+
+Ces résultats ferment les scénarios d'écriture énumérés, pas l'ensemble des contrôles Storage. Un administrateur d'une autre entreprise, les partenaires, les URL signées et la reprise d'un fichier non vide depuis sauvegarde ne sont pas encore couverts.
