@@ -198,3 +198,29 @@ Retour opérateur : six contrôles live/historique PASS (A 200 avec réponse vé
 Inspection en lecture seule des trois RPC déployées : SECURITY INVOKER, filtres vehicle_id et bornes temporelles ; pas de filtre company_id explicite. Les routes vérifient le périmètre avant l'appel serveur. Pagination trajets : entiers sûrs et offset limité au maximum int32 avant RPC ; aucun changement SQL distant.
 
 Limites ouvertes : échantillonnage carburant/tracé peut ajouter le dernier point au plafond (401/1001 pour plafonds 400/1000), à corriger et tester localement ; le plafond de réponse ne limite pas le nombre de lignes agrégées en SQL. Plans, temps sur fenêtres longues et validation sur données non vides restent nécessaires. Test API étendu : cinq routes, quinze accès et quatre paginations invalides ; syntaxe Node vérifiée, exécution opérateur encore attendue. Copie externe et limites de reprise restent ouvertes.
+
+### Résultats locaux consolidés — 1 octobre 2026, après optimisation
+
+Ces résultats opérateur remplacent les attentes des deux sections précédentes pour les cas ci-dessous. Cible : laboratoire `recovery-20261001-175031`, API Supabase `127.0.0.1:55321`. Aucune migration SQL distante ni déploiement n'a été effectué.
+
+| Contrôle | Résultat constaté | Portée |
+| --- | --- | --- |
+| API véhicule | 15 contrôles accès et 4 paginations invalides PASS | Cinq routes, A autorisé, B étranger refusé, anonyme refusé ; contrôles applicatifs avant clé serveur |
+| Échantillonnage RPC local | 88 cas synthétiques PASS puis COMMIT local | Plafonds stricts, extrémités et comptages bruts ; correction distante encore ouverte |
+| Agrégats carburant restaurés | MATCH : 1 989 relevés utilisables, 399 points, 9 L, 79,509 km, 4 remises à zéro | Totaux source/RPC identiques ; données restaurées, aucune validation physique CAN |
+| RLS initiale | Positions propres 100 : 169,198 ms ; télémétrie : 50,686 ms ; deux lectures étrangères LIMIT 1 dépassent 8 s | Mesures SQL locales bornées |
+| RLS candidate en transaction | Positions propres 0,803 ms, étrangères 15,665 ms ; télémétrie propre 0,992 ms, étrangère 65,246 ms | Une mesure par cas ; scans étrangers parcourent encore environ 36 000 lignes |
+| Équivalence de périmètre | 35 comparaisons et refus sans identité PASS | Profils existants uniquement |
+| Matrice SQL synthétique | 28 SELECT et 84 refus INSERT/UPDATE/DELETE PASS | Deux partenaires, rôles user/client_admin/partner_admin/matelematics_admin ; émulation SQL, refus ACL |
+| Application candidate | COMMIT local PASS | Quatre politiques, helper calculé une fois par requête ; politiques originales conservées pour retour arrière |
+| Vrais JWT/API après application | 4 lectures et 12 refus ACL PASS | A : 100 positions en 7 ms, 100 télémétries en 6 ms ; B : aucune ligne A, 12/30 ms ; écritures HTTP 403 |
+
+Les temps HTTP et SQL ne sont pas directement comparables. Ces essais ne constituent ni benchmark de charge ni preuve de capacité en production. Les DELETE JWT ciblent un identifiant sentinelle ; les INSERT utilisent un corps vide. Les refus prouvent les ACL effectives du laboratoire réparé, sans tester indépendamment les politiques d'écriture.
+
+Scripts versionnés : `rpc-sampling-local-audit.sql`, `rpc-sampling-local-apply.ps1`, `fuel-local-aggregate-check.sql`, `rls-local-bounded-measure.sql`, `rls-local-optimization-experiment.sql`, `rls-local-role-matrix.sql`, `rls-local-optimization-apply.sql`, `rls-local-optimization-revert.sql`, `rls-local-jwt-optimized-audit.mjs`, dans `scripts/security/`.
+
+L'application RLS locale conserve les expressions originales dans `matelematics_rls_lab.original_policies`. Le script revert est préparé mais son exécution n'est pas encore validée. Les scripts d'expérience/matrice créent le même schéma temporaire et ne doivent pas être rejoués tels quels après application persistante.
+
+**Suite :** compléter les JWT/API de la candidate avec une fixture positive de B et les rôles administrateurs, nettoyage exact inclus ; vérifier séparément le retour arrière. Ensuite reprendre les autres points 10/11 : secrets, ingestion et limites réseau. Toute proposition distante devra distinguer les ACL de production des ACL réparées du laboratoire.
+
+**Limites toujours ouvertes :** scans négatifs à grande volumétrie, charge et fenêtres longues ; déploiement des corrections RPC/RLS ; politiques d'écriture indépendamment des ACL ; copie externe, rétention, RPO/RTO et reprise complète ; URLs signées et périmètres Storage non couverts ; validation physique Renault FMC150 (Ford exclu), Accurate réel ; infrastructure représentative, coûts et conformité. L'archive initiale ne contient pas ces nouvelles corrections. L'étape 11 demeure partielle.
