@@ -156,4 +156,27 @@ Après correction des identifiants du compte de test, `admin-api-create-user-aud
 
 ## Porte de sauvegarde / restauration
 
-Inventaire lu le 28 septembre : projet actif `eu-west-3`, organisation Supabase **Free**, base ~140 Mo, 5 comptes Auth, un bucket Storage contenant un objet. Les sauvegardes quotidiennes gérées documentées concernent les offres Pro/Team/Enterprise ; sur Free, un export régulier et une copie hors site doivent être organisés. Le dump DB ne contient pas l'objet Storage lui-même. Voir [STEP11_BACKUP_RESTORE_GATE.md](STEP11_BACKUP_RESTORE_GATE.md) pour le plan d'essai isolé et les critères. **Aucun dump ni restauration réel validé à ce stade.**
+Inventaire lu le 28 septembre : projet actif `eu-west-3`, organisation Supabase **Free**, base ~140 Mo, 5 comptes Auth, un bucket Storage contenant un objet. Les sauvegardes quotidiennes gérées documentées concernent les offres Pro/Team/Enterprise ; sur Free, un export régulier et une copie hors site doivent être organisés. Le dump DB ne contient pas l'objet Storage lui-même. Voir [STEP11_BACKUP_RESTORE_GATE.md](STEP11_BACKUP_RESTORE_GATE.md) pour le plan d'essai isolé et les critères. État historique au 28 septembre ; remplacé par la synthèse du 1 octobre ci-dessous.
+
+## Synthèse de reprise — 1 octobre 2026
+
+Les mentions PARTIAL/EN ATTENTE plus haut sont des états historiques ; le tableau suivant est le suivi courant pour les contrôles énumérés. Preuves détaillées : [nouvelle restauration](STEP11_FRESH_RESTORE_EVIDENCE_2026-10-01.md) et [réparation locale](STEP11_LOCAL_REPAIR_RUNBOOK.md).
+
+| Domaine | État courant | Limites conservées |
+| --- | --- | --- |
+| API admin rôles, créations permises/refusées, interpartenaires deux sens | PASS dans les scénarios déjà consignés | Compensation en panne réelle non provoquée ; self-test injecté seulement |
+| PostgreSQL/Auth | Nouvelle restauration PASS, comptages conformes, corrections ACL/Auth rejouées | Dump brut et versions spécifiques ; adaptation Storage nécessaire |
+| JWT véhicules A/B | Lectures propres/étrangères, fixture B et nettoyage PASS | Pas toutes les tables/RPC requalifiées sur nouvelle cible |
+| API anon et écritures user | Quatre lectures anon refusées ; trois PATCH refusés PASS | Couverture des opérations listées |
+| Storage | Lecture binaire/hash, refus user et client_admin étranger, écritures client_admin propre PASS | Partenaires, URL signées et tous chemins métier non couverts |
+| Fichier sauvegardé | Sauvegarde fichier non vide, suppression/recréation, hash et nettoyage PASS | Même serveur ; pas perte complète ni reprise simultanée DB/volume |
+| Archive chiffrée | Chiffrement, extraction et manifeste/hash PASS | Même PC, copie externe reportée ; paquet ne contient pas nouvelles recettes |
+| Continuité | PARTIEL | Automatisation/fréquence/rétention, RPO/RTO, copie externe et reprise complète ouverts |
+| RLS performances | OUVERT, prochain diagnostic local | 57014 et scan négatif à analyser ; ne pas ajouter index ou changer policy sans mesure |
+| FMC150 Renault | OUVERT | Origines/unités CAN et mesures physiques, profil validé avant affichage normalisé ; Ford exclu pour le moment |
+| GT06 | Local simulé PASS | Matériel Accurate réel et firmware à qualifier |
+| Infrastructure 10E | Diagnostic local borné seulement | Réseau distant/TLS, HA, mesures/coûts réels et conformité à confirmer |
+
+Ordre de reprise : diagnostic performance RLS sur laboratoire (plans/index, sans mutation), correction mesurée si nécessaire, puis contrôles secrets/flux d'ingestion/limites réseau selon le code et les preuves disponibles. La validation physique FMC150 reste distincte, sans changer à distance la configuration des boîtiers dans ce parcours. Ni fermeture globale de l'étape11, ni capacité de production, ni conformité CNDP complète ne sont revendiquées.
+
+La procédure de restauration est documentée avec scripts versionnés et contrôles ; elle n'est pas encore un outil autonome de récupération de tous les composants. Avant usage commercial, versionner les corrections Storage dans le paquet, automatiser les sauvegardes et obtenir la seconde copie.
