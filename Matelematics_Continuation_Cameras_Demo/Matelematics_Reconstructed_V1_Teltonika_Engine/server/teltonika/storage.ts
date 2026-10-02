@@ -1,3 +1,5 @@
+import pg from "pg";
+import { persistAtomicPacket } from "./atomic-storage";
 import { currentAlertTransaction, withAlertTransaction, transactionAlertSettings, transactionLatestAlert, transactionActiveDiagnostics, transactionInsertAlert, transactionResolveAlert } from "./alert-transaction";
 import type { TransactionClient } from "./ingest-transaction";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
@@ -838,6 +840,43 @@ export async function persistTelemetry(telemetry: NormalizedTelemetry) {
   const recordedAt = quality.recordedAt;
   const ingestFingerprint = buildTelemetryIngestFingerprint(telemetry);
 
+  const storageMode = process.env.TELTONIKA_STORAGE_MODE ?? "legacy";
+  if (storageMode !== "legacy" && storageMode !== "atomic") throw new Error("INVALID_TELTONIKA_STORAGE_MODE");
+  if (storageMode === "atomic") {
+    const canPayload = normalizeCanV2(telemetry);
+    const result = await persistAtomicPacket(getAtomicPool(), {
+      imei: telemetry.imei, fingerprint: ingestFingerprint, recordedAt,
+      position: quality.persistPosition ? {
+        latitude: telemetry.latitude, longitude: telemetry.longitude,
+        altitude: telemetry.altitude, speed: telemetry.speedKph, heading: telemetry.angle,
+      } : null,
+      telemetry: {
+        codec: telemetry.codec === 142 ? "8E" : "8",
+        raw_payload: JSON.stringify(telemetry.raw),
+        io_values: telemetry.io, can_payload: canPayload,
+        signal_strength: readNumericIo(telemetry,"io_21"),
+        battery_voltage: getBatteryVoltage(telemetry), ignition: getIgnition(telemetry),
+        metadata: {
+          imei: telemetry.imei, received_at: telemetry.receivedAt,
+          priority: telemetry.priority, event_id: telemetry.eventId, satellites: telemetry.satellites,
+          telemetry_quality: {
+            accepted: quality.accepted, gps_fix_valid: quality.gpsFixValid,
+            position_persisted: quality.persistPosition, reasons: quality.reasons,
+            original_timestamp: telemetry.timestamp,
+            recorded_at_source: quality.accepted ? "device" : "received_at",
+          },
+          io_normalized: buildIoMetadata(telemetry), simulator: canPayload.source.simulator,
+        },
+      },
+    }, async (client, lockedDevice) => {
+      if (quality.accepted) await syncCanAlertsInTransaction(client, {
+        companyId: lockedDevice.company_id, vehicleId: lockedDevice.vehicle_id,
+        deviceId: lockedDevice.id, recordedAt, telemetry, canPayload,
+      });
+    });
+    return { ...result, quality };
+  }
+
   const { data: duplicateTelemetry, error: duplicateLookupError } =
     await getSupabase()
       .from("telemetry")
@@ -963,4 +1002,17 @@ export async function persistTelemetry(telemetry: NormalizedTelemetry) {
 /** The caller must hold the vehicle lock and use this same client for core writes. */
 export async function syncCanAlertsInTransaction(client: TransactionClient, input: Parameters<typeof syncCanAlerts>[0]) {
   return withAlertTransaction(client, () => syncCanAlerts(input));
+}
+
+let atomicPool: pg.Pool | null = null;
+function getAtomicPool() {
+  if (!atomicPool) {
+    atomicPool = new pg.Pool({
+    connectionString: requiredEnv("TELTONIKA_DATABASE_URL"),
+    max: 10, connectionTimeoutMillis: 5000, idleTimeoutMillis: 30000,
+    application_name: "matelematics-teltonika-atomic",
+  });
+    atomicPool.on("error", () => console.error("[Teltonika] Atomic PostgreSQL pool connection failed"));
+  }
+  return atomicPool;
 }
