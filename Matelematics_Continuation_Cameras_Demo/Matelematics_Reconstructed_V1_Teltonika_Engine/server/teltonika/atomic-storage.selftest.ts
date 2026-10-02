@@ -6,7 +6,7 @@ async function run(options: {duplicate?: string; failure?: string; ready?: boole
  const calls:string[]=[];let alertCalls=0,released=false,destroyed=false;
  const client:TransactionClient={async query(sql) {
   calls.push(sql);
-  if(options.failure&&sql.includes(options.failure))throw Error("injected");
+  if(options.failure&&(options.failure==="COMMIT" ? sql==="COMMIT" : sql.includes(options.failure)))throw Error("injected");
   if(sql.includes("AS ready"))return {rows:[{ready:options.ready!==false}]};
   if(sql.startsWith("SELECT id,company_id"))return {rows:[{id:"device",company_id:"company",vehicle_id:"vehicle"}]};
   if(sql.startsWith("SELECT id FROM public.vehicles"))return {rows:[{id:"vehicle"}]};
