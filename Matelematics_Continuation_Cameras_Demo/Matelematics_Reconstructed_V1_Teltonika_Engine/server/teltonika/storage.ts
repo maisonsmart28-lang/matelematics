@@ -812,30 +812,6 @@ export async function persistTelemetry(telemetry: NormalizedTelemetry) {
     };
   }
 
-  const { data: device, error: deviceError } = await getSupabase()
-    .from("devices")
-    .select("id,company_id,vehicle_id,imei")
-    .eq("imei", telemetry.imei)
-    .maybeSingle();
-
-  if (deviceError) {
-    throw new Error(
-      `[Teltonika] Device lookup failed for ${telemetry.imei}: ${deviceError.message}`,
-    );
-  }
-
-  if (!device) {
-    throw new Error(
-      `[Teltonika] Unknown Supabase device IMEI ${telemetry.imei}`,
-    );
-  }
-
-  if (!device.vehicle_id) {
-    throw new Error(
-      `[Teltonika] Device ${telemetry.imei} is not assigned to a vehicle`,
-    );
-  }
-
   const quality = assessTelemetryQuality(telemetry);
   const recordedAt = quality.recordedAt;
   const ingestFingerprint = buildTelemetryIngestFingerprint(telemetry);
@@ -875,6 +851,30 @@ export async function persistTelemetry(telemetry: NormalizedTelemetry) {
       });
     });
     return { ...result, quality };
+  }
+
+  const { data: device, error: deviceError } = await getSupabase()
+    .from("devices")
+    .select("id,company_id,vehicle_id,imei")
+    .eq("imei", telemetry.imei)
+    .maybeSingle();
+
+  if (deviceError) {
+    throw new Error(
+      `[Teltonika] Device lookup failed for ${telemetry.imei}: ${deviceError.message}`,
+    );
+  }
+
+  if (!device) {
+    throw new Error(
+      `[Teltonika] Unknown Supabase device IMEI ${telemetry.imei}`,
+    );
+  }
+
+  if (!device.vehicle_id) {
+    throw new Error(
+      `[Teltonika] Device ${telemetry.imei} is not assigned to a vehicle`,
+    );
   }
 
   const { data: duplicateTelemetry, error: duplicateLookupError } =
@@ -1015,4 +1015,11 @@ function getAtomicPool() {
     atomicPool.on("error", () => console.error("[Teltonika] Atomic PostgreSQL pool connection failed"));
   }
   return atomicPool;
+}
+
+/** Close SQL resources during controlled shutdown or integration tests. */
+export async function closeAtomicStoragePool() {
+  const pool = atomicPool;
+  atomicPool = null;
+  if (pool) await pool.end();
 }
