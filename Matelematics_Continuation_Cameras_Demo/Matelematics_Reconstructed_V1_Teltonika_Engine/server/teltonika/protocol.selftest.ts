@@ -150,6 +150,25 @@ async function main(){
  const idle=await authenticated(()=>{});
  assert.equal(idle.timeout,5000);idle.onTimeout!();assert.ok(idle.destroyed);
  console.log("PASS: configured socket inactivity callback closes connection");
+ const unauthenticated=new TestSocket();
+ attachTeltonikaProtocol(unauthenticated as unknown as Socket,()=>{},{},{idleTimeoutMs:5000,authTimeoutMs:1000});
+ // Trickle partial IMEI bytes: a fixed deadline must still close the socket.
+ const fragments=setInterval(()=>unauthenticated.emit("data",Buffer.from([0])),100);
+ try {
+  await new Promise<void>(resolve=>setTimeout(resolve,1200));
+  assert.ok(unauthenticated.destroyed);
+ } finally {clearInterval(fragments);unauthenticated.destroy();}
+ console.log("PASS: incomplete authentication closes at fixed deadline despite incoming fragments");
+ const accepted=await authenticated(()=>{});
+ // authenticated() uses the normal deadline; verify timer cancellation with a short explicit case.
+ accepted.destroy();
+ const shortAccepted=new TestSocket();
+ attachTeltonikaProtocol(shortAccepted as unknown as Socket,()=>{},{},{idleTimeoutMs:5000,authTimeoutMs:1000});
+ shortAccepted.emit("data",handshake);await tick();
+ await new Promise<void>(resolve=>setTimeout(resolve,1200));
+ assert.equal(shortAccepted.destroyed,false);
+ shortAccepted.destroy();
+ console.log("PASS: successful authentication cancels the fixed deadline");
  console.log("TELTONIKA PROTOCOL SERIALIZATION AND ACK SELF-TEST PASS; synthetic sockets, no DB/network");
 }
 main().catch(()=>{console.error("Teltonika protocol self-test FAIL");process.exitCode=1;});
