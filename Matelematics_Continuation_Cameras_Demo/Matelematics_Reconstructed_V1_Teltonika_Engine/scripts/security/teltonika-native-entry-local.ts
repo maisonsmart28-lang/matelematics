@@ -68,7 +68,7 @@ async function main(){
    await injection.query("BEGIN");
    await injection.query("CREATE SCHEMA "+schema);
    await injection.query("REVOKE ALL ON SCHEMA "+schema+" FROM PUBLIC,anon,authenticated,service_role");
-   await injection.query("CREATE FUNCTION "+schema+".fail_device() RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog AS $ BEGIN IF NEW.id='"+did+"'::uuid THEN RAISE EXCEPTION 'INJECT_DEVICE_UPDATE' USING ERRCODE='P1001'; END IF; RETURN NEW; END $");
+   await injection.query("CREATE FUNCTION "+schema+".fail_device() RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog AS $failure$ BEGIN IF NEW.id='"+did+"'::uuid THEN RAISE EXCEPTION 'INJECT_DEVICE_UPDATE' USING ERRCODE='P1001'; END IF; RETURN NEW; END $failure$");
    await injection.query("REVOKE ALL ON FUNCTION "+schema+".fail_device() FROM PUBLIC,anon,authenticated,service_role");
    await injection.query("CREATE TRIGGER "+schema+" BEFORE UPDATE ON public.devices FOR EACH ROW EXECUTE FUNCTION "+schema+".fail_device()");
    await injection.query("COMMIT");
