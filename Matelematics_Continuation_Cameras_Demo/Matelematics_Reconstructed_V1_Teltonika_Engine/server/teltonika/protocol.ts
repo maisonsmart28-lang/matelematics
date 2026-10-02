@@ -89,7 +89,7 @@ export function attachTeltonikaProtocol(
   socket: Socket,
   onMessage: PacketHandler,
   hooks: ProtocolHooks = {},
-  limits: { idleTimeoutMs?: number } = {},
+  limits: { idleTimeoutMs?: number; authTimeoutMs?: number } = {},
 ) {
   let buffer =
     Buffer.alloc(0);
@@ -98,6 +98,13 @@ export function attachTeltonikaProtocol(
   if (!Number.isInteger(idleTimeoutMs) || idleTimeoutMs < 1_000 || idleTimeoutMs > 86_400_000) {
     throw new Error("Invalid Teltonika idle timeout");
   }
+  const authTimeoutMs = limits.authTimeoutMs ?? 30_000;
+  if (!Number.isInteger(authTimeoutMs) || authTimeoutMs < 1_000 || authTimeoutMs > 300_000) {
+    throw new Error("Invalid Teltonika authentication timeout");
+  }
+  // Absolute deadline: incoming fragments do not extend authentication.
+  const authTimer = setTimeout(() => socket.destroy(), authTimeoutMs);
+  authTimer.unref();
   socket.setTimeout(idleTimeoutMs, () => socket.destroy());
   let processing = false;
 
@@ -126,6 +133,7 @@ export function attachTeltonikaProtocol(
   socket.on(
     "close",
     () => {
+      clearTimeout(authTimer);
       if (imei) {
         void hooks
           .onDisconnected?.({
@@ -242,6 +250,7 @@ export function attachTeltonikaProtocol(
 
           authenticated =
             true;
+          clearTimeout(authTimer);
 
           await hooks
             .onAuthenticated?.({
