@@ -147,6 +147,11 @@ const port =
     5000,
   );
 
+const idleTimeoutMs = Number(process.env.TELTONIKA_IDLE_TIMEOUT_MS ?? 300_000);
+if (!Number.isInteger(idleTimeoutMs) || idleTimeoutMs < 1_000 || idleTimeoutMs > 86_400_000) {
+  throw new Error("TELTONIKA_IDLE_TIMEOUT_MS must be between 1000 and 86400000");
+}
+
 const controlHost =
   "127.0.0.1";
 
@@ -764,6 +769,7 @@ async function start() {
               }
             },
           },
+          { idleTimeoutMs },
         );
 
 
