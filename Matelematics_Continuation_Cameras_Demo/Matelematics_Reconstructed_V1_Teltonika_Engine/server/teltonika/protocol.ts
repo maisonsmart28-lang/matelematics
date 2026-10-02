@@ -89,9 +89,17 @@ export function attachTeltonikaProtocol(
   socket: Socket,
   onMessage: PacketHandler,
   hooks: ProtocolHooks = {},
+  limits: { idleTimeoutMs?: number } = {},
 ) {
   let buffer =
     Buffer.alloc(0);
+
+  const idleTimeoutMs = limits.idleTimeoutMs ?? 300_000;
+  if (!Number.isInteger(idleTimeoutMs) || idleTimeoutMs < 1_000 || idleTimeoutMs > 86_400_000) {
+    throw new Error("Invalid Teltonika idle timeout");
+  }
+  socket.setTimeout(idleTimeoutMs, () => socket.destroy());
+  let processing = false;
 
   let authenticated =
     false;
@@ -134,22 +142,17 @@ export function attachTeltonikaProtocol(
     async (
       chunk,
     ) => {
+      if (socket.destroyed) return;
+      // Check before allocating; queued data events may run during persistence.
+      if (buffer.length + chunk.length > MAX_PACKET_SIZE) {
+        closeWithError(new Error("Teltonika receive buffer exceeded the safety limit"));
+        return;
+      }
+      buffer = Buffer.concat([buffer, chunk]);
+      if (processing) return;
+      processing = true;
+      socket.pause();
       try {
-        buffer =
-          Buffer.concat([
-            buffer,
-            chunk,
-          ]);
-
-
-        if (
-          buffer.length >
-          MAX_PACKET_SIZE
-        ) {
-          throw new Error(
-            "Teltonika receive buffer exceeded the safety limit",
-          );
-        }
 
 
         if (
@@ -381,6 +384,8 @@ export function attachTeltonikaProtocol(
           });
 
 
+          if (socket.destroyed) return;
+
           const ack =
             Buffer.alloc(
               4,
@@ -406,6 +411,9 @@ export function attachTeltonikaProtocol(
         closeWithError(
           error,
         );
+      } finally {
+        processing = false;
+        if (!socket.destroyed) socket.resume();
       }
     },
   );
