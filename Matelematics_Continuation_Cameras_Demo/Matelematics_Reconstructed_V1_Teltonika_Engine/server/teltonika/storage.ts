@@ -1,3 +1,5 @@
+import { currentAlertTransaction, withAlertTransaction, transactionAlertSettings, transactionLatestAlert, transactionActiveDiagnostics, transactionInsertAlert, transactionResolveAlert } from "./alert-transaction";
+import type { TransactionClient } from "./ingest-transaction";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 import { registerDevice } from "./registry";
@@ -267,7 +269,10 @@ async function resolveAlertEngineConfig({
   const config = cloneDefaultAlertEngineConfig();
   const sources = cloneDefaultAlertConfigSources();
 
-  const { data, error } = await getSupabase()
+  const transaction = currentAlertTransaction();
+  const { data, error } = transaction
+    ? await transactionAlertSettings(transaction, companyId, vehicleId)
+    : await getSupabase()
     .from("alert_settings")
     .select(
       "company_id,vehicle_id,rule_key,enabled,threshold_value,threshold_secondary,severity",
@@ -292,7 +297,7 @@ async function resolveAlertEngineConfig({
     );
   }
 
-  const rows = (data ?? []) as AlertSettingRow[];
+  const rows = (data ?? []) as unknown as AlertSettingRow[];
   const companyRows = rows.filter((row) => row.vehicle_id === null);
   const vehicleRows = rows.filter((row) => row.vehicle_id === vehicleId);
 
@@ -483,7 +488,10 @@ async function loadLatestAlertLifecycle({
   vehicleId: string;
   alertType: string;
 }) {
-  const { data, error } = await getSupabase()
+  const transaction = currentAlertTransaction();
+  const { data, error } = transaction
+    ? await transactionLatestAlert(transaction, companyId, vehicleId, alertType)
+    : await getSupabase()
     .from("alerts")
     .select("id,alert_type,status,triggered_at,resolved_at")
     .eq("company_id", companyId)
@@ -500,7 +508,7 @@ async function loadLatestAlertLifecycle({
     );
   }
 
-  return toLifecycle((data ?? null) as AlertLifecycleRow | null);
+  return toLifecycle((data ?? null) as unknown as AlertLifecycleRow | null);
 }
 
 async function createAlert({
@@ -522,9 +530,7 @@ async function createAlert({
   candidate: CanAlertCandidate;
   configSources: AlertRuleSourceState | null;
 }) {
-  const { error } = await getSupabase()
-    .from("alerts")
-    .insert({
+  const row = {
       company_id: companyId,
       vehicle_id: vehicleId,
       device_id: deviceId,
@@ -549,7 +555,11 @@ async function createAlert({
         enabled_source: configSources?.enabled ?? null,
         severity_source: configSources?.severity ?? null,
       },
-    });
+    };
+  const transaction = currentAlertTransaction();
+  const { error } = transaction
+    ? await transactionInsertAlert(transaction, row)
+    : await getSupabase().from("alerts").insert(row);
 
   if (error) {
     throw new Error(`[Teltonika] Alert insert failed: ${error.message}`);
@@ -567,7 +577,10 @@ async function resolveAlert({
   alertType: string;
   recordedAt: string;
 }) {
-  const { error } = await getSupabase()
+  const transaction = currentAlertTransaction();
+  const { error } = transaction
+    ? await transactionResolveAlert(transaction, alertId, recordedAt)
+    : await getSupabase()
     .from("alerts")
     .update({
       status: "resolved",
@@ -702,8 +715,10 @@ async function syncCanAlerts({
    * temporal lifecycle engine. This prevents an old/out-of-order frame from
    * clearing a newer DTC.
    */
-  const { data: activeDiagnostics, error: activeDiagnosticsError } =
-    await getSupabase()
+  const transaction = currentAlertTransaction();
+  const { data: activeDiagnostics, error: activeDiagnosticsError } = transaction
+    ? await transactionActiveDiagnostics(transaction, companyId, vehicleId)
+    : await getSupabase()
       .from("alerts")
       .select("id,alert_type,status,triggered_at,resolved_at")
       .eq("company_id", companyId)
@@ -717,7 +732,7 @@ async function syncCanAlerts({
     );
   }
 
-  for (const row of (activeDiagnostics ?? []) as AlertLifecycleRow[]) {
+  for (const row of (activeDiagnostics ?? []) as unknown as AlertLifecycleRow[]) {
     if (activeByType.has(row.alert_type)) {
       continue;
     }
@@ -943,4 +958,9 @@ export async function persistTelemetry(telemetry: NormalizedTelemetry) {
     positionPersisted: quality.persistPosition,
     quality,
   };
+}
+
+/** The caller must hold the vehicle lock and use this same client for core writes. */
+export async function syncCanAlertsInTransaction(client: TransactionClient, input: Parameters<typeof syncCanAlerts>[0]) {
+  return withAlertTransaction(client, () => syncCanAlerts(input));
 }
