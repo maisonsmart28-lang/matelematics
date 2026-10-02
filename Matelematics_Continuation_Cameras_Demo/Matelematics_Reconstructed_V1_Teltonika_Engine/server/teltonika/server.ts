@@ -129,6 +129,11 @@ function loadLocalEnv() {
 
 loadLocalEnv();
 
+function logDevice(imei: string): string {
+  return `…${imei.slice(-4)}`;
+}
+
+
 
 const host =
   process.env
@@ -439,7 +444,7 @@ async function sendCommand(
 
 
       console.log(
-        `[Teltonika] command sent imei=${imei} command=${command}`,
+        `[Teltonika] command sent device=${logDevice(imei)} command=${command}`,
       );
     },
   );
@@ -471,7 +476,7 @@ function resolveCommand(
     !pending
   ) {
     console.warn(
-      `[Teltonika] unsolicited command response imei=${imei}: ${response}`,
+      `[Teltonika] unsolicited command response device=${logDevice(imei)} bytes=${Buffer.byteLength(response, "utf8")}`,
     );
 
     return;
@@ -486,7 +491,7 @@ function resolveCommand(
   );
 
   console.log(
-    `[Teltonika] command response imei=${imei}: ${response}`,
+    `[Teltonika] command response device=${logDevice(imei)} bytes=${Buffer.byteLength(response, "utf8")}`,
   );
 
   pending.resolve(
@@ -619,7 +624,7 @@ async function start() {
         );
 
         console.log(
-          `[Teltonika] TCP connection from ${socket.remoteAddress}:${socket.remotePort}`,
+          `[Teltonika] TCP connection opened`,
         );
 
 
@@ -635,20 +640,15 @@ async function start() {
               normalized
             ) {
               console.log(
-                `[Teltonika] ${imei} ${telemetry.timestamp} ` +
-                `${telemetry.latitude.toFixed(6)},${telemetry.longitude.toFixed(6)} ` +
-                `${telemetry.speedKph} km/h`,
+                `[Teltonika] telemetry received device=${logDevice(imei)}`,
               );
 
-              const saved =
-                await persistTelemetry(
+              await persistTelemetry(
                   telemetry,
                 );
 
               console.log(
-                `[Teltonika] persisted device=${saved.deviceId} ` +
-                `vehicle=${saved.vehicleId} ` +
-                `recorded_at=${saved.recordedAt}`,
+                `[Teltonika] telemetry persisted device=${logDevice(imei)}`,
               );
             }
           },
@@ -670,7 +670,7 @@ async function start() {
               );
 
               console.log(
-                `[Teltonika] session authenticated imei=${imei}`,
+                `[Teltonika] session authenticated device=${logDevice(imei)}`,
               );
             },
 
@@ -784,8 +784,7 @@ async function start() {
               Error,
           ) => {
             console.error(
-              "[Teltonika] socket error:",
-              error.message,
+              "[Teltonika] socket processing failed",
             );
           },
         );
@@ -966,10 +965,7 @@ async function start() {
               ? error.message
               : String(error);
 
-          console.error(
-            "[Teltonika control]",
-            message,
-          );
+          console.error("[Teltonika control] command failed");
 
           jsonResponse(
             response,
@@ -979,7 +975,8 @@ async function start() {
                 false,
 
               error:
-                message,
+                ["TRACKER_NOT_READY", "COMMAND_ALREADY_PENDING", "COMMAND_TIMEOUT", "TRACKER_DISCONNECTED", "REQUEST_TOO_LARGE", "INVALID_JSON"].includes(message)
+                  ? message : "COMMAND_FAILED",
             },
           );
         }
@@ -1015,8 +1012,7 @@ start().catch(
     error,
   ) => {
     console.error(
-      "[Teltonika] startup error:",
-      error,
+      "[Teltonika] startup failed",
     );
 
     process.exitCode =
