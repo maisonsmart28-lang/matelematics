@@ -1,4 +1,5 @@
 import net from "node:net";
+import { createConnectionLimiter } from "./connection-limits";
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
@@ -151,6 +152,15 @@ const idleTimeoutMs = Number(process.env.TELTONIKA_IDLE_TIMEOUT_MS ?? 300_000);
 if (!Number.isInteger(idleTimeoutMs) || idleTimeoutMs < 1_000 || idleTimeoutMs > 86_400_000) {
   throw new Error("TELTONIKA_IDLE_TIMEOUT_MS must be between 1000 and 86400000");
 }
+
+const authTimeoutMs = Number(process.env.TELTONIKA_AUTH_TIMEOUT_MS ?? 30_000);
+if (!Number.isInteger(authTimeoutMs) || authTimeoutMs < 1_000 || authTimeoutMs > 300_000) {
+  throw new Error("TELTONIKA_AUTH_TIMEOUT_MS must be between 1000 and 300000");
+}
+const connectionLimiter = createConnectionLimiter(
+  Number(process.env.TELTONIKA_MAX_CONNECTIONS ?? 4096),
+  Number(process.env.TELTONIKA_MAX_CONNECTIONS_PER_IP ?? 64),
+);
 
 const controlHost =
   "127.0.0.1";
@@ -619,6 +629,13 @@ async function start() {
       (
         socket,
       ) => {
+        const releaseConnection = connectionLimiter.acquire(socket.remoteAddress);
+        if (!releaseConnection) {
+          socket.destroy();
+          return;
+        }
+        socket.once("close", releaseConnection);
+
         socket.setKeepAlive(
           true,
           30_000,
@@ -769,7 +786,7 @@ async function start() {
               }
             },
           },
-          { idleTimeoutMs },
+          { idleTimeoutMs, authTimeoutMs },
         );
 
 
