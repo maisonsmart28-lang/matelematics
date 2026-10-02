@@ -227,7 +227,7 @@ export function attachTeltonikaProtocol(
             );
 
             throw new Error(
-              `Unknown Teltonika device IMEI ${imei}`,
+              "Unknown Teltonika device",
             );
           }
 
