@@ -224,3 +224,27 @@ L'application RLS locale conserve les expressions originales dans `matelematics_
 **Suite :** compléter les JWT/API de la candidate avec une fixture positive de B et les rôles administrateurs, nettoyage exact inclus ; vérifier séparément le retour arrière. Ensuite reprendre les autres points 10/11 : secrets, ingestion et limites réseau. Toute proposition distante devra distinguer les ACL de production des ACL réparées du laboratoire.
 
 **Limites toujours ouvertes :** scans négatifs à grande volumétrie, charge et fenêtres longues ; déploiement des corrections RPC/RLS ; politiques d'écriture indépendamment des ACL ; copie externe, rétention, RPO/RTO et reprise complète ; URLs signées et périmètres Storage non couverts ; validation physique Renault FMC150 (Ford exclu), Accurate réel ; infrastructure représentative, coûts et conformité. L'archive initiale ne contient pas ces nouvelles corrections. L'étape 11 demeure partielle.
+
+### Validation JWT complémentaire et retour arrière — 2 octobre 2026
+
+Résultats fournis par l'opérateur sur le laboratoire optimisé, après la synthèse précédente :
+
+| Script | Résultat exécuté | Limite |
+| --- | --- | --- |
+| rls-local-jwt-positive-b-audit.mjs | 4 lectures PASS : B voit ses fixtures positions/télémétrie, A ne les voit pas ; nettoyage vérifié | Comptes user |
+| rls-local-jwt-client-admin-audit.mjs | 6 lectures PASS : client_admin voit 100 positions et 100 télémétries propres, masque les fixtures B ; B les voit ; nettoyage vérifié | Un client_admin, deux entreprises |
+| rls-local-jwt-partner-admin-audit.mjs | 4 lectures PASS : propre entreprise visible, autre partenaire invisible ; nettoyage des huit lignes synthétiques vérifié | Sens inverse sous un deuxième partner_admin non testé dans cette exécution |
+| rls-local-jwt-global-admin-audit.mjs | 4 lectures PASS : entreprise rattachée et entreprise d'un autre partenaire visibles ; nettoyage vérifié | Lecture seulement |
+| rls-local-optimization-roundtrip.sql | COMMIT PASS : quatre expressions originales restaurées exactement, 35 comparaisons et refus sans identité, quatre expressions candidates réappliquées exactement, sauvegarde originale conservée | Aller-retour SQL atomique ; pas de requête API pendant un retour arrière maintenu |
+
+Les lectures réelles JWT couvrent désormais les quatre rôles pour ces cas. Les privilèges effectifs du laboratoire réparé restent distincts de la production. Les politiques d'écriture indépendamment des ACL, le sens inverse JWT interpartenaires sur la candidate et une panne réelle de compensation demeurent ouverts. La candidate est active dans le laboratoire ; production inchangée.
+
+### Reprise ingestion / secrets — inspection source du 2 octobre
+
+- GT06 laboratoire : bind 127.0.0.1, IMEI synthétique autorisé, écritures explicitement activées, timeout socket 120 s ; parser limité à 4 096 octets de tampon et 1 024 octets de paquet. Ces propriétés sont lues dans le code, pas une nouvelle mesure réseau. Le message d'échec de RPC peut encore inclure les détails du fournisseur.
+- Bridge Traccar : HTTPS distant exigé, redirections refusées, délai requête 15 s, trois tentatives pour lectures ; pas de reprise automatique des mutations ambiguës. Allowlist IMEI et rattachement entreprise/véhicule vérifiés avant écriture. Le contrôle d'origine des positions doit être revu sur le chemin poll, au-delà du filtre envoyé au serveur.
+- Teltonika : bind TCP par défaut 0.0.0.0 ; interface de commande sur 127.0.0.1 ; identification IMEI via registre. L'IMEI seul n'est pas une preuve cryptographique de possession du matériel. Aucun accès public ne doit être déduit de ce fonctionnement local.
+- Teltonika : tampon/paquet limités à 2 Mio et ACK après attente de persistence. Le gestionnaire data est async : vérifier sérialisation et concurrence de trames avant de qualifier le traitement.
+- Teltonika : journaux incluant IMEI entier, coordonnées GPS, réponses de commandes ; délai d'inactivité TCP non défini explicitement dans server.ts. Contrôle HTTP local /command sans authentification propre ; sa restriction loopback est une barrière réseau, pas une autorisation métier.
+
+**Prochain travail :** réduire les données dans les journaux, traiter les délais/limites de connexion et vérifier les trames concurrentes avec tests locaux. Réexaminer les scripts sécurité existants avant changement. Aucun serveur d'ingestion n'a été démarré par cette inspection ; aucun boîtier n'a reçu de commande. Ces constats ne ferment pas l'audit ingestion ni le contrôle des secrets sur tous les fichiers.
