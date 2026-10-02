@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 import { registerDevice } from "./registry";
+import { createSupabaseFetch } from "./supabase-fetch";
 import type { NormalizedTelemetry } from "./types";
 
 import {
@@ -95,104 +96,8 @@ function requiredEnv(name: string) {
   return value;
 }
 
-const SUPABASE_FETCH_MAX_ATTEMPTS = 4;
-const SUPABASE_FETCH_TIMEOUT_MS = 12_000;
-
-function sleep(milliseconds: number) {
-  return new Promise<void>((resolve) => {
-    setTimeout(resolve, milliseconds);
-  });
-}
-
-function retryableHttpStatus(status: number) {
-  return (
-    status === 408 ||
-    status === 425 ||
-    status === 429 ||
-    status === 500 ||
-    status === 502 ||
-    status === 503 ||
-    status === 504
-  );
-}
-
-const resilientSupabaseFetch: typeof fetch = async (input, init) => {
-  let lastError: unknown = null;
-
-  for (
-    let attempt = 1;
-    attempt <= SUPABASE_FETCH_MAX_ATTEMPTS;
-    attempt += 1
-  ) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => {
-      controller.abort();
-    }, SUPABASE_FETCH_TIMEOUT_MS);
-
-    let abortListener: (() => void) | null = null;
-
-    try {
-      if (init?.signal) {
-        if (init.signal.aborted) {
-          controller.abort();
-        } else {
-          abortListener = () => {
-            controller.abort();
-          };
-          init.signal.addEventListener("abort", abortListener, { once: true });
-        }
-      }
-
-      const response = await fetch(input, {
-        ...init,
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeout);
-
-      if (abortListener && init?.signal) {
-        init.signal.removeEventListener("abort", abortListener);
-      }
-
-      if (!retryableHttpStatus(response.status)) {
-        if (attempt > 1) {
-          console.log(
-            `[Teltonika] Supabase recovered on attempt ${attempt}/${SUPABASE_FETCH_MAX_ATTEMPTS}`,
-          );
-        }
-        return response;
-      }
-
-      lastError = new Error(`Supabase HTTP ${response.status}`);
-      console.warn(
-        `[Teltonika] Supabase HTTP ${response.status} - retry ${attempt}/${SUPABASE_FETCH_MAX_ATTEMPTS}`,
-      );
-    } catch (error) {
-      clearTimeout(timeout);
-
-      if (abortListener && init?.signal) {
-        init.signal.removeEventListener("abort", abortListener);
-      }
-
-      lastError = error;
-      console.warn(
-        `[Teltonika] Supabase network failure - retry ${attempt}/${SUPABASE_FETCH_MAX_ATTEMPTS}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
-
-    if (attempt < SUPABASE_FETCH_MAX_ATTEMPTS) {
-      await sleep(500 * 2 ** (attempt - 1));
-    }
-  }
-
-  throw new Error(
-    `Supabase unavailable after ${SUPABASE_FETCH_MAX_ATTEMPTS} attempts: ${
-      lastError instanceof Error ? lastError.message : String(lastError)
-    }`,
-  );
-};
+// Reads may retry; ambiguous mutations must be reconciled before replay.
+const resilientSupabaseFetch = createSupabaseFetch();
 
 let supabaseClient: SupabaseClient | null = null;
 
