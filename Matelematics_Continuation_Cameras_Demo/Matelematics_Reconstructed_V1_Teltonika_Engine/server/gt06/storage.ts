@@ -59,7 +59,7 @@ export async function persistGt06Position(position: Gt06Position): Promise<{ res
     p_serial: position.serial,
     p_satellites: position.satellites,
   });
-  if (error) throw new Error(`[GT06] Atomic test RPC failed: ${error.message}`);
+  if (error) throw new Error("[GT06] Atomic test RPC failed");
   const result = data?.result;
   if (!["inserted", "duplicate", "legacy_duplicate"].includes(result)) {
     throw new Error("[GT06] Unexpected test RPC response");
