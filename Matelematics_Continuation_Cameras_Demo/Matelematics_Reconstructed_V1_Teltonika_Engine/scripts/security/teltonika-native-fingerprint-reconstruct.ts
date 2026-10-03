@@ -3,6 +3,7 @@ import { normalizeMessage } from "../../server/teltonika/normalize";
 import { buildTelemetryIngestFingerprint } from "../../server/teltonika/telemetry-quality";
 import type { TeltonikaMessage, TeltonikaRecord } from "../../server/teltonika/types";
 
+async function main() {
 const client = new pg.Client({
   host:"127.0.0.1", port:55322, database:"postgres", user:"supabase_admin",
   password:process.env.MATELEMATICS_LOCAL_DB_PASSWORD ?? "postgres",
@@ -67,3 +68,9 @@ try {
   if(transaction) await client.query("ROLLBACK").catch(()=>{});
   await client.end().catch(()=>{});
 }
+
+}
+void main().catch(() => {
+  console.error("RECONSTRUCTION STARTUP FAIL; no credentials logged");
+  process.exitCode = 1;
+});
