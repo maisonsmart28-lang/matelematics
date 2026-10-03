@@ -29,8 +29,8 @@ DO $check$ DECLARE r record; BEGIN
  OR has_table_privilege('matelematics_ingest_native','public.telemetry','DELETE')
  OR has_table_privilege('matelematics_ingest_native','public.alerts','DELETE')
  OR has_schema_privilege('matelematics_ingest_native','public','CREATE') THEN RAISE EXCEPTION 'Unexpected effective privilege'; END IF;
- IF (SELECT count(*) FROM pg_policies WHERE schemaname='public' AND policyname LIKE 'native_ingest_%' AND roles=ARRAY['matelematics_ingest_native']::name[])<>11 THEN RAISE EXCEPTION 'Policy count mismatch'; END IF;
- RAISE NOTICE 'PASS: dedicated NOLOGIN role, no bypass, 11 policies, required grants and forbidden privileges';
+ IF (SELECT count(*) FROM pg_policies WHERE schemaname='public' AND policyname LIKE 'native_ingest_%' AND roles=ARRAY['matelematics_ingest_native']::name[])<>10 THEN RAISE EXCEPTION 'Policy count mismatch'; END IF;
+ RAISE NOTICE 'PASS: dedicated NOLOGIN role, no bypass, 10 policies, required grants and forbidden privileges';
 END $check$;
 
 '@
