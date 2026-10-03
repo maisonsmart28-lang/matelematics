@@ -47,4 +47,4 @@ ROLLBACK;
 $sql = $guard + "`n" + $apply + "`n" + $audit + "`n" + $revert + "`n" + $after
 $sql | docker exec -i $container psql -X -U supabase_admin -d postgres -v ON_ERROR_STOP=1
 if ($LASTEXITCODE -ne 0) { throw "Schema/role simulation failed; transaction rolled back" }
-Write-Host "SCHEMA ET ROLE — ALLER-RETOUR ROLLBACK : PASS"
+Write-Host "SCHEMA ET ROLE - ALLER-RETOUR ROLLBACK : PASS"
