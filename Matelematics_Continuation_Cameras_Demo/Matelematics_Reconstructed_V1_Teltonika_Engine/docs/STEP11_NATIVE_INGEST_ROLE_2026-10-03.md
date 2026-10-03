@@ -16,10 +16,10 @@ Aucune mutation distante : lecture de métadonnées uniquement pour examiner pol
 ## Rôle interne
 matelematics_ingest_native : NOLOGIN, NOINHERIT, NOSUPERUSER, NOCREATEROLE, NOCREATEDB, NOREPLICATION, NOBYPASSRLS.
 Aucune appartenance attribuée aux comptes JWT. Un login dédié et son secret seront provisionnés séparément avant exploitation.
-Onze politiques RLS visant uniquement ce rôle, sans remplacement des politiques authenticated.
+Dix politiques RLS visant uniquement ce rôle, sans remplacement des politiques authenticated.
 Il est un rôle backend couvrant toute la flotte, PAS un rôle de client isolé par entreprise.
 Droits par colonnes : lecture du boîtier/rattachement, paramètres/lifecycle d'alertes et empreinte de télémétrie ; INSERT positions/télémétrie/alertes ; UPDATE état du boîtier et status/resolved_at des alertes.
-UPDATE véhicules.updated_at nécessaire à SELECT FOR UPDATE : autorise aussi la modification de cette colonne, aucune colonne métier sensible.
+Aucun UPDATE véhicules : sérialisation par pg_advisory_xact_lock sur la clé du véhicule. vehicles.updated_at n'existe pas ; la première simulation a échoué et été annulée avant correction.
 USAGE des deux séquences, sans SELECT/UPDATE sur les séquences.
 Pas de DELETE, pas de lecture profils, pas de modification des paramètres d'alertes, des rattachements ou du nom du véhicule.
 PUBLIC peut conférer des droits supplémentaires : contrôle des droits effectifs inclus, pas seulement des GRANT explicites.
@@ -29,7 +29,7 @@ Les contraintes et déclencheurs de cohérence entreprise-véhicule existants re
 Index unique partiel Teltonika sur company_id/device_id/empreinte. Aucun historique supprimé ou réécrit.
 Doublons existants : échec et rollback ; réconciliation historique distincte toujours ouverte.
 CREATE INDEX standard peut bloquer des écritures ; adapté à l'essai local seulement. Fenêtre d'arrêt ou stratégie concurrente à décider avant application hébergée.
-Retour arrière supprime les onze politiques nouvelles, révoque exactement les grants, supprime le rôle puis l'index ; aucune suppression de données.
+Retour arrière supprime les dix politiques nouvelles, révoque exactement les grants, supprime le rôle puis l'index ; aucune suppression de données.
 Refuse un rôle/index préexistant à l'application et un membre du rôle au retour arrière.
 Arrêter l'ingestion et retirer le login dédié avant rollback.
 Empreintes native-v1 et données validées sont conservées après revert ; ne pas réactiver legacy sans stratégie de déduplication revue.
