@@ -11,8 +11,6 @@ GRANT USAGE ON SCHEMA public TO matelematics_ingest_native;
 GRANT SELECT(id,company_id,vehicle_id,imei) ON public.devices TO matelematics_ingest_native;
 GRANT UPDATE(status,last_seen_at,updated_at) ON public.devices TO matelematics_ingest_native;
 GRANT SELECT(id,company_id) ON public.vehicles TO matelematics_ingest_native;
--- PostgreSQL row locking requires UPDATE privilege on at least one column.
-GRANT UPDATE(updated_at) ON public.vehicles TO matelematics_ingest_native;
 GRANT SELECT(company_id,device_id,source,metadata) ON public.telemetry TO matelematics_ingest_native;
 GRANT INSERT(company_id,vehicle_id,device_id,recorded_at,source,codec,raw_payload,io_values,can_payload,metadata,signal_strength,battery_voltage,ignition) ON public.telemetry TO matelematics_ingest_native;
 GRANT INSERT(company_id,vehicle_id,device_id,recorded_at,latitude,longitude,altitude,speed,heading) ON public.positions TO matelematics_ingest_native;
@@ -25,7 +23,6 @@ GRANT USAGE ON SEQUENCE public.positions_id_seq,public.telemetry_id_seq TO matel
 CREATE POLICY native_ingest_select ON public.devices FOR SELECT TO matelematics_ingest_native USING(true);
 CREATE POLICY native_ingest_update ON public.devices FOR UPDATE TO matelematics_ingest_native USING(true) WITH CHECK(true);
 CREATE POLICY native_ingest_select ON public.vehicles FOR SELECT TO matelematics_ingest_native USING(true);
-CREATE POLICY native_ingest_update ON public.vehicles FOR UPDATE TO matelematics_ingest_native USING(true) WITH CHECK(true);
 CREATE POLICY native_ingest_select ON public.telemetry FOR SELECT TO matelematics_ingest_native USING(true);
 CREATE POLICY native_ingest_insert ON public.telemetry FOR INSERT TO matelematics_ingest_native WITH CHECK(true);
 CREATE POLICY native_ingest_insert ON public.positions FOR INSERT TO matelematics_ingest_native WITH CHECK(true);
