@@ -21,7 +21,9 @@ export async function persistAtomicPacket(pool: TransactionPool, packet: AtomicP
     const device = devices[0];
     if (!device?.vehicle_id) throw Error("INGEST_DEVICE_UNASSIGNED");
     const vehicleId = device.vehicle_id;
-    const vehicles = await select<{ id: string }>(client, "SELECT id FROM public.vehicles WHERE id=$1 AND company_id=$2 FOR UPDATE", [vehicleId,device.company_id]);
+    // Serializes alert lifecycle per vehicle without granting vehicle UPDATE.
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('teltonika-vehicle:' || $1::text,0))", [vehicleId]);
+    const vehicles = await select<{ id: string }>(client, "SELECT id FROM public.vehicles WHERE id=$1 AND company_id=$2", [vehicleId,device.company_id]);
     if (!vehicles.length) throw Error("INGEST_TENANT_MISMATCH");
     const previous = await select<{ metadata: Record<string, unknown> }>(client,
       "SELECT metadata FROM public.telemetry WHERE company_id=$1 AND device_id=$2 AND source='teltonika' AND metadata->>'ingest_fingerprint'=$3 LIMIT 1",
